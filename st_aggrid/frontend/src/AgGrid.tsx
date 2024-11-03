@@ -307,7 +307,7 @@ class AgGrid extends React.Component<ComponentProps, State> {
 
       return [
         ...(Array.isArray(defaultItems) ? defaultItems : []),
-        ...getGoogleSheetsMenuItems()
+        ...getGoogleSheetsMenuItems(params)
       ];
     };
 
