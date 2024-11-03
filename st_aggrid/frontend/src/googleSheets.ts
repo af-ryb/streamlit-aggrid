@@ -21,18 +21,30 @@ interface GridContext {
  */
 export const getGoogleSheetsMenuItems = () => {
     return [
+        'copy',
+        'copyWithHeaders',
+        'copyWithGroupHeaders',
+        'paste',
+        'separator',
         {
-            name: 'Export to Google Sheets',
+            name: 'Export',
             subMenu: [
+                'csvExport',
+                'excelExport',
                 {
-                    name: 'Raw Data',
-                    action: (params: ExportParams) => exportToGoogleSheets(params, 'raw'),
-                    icon: '<i class="fas fa-table"></i>'
-                },
-                {
-                    name: 'Formatted Data',
-                    action: (params: ExportParams) => exportToGoogleSheets(params, 'formatted'),
-                    icon: '<i class="fas fa-file-excel"></i>'
+                    name: 'Export to Google Sheets',
+                    subMenu: [
+                        {
+                            name: 'Raw Data',
+                            action: (params: ExportParams) => exportToGoogleSheets(params, 'raw'),
+                            icon: '<i class="fas fa-table"></i>'
+                        },
+                        {
+                            name: 'Formatted Data',
+                            action: (params: ExportParams) => exportToGoogleSheets(params, 'formatted'),
+                            icon: '<i class="fas fa-file-excel"></i>'
+                        }
+                    ]
                 }
             ]
         }
