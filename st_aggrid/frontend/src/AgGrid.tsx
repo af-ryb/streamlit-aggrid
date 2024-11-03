@@ -52,6 +52,7 @@ import { Buffer } from "buffer"
 import "./agGridStyle.scss"
 import "@fontsource/source-sans-pro"
 import { eventDataWhiteList } from "./constants"
+import { getGoogleSheetsMenuItems } from "./googleSheets"
 
 type CSSDict = { [key: string]: { [key: string]: string } }
 
@@ -275,7 +276,7 @@ class AgGrid extends React.Component<ComponentProps, State> {
   }
 
   private parseGridoptions() {
-    let gridOptions: GridOptions = _.cloneDeep(this.props.args.gridOptions)
+    let gridOptions: GridOptions = _.cloneDeep(this.props.args.gridOptions);
 
     if (this.props.args.allow_unsafe_jscode) {
       console.warn("flag allow_unsafe_jscode is on.")
@@ -296,6 +297,26 @@ class AgGrid extends React.Component<ComponentProps, State> {
     }
 
     //console.log("GridOptions for", this.props.args.key, ":", gridOptions)
+
+    // Add context menu items for Google Sheets export
+    const existingGetContextMenuItems = gridOptions.getContextMenuItems;
+    gridOptions.getContextMenuItems = (params) => {
+      const defaultItems = typeof existingGetContextMenuItems === 'function'
+        ? existingGetContextMenuItems(params)
+        : existingGetContextMenuItems || [];
+
+      return [
+        ...(Array.isArray(defaultItems) ? defaultItems : []),
+        ...getGoogleSheetsMenuItems()
+      ];
+    };
+
+    // Set context for Google Sheets export
+    gridOptions.context = {
+      ...gridOptions.context,
+      componentParent: this,
+      userEmail: this.props.args.userEmail // You'll need to pass this from Python if needed
+    };
 
     //adds custom columnFormatters
     gridOptions.columnTypes = Object.assign(
