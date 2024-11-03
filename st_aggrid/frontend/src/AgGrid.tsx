@@ -17,6 +17,7 @@ import {
   GridSizeChangedEvent,
   CellValueChangedEvent,
   IRowNode,
+  GetContextMenuItemsParams
 } from "@ag-grid-community/core"
 
 import { CsvExportModule } from "@ag-grid-community/csv-export"
@@ -52,7 +53,7 @@ import { Buffer } from "buffer"
 import "./agGridStyle.scss"
 import "@fontsource/source-sans-pro"
 import { eventDataWhiteList } from "./constants"
-import { getGoogleSheetsMenuItems } from "./googleSheets"
+import { integrateGoogleSheetsMenu  } from "./googleSheets"
 
 type CSSDict = { [key: string]: { [key: string]: string } }
 
@@ -298,24 +299,17 @@ class AgGrid extends React.Component<ComponentProps, State> {
 
     //console.log("GridOptions for", this.props.args.key, ":", gridOptions)
 
-    // Add context menu items for Google Sheets export
-    const existingGetContextMenuItems = gridOptions.getContextMenuItems;
-    gridOptions.getContextMenuItems = (params) => {
-      const defaultItems = typeof existingGetContextMenuItems === 'function'
-        ? existingGetContextMenuItems(params)
-        : existingGetContextMenuItems || [];
-
-      return [
-        ...(Array.isArray(defaultItems) ? defaultItems : []),
-        ...getGoogleSheetsMenuItems(params)
-      ];
-    };
-
     // Set context for Google Sheets export
     gridOptions.context = {
       ...gridOptions.context,
       componentParent: this,
-      userEmail: this.props.args.userEmail // You'll need to pass this from Python if needed
+      userEmail: this.props.args.userEmail || null  // Handle None case
+    };
+
+    // Add context menu items for Google Sheets export
+    const existingGetContextMenuItems = gridOptions.getContextMenuItems;
+    gridOptions.getContextMenuItems = (params: GetContextMenuItemsParams) => {
+      return integrateGoogleSheetsMenu(params, existingGetContextMenuItems);
     };
 
     //adds custom columnFormatters
