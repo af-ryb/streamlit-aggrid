@@ -300,6 +300,27 @@ module.exports = function (webpackEnv) {
       modules: ['node_modules', paths.appNodeModules].concat(
         modules.additionalModulePaths || []
       ),
+
+      fallback: {
+        "querystring": require.resolve("querystring-es3"),
+        "child_process": false,
+        "fs": false,
+        "net": false,
+        "tls": false,
+        "http": require.resolve("stream-http"),
+        "https": require.resolve("https-browserify"),
+        "zlib": require.resolve("browserify-zlib"),
+        "stream": require.resolve("stream-browserify"),
+        "buffer": require.resolve("buffer/"),
+        "util": require.resolve("util/"),
+        "url": require.resolve("url/"),
+        "process": require.resolve("process/browser"),
+        "assert": require.resolve("assert/"),
+        "crypto": require.resolve("crypto-browserify"),
+        "path": require.resolve("path-browserify"),
+        "os": require.resolve("os-browserify/browser")
+      },
+
       // These are the reasonable defaults supported by the Node ecosystem.
       // We also include JSX as a common component filename extension to support
       // some tools, although we do not recommend using it, see:

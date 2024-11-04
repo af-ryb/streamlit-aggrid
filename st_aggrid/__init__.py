@@ -35,13 +35,13 @@ def __parse_row_data(data):
         del data_parameter['__pandas_index']
         return json.loads(row_data), frame_dtypes
 
-    elif isinstance(data_parameter, str):
-        is_path = data_parameter.endswith('.json') and os.path.exists(data_parameter)
+    elif isinstance(data, str):
+        is_path = data.endswith('.json') and os.path.exists(data)
         
         if is_path:
-            row_data = json.dumps(json.load(open(os.path.abspath(data_parameter))))
+            row_data = json.dumps(json.load(open(os.path.abspath(data))))
         else:
-            row_data = json.dumps(json.loads(data_parameter))
+            row_data = json.dumps(json.loads(data))
         
         return json.loads(row_data), None
     else:
@@ -77,6 +77,7 @@ def __parse_grid_options(gridOptions_parameter, data, default_column_parameters,
         walk_gridOptions(gridOptions, lambda v: v.js_code if isinstance(v, JsCode) else v)
 
     return gridOptions
+
 
 _RELEASE = config("AGGRID_RELEASE", default=True, cast=bool)
 
@@ -120,30 +121,34 @@ def __parse_update_mode(update_mode: GridUpdateMode):
         
     return update_on
 
+
 def AgGrid(
-    data: Union[pd.DataFrame,  str]=None,
-    gridOptions: typing.Dict=None ,
+    data: Union[pd.DataFrame,  str] = None,
+    gridOptions: typing.Dict[str, Any] = None ,
     height: int = 400,
-    fit_columns_on_grid_load=False,
+    fit_columns_on_grid_load = False,
     update_mode: GridUpdateMode = GridUpdateMode.MODEL_CHANGED,
-    data_return_mode: DataReturnMode= DataReturnMode.FILTERED_AND_SORTED,
-    allow_unsafe_jscode: bool=False,
-    enable_enterprise_modules: bool=True,
-    license_key: str=None,
-    try_to_convert_back_to_original_types: bool=True,
-    conversion_errors: str='coerce',
+    data_return_mode: DataReturnMode = DataReturnMode.FILTERED_AND_SORTED,
+    allow_unsafe_jscode: bool = True,
+    enable_enterprise_modules: bool = True,
+    license_key: str = None,
+    try_to_convert_back_to_original_types: bool = True,
+    conversion_errors: str = 'coerce',
     columns_state = None,
-    theme:str=AgGridTheme.STREAMLIT,
-    custom_css=None,
-    key: typing.Any=None,
+    theme: str = AgGridTheme.STREAMLIT,
+    custom_css = None,
+    key: typing.Any = None,
     update_on = [],
-    **default_column_parameters) -> AgGridReturn:
-    """Reders a DataFrame using AgGrid.
+    enable_google_sheets: bool = False,
+    google_sheets_config: typing.Dict[str, Any] = None,
+    **default_column_parameters
+    ) -> AgGridReturn:
+    """Renders a DataFrame using AgGrid.
 
     Parameters
     ----------
-    dataframe : pd.DataFrame
-        The underlaying dataframe to be used.
+    data : pd.DataFrame
+        The underlying dataframe to be used.
 
     gridOptions : typing.Dict, optional
         A dictionary of options for ag-grid. Documentation on www.ag-grid.com
@@ -155,9 +160,6 @@ def AgGrid(
         If None, grid will enable Auto Height by default https://www.ag-grid.com/react-data-grid/grid-size/#dom-layout
         Default: None
 
-    width : [type], optional
-        Deprecated.
-    
     fit_columns_on_grid_load : bool, optional
         DEPRECATED, use columns_auto_size_mode
         Use gidOptions autoSizeStrategy (https://www.ag-grid.com/javascript-data-grid/column-sizing/#auto-sizing-columns)
@@ -222,27 +224,7 @@ def AgGrid(
             'coerce'    -> then invalid parsing will be set as NaT/NaN.
             'ignore'    -> invalid parsing will return the input.
         Defaults to 'coerce'.
-    
-    reload_data : bool, optional
-        DEPRECATED.
-        Grid Behaviour changed on V 1.0. Grid will update when data or gridOptions changes.
-        If data is edited on grid UI, it will stop refreshing on data parameter changes..
 
-    enable_quicksearch: bool, optional
-        DEPRECATED
-        Adds a quicksearch text field on top of grid.
-        Defaults to False
-    
-    excel_export_mode: ExcelExportMode, optional
-        DEPRECATED
-        Defines how Excel Export integration behaves:
-            NONE -> Nothing Changes. Default grid behaviour.
-            MANUAL -> Adds a download button on grid's top that triggers download.
-            FILE_BLOB_IN_GRID_RESPONSE -> include in grid's return an ExcelBlob Property with file binary encoded as B64 String
-            TRIGGER_DOWNLOAD_AFTER_REFRESH -> Triggers file download before returning results to streamlit.
-            SHEET_BLOB_IN_GRID_RESPONSE -> include in grid's return a SheetlBlob Property with sheet binary encoded as B64 String. Meant to be used with MULTIPLE
-            MULTIPLE_SHEETS -> Same as TRIGGER_DOWNLOAD_AFTER_REFRESH but will include b64 encoded *SHEETS* returned with SHEET_BLOB_IN_GRID_RESPONSE and supplied to grid's call using excel_export_extra_sheets parameter.
-    
     theme : str, optional
         theme used by ag-grid. One of:
             
@@ -257,10 +239,24 @@ def AgGrid(
     custom_css (dict, optional):
         Custom CSS rules to be added to the component's iframe.
 
+    enable_google_sheets: bool, optional
+        Enables Google Sheets integration. Defaults to False
+
+    google_sheets_config: Optional[Dict[str, Any]], optional
+        Configuration for Google Sheets integration. Defaults to None
+        example:
+        google_sheets_config = {
+            'credentials': {
+                # Your service account credentials
+            },
+            'user_email': 'user@example.com',  # Optional: email to share with
+            'session_id': st.session_state._session_id  # Will be added automatically
+        }
+
     key : typing.Any, optional
         Streamlits key argument. Check streamlit's documentation.
         Defaults to None.
-    
+
     **default_column_parameters:
         Other parameters will be passed as key:value pairs on gripdOptions defaultColDef.
 
@@ -319,7 +315,7 @@ def AgGrid(
 
     custom_css = custom_css or dict()
 
-    if height == None:
+    if height is None:
         gridOptions['domLayout'] ='autoHeight'
 
     if fit_columns_on_grid_load:
@@ -345,12 +341,11 @@ def AgGrid(
             key=key
             )
 
-    except components.components.MarshallComponentException as ex:
+    except components.custom_component.MarshallComponentException as ex:
         #uses a more complete error message.
         args = list(ex.args)
         args[0] += ". If you're using custom JsCode objects on gridOptions, ensure that allow_unsafe_jscode is True."
-        ex = components.components.MarshallComponentException(*args)
-        raise(ex)
+        raise components.custom_component.MarshallComponentException(*args)
     
     if component_value:
         response._set_component_value(component_value)
