@@ -304,6 +304,7 @@ module.exports = function (webpackEnv) {
       fallback: {
         "querystring": require.resolve("querystring-es3"),
         "child_process": false,
+        "vm": false,
         "fs": false,
         "net": false,
         "tls": false,
