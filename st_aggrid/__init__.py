@@ -112,10 +112,10 @@ def __parse_update_mode(update_mode: GridUpdateMode):
         update_on.append("sortChanged")
 
     if update_mode & GridUpdateMode.COLUMN_RESIZED:
-        update_on.append("columnPivotChanged")
+        update_on.append("displayedColumnsChanged")
 
     if update_mode & GridUpdateMode.COLUMN_MOVED:
-        update_on.append(("columnMoved", 500))
+        update_on.append("firstDataRendered")
 
     if update_mode & GridUpdateMode.COLUMN_PINNED:
         update_on.append("columnPinned")
