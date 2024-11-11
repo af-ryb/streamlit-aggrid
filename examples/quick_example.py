@@ -1,15 +1,88 @@
+import sys
+from pathlib import Path
+
+
+cwd = Path().resolve()
+
+sys.path.append(cwd.parent.as_posix())
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 
-from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+@st.fragment
+def show_specs(dct):
+    btn = st.button("Show specs")
+    if btn:
+        # st.write(dct.data)
+        st.write(st.session_state.ag_columns_state)
+        st.write(st.session_state.ag_grid_state)
+        st.write(st.session_state.ag_selected_rows)
+
 
 @st.cache_data()
 def get_data():
     df = pd.DataFrame(
         np.random.randint(0, 100, 50).reshape(-1, 5), columns= list("abcde")
     )
+    df['dimension'] = np.random.choice(['A', 'B', 'C'], 10)
+    df['dimension2'] = np.random.choice(['X_2', 'Y_2', 'Z_2', 'X_1', 'Y_1', 'Z_1'], 10)
+    df['dates'] = pd.date_range('2020-01-01', periods=10, freq='D')
+    df['dates'] = df['dates'].apply(lambda x: x.strftime('%Y-%m-%d'))
+
     return df
+
+
+def show_grid():
+    data = get_data()
+    gb = GridOptionsBuilder.from_dataframe(data)
+    gb.configure_side_bar(defaultToolPanel='', filters_panel=True)
+    # make all numeric columns editable
+    gb.configure_columns(list('abcde'), editable=True, enableValue=True)
+    gb.configure_column('dates', editable=False, enableRowGroup=True, hide=False)
+    gb.configure_column('dimension', editable=False, enableRowGroup=True, hide=False)
+    gb.configure_column('dimension2', editable=False, enableRowGroup=True, enablePivot=True, hide=False)
+
+    # Create a calculated column that updates when data is edited. Use agAnimateShowChangeCellRenderer to show changes
+    # gb.configure_column('row total', valueGetter='Number(data.a) + Number(data.b) + Number(data.c) + Number(data.d) + Number(data.e)', cellRenderer='agAnimateShowChangeCellRenderer', editable='false', type=['numericColumn'])
+
+    options = {"rowSelection": "multiple", "rowMultiSelectWithClick": "true", "animateRows": "true", "enableRangeSelection": "true"}
+    gb.configure_grid_options(**options)
+    grid_options = gb.build()
+
+    # Setting a fixed key for the component will prevent the grid to reinitialize when dataframe parameter change, simulated here
+    # by pressing the button on the side bar.
+    # Data will only be refreshed when the parameter reload_data is set to True
+
+    if use_fixed_key:
+        grid = AgGrid(
+            data,
+            gridOptions=grid_options,
+            height=height,
+            fit_columns_on_grid_load=True,
+            key='an_unique_key',
+            reload_data=reload_data,
+            update_mode=GridUpdateMode.GRID_CHANGED,
+            try_to_convert_back_to_original_types=False
+        )
+    else:
+        grid = AgGrid(
+            data,
+            gridOptions=grid_options,
+            height=height,
+            enable_enterprise_modules=True,
+            fit_columns_on_grid_load=True,
+            update_mode=GridUpdateMode.GRID_CHANGED,
+            try_to_convert_back_to_original_types=False
+        )
+
+    # st.write(grid.selected_rows_id)
+    # st.write(grid.data_groups)
+    return grid
+
+
 
 st.subheader("Controling Ag-Grid redraw in Streamlit.")
 st.markdown("""
@@ -58,44 +131,7 @@ Grid call below is:
 AgGrid(data, grid_options, {key_md}, reload_data={reload_data}, height={height})
 ```""")
 
-
-
-
-
-
-data = get_data()
-gb = GridOptionsBuilder.from_dataframe(data)
-#make all columns editable
-gb.configure_columns(list('abcde'), editable=True)
-
-#Create a calculated column that updates when data is edited. Use agAnimateShowChangeCellRenderer to show changes   
-#gb.configure_column('row total', valueGetter='Number(data.a) + Number(data.b) + Number(data.c) + Number(data.d) + Number(data.e)', cellRenderer='agAnimateShowChangeCellRenderer', editable='false', type=['numericColumn'])
-go = gb.build()
-
-
-# Setting a fixed key for the component will prevent the grid to reinitialize when dataframe parameter change, simulated here 
-# by pressing the button on the side bar.  
-# Data will only be refreshed when the parameter reload_data is set to True
-
-if use_fixed_key:
-    ag = AgGrid(
-        data, 
-        gridOptions=go, 
-        height=height, 
-        fit_columns_on_grid_load=True, 
-        key='an_unique_key',
-        reload_data=reload_data
-    )
-else:
-    ag = AgGrid(
-        data, 
-        gridOptions=go, 
-        height=height, 
-        fit_columns_on_grid_load=True
-    )
-
-st.subheader("Returned Data")
-st.dataframe(ag['data'])
+ag = show_grid()
 
 st.subheader("Grid Options")
-st.write(go)
+show_specs(ag)
