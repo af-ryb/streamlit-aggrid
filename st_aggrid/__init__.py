@@ -112,7 +112,7 @@ def __parse_update_mode(update_mode: GridUpdateMode):
         update_on.append("sortChanged")
 
     if update_mode & GridUpdateMode.COLUMN_RESIZED:
-        update_on.append(("columnResized", 300))
+        update_on.append("columnPivotChanged")
 
     if update_mode & GridUpdateMode.COLUMN_MOVED:
         update_on.append(("columnMoved", 500))
@@ -277,12 +277,12 @@ def AgGrid(
         except:
             raise ValueError(f"{update_mode} is not valid.")
 
+    manual_update = False
     if update_mode:
         update_on = list(update_on)
         if update_mode == GridUpdateMode.MANUAL:
             manual_update = True
         else:
-            manual_update = False
             update_on.extend(__parse_update_mode(update_mode))
 
     gridOptions = __parse_grid_options(gridOptions, data, default_column_parameters, allow_unsafe_jscode)

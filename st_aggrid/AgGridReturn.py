@@ -27,7 +27,11 @@ class AgGridReturn(Mapping):
         self.__conversion_errors = conversion_errors
         self.__data_return_mode = data_return_mode
 
+        # default values
         self.__dict__["grid_response"] = {}
+        streamlit.session_state.ag_columns_state = None
+        streamlit.session_state.ag_grid_state = None
+        streamlit.session_state.ag_selected_rows = None
 
     def set_component_value(self, component_value):
         self.__component_value_set = True
