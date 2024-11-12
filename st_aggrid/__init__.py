@@ -112,7 +112,7 @@ def __parse_update_mode(update_mode: GridUpdateMode):
         update_on.append("sortChanged")
 
     if update_mode & GridUpdateMode.COLUMN_RESIZED:
-        update_on.append("displayedColumnsChanged")
+        update_on.append(("displayedColumnsChanged", 300))
 
     if update_mode & GridUpdateMode.COLUMN_MOVED:
         update_on.append("firstDataRendered")
