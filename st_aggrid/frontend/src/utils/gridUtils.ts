@@ -21,7 +21,7 @@ export function addCustomCSS(custom_css: CSSDict): void {
   document.head.appendChild(styleSheet)
 }
 
-export function injectProAssets(jsCode: string, cssCode?: string) {
+export function injectProAssets(jsCode?: string, cssCode?: string) {
   if (jsCode) {
     const script = document.createElement("script")
     script.textContent = jsCode

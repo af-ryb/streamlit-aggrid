@@ -75,58 +75,15 @@ class GridOptionsBuilder:
 
     def configure_default_column(
         self,
-        # min_column_width=5,
-        # resizable=True,
-        # filterable=True,
-        # sortable=True,
-        # editable=False,
-        # groupable=False,
-        # sorteable=None,
         **other_default_column_properties,
     ):
         """Configure default column.
 
         Args:
-            min_column_width (int, optional):
-                Minimum column width. Defaults to 100.
-
-            resizable (bool, optional):
-                All columns will be resizable. Defaults to True.
-
-            filterable (bool, optional):
-                All columns will be filterable. Defaults to True.
-
-            sortable (bool, optional):
-                All columns will be sortable. Defaults to True.
-
-            sorteable (bool, optional):
-                Backwards compatibility alias for sortable. Overrides sortable if not None.
-
-            groupable (bool, optional):
-                All columns will be groupable based on row values. Defaults to True.
-
-            editable (bool, optional):
-                All columns will be editable. Defaults to True.
-
-            groupable (bool, optional):
-                All columns will be groupable. Defaults to True.
-
             **other_default_column_properties:
                 Key value pairs that will be merged to defaultColDef dict.
-                Chech ag-grid documentation.
+                Check ag-grid documentation for available properties.
         """
-        # if sorteable is not None:
-        #     sortable = sorteable
-
-        # defaultColDef = {
-        #     "minWidth": min_column_width,
-        #     "editable": editable,
-        #     "filter": filterable,
-        #     "resizable": resizable,
-        #     "sortable": sortable,
-        # }
-        # if groupable:
-        #     defaultColDef["enableRowGroup"] = groupable
         defaultColDef = {}
         if other_default_column_properties:
             defaultColDef = {**defaultColDef, **other_default_column_properties}

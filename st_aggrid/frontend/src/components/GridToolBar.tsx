@@ -3,24 +3,20 @@ import "./GridToolBar.css";
 
 interface GridToolBarProps {
   enabled: boolean;
-  onQuickSearchChange?: (value: string) => void; // Optional
-  onDownloadClick?: () => void; // Optional
-  onManualUpdateClick?: () => void; // Optional
+  onQuickSearchChange?: (value: string) => void;
+  onDownloadClick?: () => void;
   showFullscreenButton?: boolean;
   showDownloadButton?: boolean;
   showSearch?: boolean;
-  showManualUpdateButton?: boolean; // New prop to enable/disable manual update button
 }
 
 const GridToolBar: React.FC<GridToolBarProps> = ({
   enabled,
   onQuickSearchChange,
   onDownloadClick,
-  onManualUpdateClick,
   showFullscreenButton = true,
   showDownloadButton = true,
   showSearch = true,
-  showManualUpdateButton = false,
 }) => {
   const [searchValue, setSearchValue] = useState("");
   const [position, setPosition] = useState({ x: 10, y: 10 });
@@ -112,36 +108,6 @@ const GridToolBar: React.FC<GridToolBarProps> = ({
         </div>
       )}
 
-      {/* Manual Update Button */}
-      {showManualUpdateButton && !collapsed && (
-        <button
-          className="toolbar-button update-button"
-          onClick={onManualUpdateClick}
-          title="Manual Update"
-        >
-          <svg
-            viewBox="0 0 48 48"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              d="M12.9998 8L6 14L12.9998 21"
-              stroke="#000000"
-              stroke-width="4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            ></path>
-            <path
-              d="M6 14H28.9938C35.8768 14 41.7221 19.6204 41.9904 26.5C42.2739 33.7696 36.2671 40 28.9938 40H11.9984"
-              stroke="#000000"
-              stroke-width="4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            ></path>
-          </svg>
-        </button>
-      )}
-
       {/* Fullscreen Button */}
       {showFullscreenButton && !collapsed && (
         <button
@@ -183,9 +149,9 @@ const GridToolBar: React.FC<GridToolBarProps> = ({
             <path
               d="M6 21H18M12 3V17M12 17L17 12M12 17L7 12"
               stroke="#000000"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             ></path>
           </svg>
         </button>
