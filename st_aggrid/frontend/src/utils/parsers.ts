@@ -36,81 +36,63 @@ export function parseGridOptions(data: AgGridData): GridOptions {
 export function parseData(data: AgGridData): any[] {
   const rawData = (data as any).rowData
   const gridOptionsRowData = data.gridOptions?.rowData
-  let rowData: any[] = []
 
-  // DEBUG: log what CCv2 delivers to understand the format
-  console.log("[parseData] typeof rawData:", typeof rawData)
-  console.log("[parseData] rawData:", rawData)
-  if (rawData && typeof rawData === "object") {
-    console.log("[parseData] rawData keys:", Object.keys(rawData).slice(0, 10))
-    console.log("[parseData] rawData.dataTable:", (rawData as any).dataTable)
-    console.log("[parseData] rawData.table:", (rawData as any).table)
+  const bigintReplacer = (key: any, value: any): any => {
+    if (typeof value === "bigint") return Number(value)
+    if (Array.isArray(value))
+      return value.map((item: any) => bigintReplacer(null, item))
+    if (value && typeof value === "object") {
+      const obj: any = {}
+      for (const prop in value) {
+        if (Object.prototype.hasOwnProperty.call(value, prop))
+          obj[prop] = bigintReplacer(prop, value[prop])
+      }
+      return obj
+    }
+    return value
   }
 
-  if (rawData) {
-    // Quick fix for bigInt serializations
-    const bigintReplacer = (key: any, value: any): any => {
-      if (typeof value === "bigint") {
-        return Number(value)
-      }
-      if (Array.isArray(value)) {
-        return value.map((item: any) => bigintReplacer(null, item))
-      }
-      if (value && typeof value === "object") {
-        const replacedObj: any = {}
-        for (const prop in value) {
-          if (Object.prototype.hasOwnProperty.call(value, prop)) {
-            replacedObj[prop] = bigintReplacer(prop, value[prop])
-          }
-        }
-        return replacedObj
-      }
-      return value
-    }
-
-    const arrowTable = rawData.dataTable || rawData.table
-
-    if (arrowTable) {
-      // Extract index column names from pandas metadata
-      let indexColumns: string[] = []
-      try {
-        const pandasMeta = JSON.parse(
-          arrowTable?.schema?.metadata?.get("pandas") || "{}"
-        )
-        indexColumns = pandasMeta.index_columns || []
-      } catch (e) {}
-
-      // Filter out index columns and select only data fields
-      const dataFields =
-        arrowTable?.schema?.fields
-          ?.map((f: any) => f.name)
-          .filter((name: string) => !indexColumns.includes(name)) || []
-
-      const filteredTable = arrowTable.select(dataFields)
-      rowData = JSON.parse(
-        JSON.stringify(filteredTable.toArray(), bigintReplacer)
-      )
-    }
-  } else if (data.rowData) {
-    // rowData passed directly (e.g. as JSON string from Python)
-    if (typeof data.rowData === "string") {
-      try {
-        rowData = JSON.parse(data.rowData)
-      } catch (e) {
-        console.error("Failed to parse rowData as JSON:", e)
-        throw e
-      }
-    } else if (Array.isArray(data.rowData)) {
-      rowData = data.rowData
-    }
-  } else if (gridOptionsRowData && typeof gridOptionsRowData === "string") {
+  // CCv2: DataFrame arrives as a bare Arrow Table (schema, batches, _offsets)
+  if (rawData && rawData.schema && rawData.batches) {
+    let indexColumns: string[] = []
     try {
-      rowData = JSON.parse(gridOptionsRowData)
+      const pandasMeta = JSON.parse(
+        rawData.schema?.metadata?.get("pandas") || "{}"
+      )
+      indexColumns = pandasMeta.index_columns || []
+    } catch (e) {}
+
+    const dataFields =
+      rawData.schema?.fields
+        ?.map((f: any) => f.name)
+        .filter((name: string) => !indexColumns.includes(name)) || []
+
+    const filteredTable = rawData.select(dataFields)
+    return JSON.parse(JSON.stringify(filteredTable.toArray(), bigintReplacer))
+  }
+
+  // Fallback: rowData as JSON string
+  if (rawData && typeof rawData === "string") {
+    try {
+      return JSON.parse(rawData)
+    } catch (e) {
+      console.error("Failed to parse rowData as JSON:", e)
+      return []
+    }
+  }
+
+  // Fallback: rowData as plain array
+  if (Array.isArray(rawData)) return rawData
+
+  // Fallback: gridOptions.rowData as JSON string
+  if (gridOptionsRowData && typeof gridOptionsRowData === "string") {
+    try {
+      return JSON.parse(gridOptionsRowData)
     } catch (e) {
       console.error("Failed to parse gridOptions.rowData as JSON:", e)
-      throw e
+      return []
     }
   }
 
-  return rowData
+  return []
 }
