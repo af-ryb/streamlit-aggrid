@@ -202,7 +202,7 @@ def AgGrid(
 
     # Build data payload for CCv2
     component_data = {
-        "data": data_df,  # DataFrame (Arrow-serialized by CCv2)
+        "rowData": data_df,  # DataFrame -- CCv2 should Arrow-serialize it
         "gridOptions": gridOptions,
         "height": height,
         "collect": collect,

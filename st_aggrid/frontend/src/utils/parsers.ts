@@ -34,9 +34,18 @@ export function parseGridOptions(data: AgGridData): GridOptions {
 }
 
 export function parseData(data: AgGridData): any[] {
-  const rawData = (data as any).data
+  const rawData = (data as any).rowData
   const gridOptionsRowData = data.gridOptions?.rowData
   let rowData: any[] = []
+
+  // DEBUG: log what CCv2 delivers to understand the format
+  console.log("[parseData] typeof rawData:", typeof rawData)
+  console.log("[parseData] rawData:", rawData)
+  if (rawData && typeof rawData === "object") {
+    console.log("[parseData] rawData keys:", Object.keys(rawData).slice(0, 10))
+    console.log("[parseData] rawData.dataTable:", (rawData as any).dataTable)
+    console.log("[parseData] rawData.table:", (rawData as any).table)
+  }
 
   if (rawData) {
     // Quick fix for bigInt serializations
