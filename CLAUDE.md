@@ -66,18 +66,19 @@ yarn build          # outputs to st_aggrid/frontend/build/
 yarn dev            # dev server on port 3001
 
 # Full build (frontend + Python wheel)
-yarn build          # root package.json — builds all workspaces then poetry build
+yarn build          # root package.json — builds all workspaces then uv build
 
 # Tests (Playwright e2e)
 pytest test/
 
-# Python install (dev)
-pip install -e .
+# Python env (dev)
+uv sync             # creates .venv, installs deps + dev group (editable)
+uv run pytest test/ # run tests inside the uv-managed env
 ```
 
 Package manager: **yarn 4.1.0** (root), npm/yarn for frontend workspace.
 Build tool: **Vite** (lib mode, single JS bundle + CSS).
-Python build: **Poetry** (`poetry-core`).
+Python build: **hatchling** (via `uv build`).
 
 ## Key Design Decisions
 

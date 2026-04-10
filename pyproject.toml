@@ -7,40 +7,44 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Pablo Fonseca", email = "pablo.fonseca+pip@gmail.com" }]
 keywords = ["streamlit", "ag-grid", "component"]
-dependencies = ["streamlit >=1.44.0", "pandas >=1.4.0"]
-
-[project.urls]
-homepage = "https://github.com/PablocFonseca/streamlit-aggrid"
-
-[tool.poetry]
-packages = [{ include = "st_aggrid/**/*.py" }]
-
-include = [
-    { path = "st_aggrid/frontend/build/**/*", format = [
-        "sdist",
-        "wheel",
-    ] },
-    { path = "st_aggrid/json/**/*.json", format = [
-        "sdist",
-        "wheel",
-    ] },
-]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = ["streamlit >=1.44.0", "pandas >=1.4.0"]
 
-[tool.poetry.group.dev.dependencies]
-bs4 = "^0.0.2"
-playwright = "^1.51.0"
-pytest = "^8.3.5"
-pytest-playwright = "^0.7.0"
-watchdog = "^6.0.0"
-ruff = "*"
-streamlit-code-editor = "^0.1.12"
-pytest-cov = "^6.2.1"
+[project.urls]
+homepage = "https://github.com/PablocFonseca/streamlit-aggrid"
+
+[dependency-groups]
+dev = [
+    "bs4 >=0.0.2",
+    "playwright >=1.51.0",
+    "pytest >=8.3.5",
+    "pytest-playwright >=0.7.0",
+    "watchdog >=6.0.0",
+    "ruff",
+    "streamlit-code-editor >=0.1.12",
+    "pytest-cov >=6.2.1",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+ignore-vcs = true
+exclude = [
+    "st_aggrid/frontend/src",
+    "st_aggrid/frontend/package.json",
+    "st_aggrid/frontend/tsconfig.json",
+    "st_aggrid/frontend/vite.config.ts",
+    "st_aggrid/frontend/.prettierrc",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["st_aggrid"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["st_aggrid", "README.md", "LICENSE", "pyproject.toml"]

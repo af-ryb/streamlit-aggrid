@@ -186,7 +186,6 @@ streamlit_aggrid.egg-info/*
 streamlit_aggrid.egg-info/PKG-INFO
 Pipfile.lock
 Pipfile
-#/poetry.lock
 /.env
 
 ########################################################################
