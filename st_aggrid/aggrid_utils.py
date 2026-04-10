@@ -9,8 +9,30 @@ from io import StringIO
 from pathlib import Path
 
 
+def _dataframe_arrow_compatible(df: "pd.DataFrame") -> bool:
+    """Return True if the DataFrame can be round-tripped through Arrow.
+
+    Streamlit CCv2 serializes DataFrames via Apache Arrow. Columns holding
+    lists/sets with heterogeneous item types (e.g. ``[1, "a", True]``) fail
+    Arrow conversion and leave the frontend with ``undefined`` gridOptions.
+    """
+    try:
+        import pyarrow as pa
+    except Exception:
+        return True
+    try:
+        pa.Table.from_pandas(df, preserve_index=False)
+        return True
+    except Exception:
+        return False
+
+
 def _parse_data_and_grid_options(
-    data, grid_options, default_column_parameters, unsafe_allow_jscode
+    data,
+    grid_options,
+    default_column_parameters,
+    unsafe_allow_jscode,
+    use_json_serialization="auto",
 ):
     column_types = None
 
@@ -49,38 +71,57 @@ def _parse_data_and_grid_options(
                 if d.kind == "M":
                     data[c] = data[c].apply(lambda s: s.isoformat())
 
-        # If there is data and no grid options, create grid options from the data
-        if (data is not None) and (not grid_options):
-            gb = GridOptionsBuilder.from_dataframe(data, **default_column_parameters)
-            grid_options = gb.build()
-
         # Compute column types before adding ID column
         column_types = data.dtypes
 
-    # If grid_options is supplied as a dictionary, use it as-is
-    elif isinstance(grid_options, Mapping):
-        grid_options = grid_options
-
-    elif isinstance(grid_options, (str, Path)):
+    # Resolve grid_options independently of data — it may be a Mapping, a JSON
+    # string, or a path to a .json file. Do this unconditionally so callers can
+    # combine any data source with any grid_options source.
+    if isinstance(grid_options, (str, Path)):
         if isinstance(grid_options, Path):
             grid_options = Path(grid_options).resolve().absolute()
         # If grid_options is a path to a json file
         if str(grid_options).endswith(".json") and os.path.exists(str(grid_options)):
             try:
                 with open(os.path.abspath(str(grid_options))) as f:
-                    grid_options = json.dumps(json.load(f))
+                    grid_options = json.load(f)
             except Exception as ex:
                 raise Exception(f"Error reading {grid_options}. {ex}")
+        else:
+            # Otherwise treat it as a raw JSON string
+            try:
+                grid_options = json.loads(grid_options)
+            except Exception:
+                raise Exception("Error parsing grid_options parameter as raw json.")
 
-        # If grid_options is a json string, parse it
-        try:
-            grid_options = json.loads(grid_options)
-        except Exception:
-            raise Exception("Error parsing grid_options parameter as raw json.")
+    # If there is data and no grid options, build defaults from the DataFrame
+    if isinstance(data, pd.DataFrame) and not grid_options:
+        gb = GridOptionsBuilder.from_dataframe(data, **default_column_parameters)
+        grid_options = gb.build()
 
     # If rowId is not defined, create a unique row_id
-    if grid_options and "getRowId" not in grid_options and data is not None:
+    if (
+        isinstance(grid_options, Mapping)
+        and "getRowId" not in grid_options
+        and isinstance(data, pd.DataFrame)
+    ):
         data["::auto_unique_id::"] = list(map(str, range(data.shape[0])))
+
+    # Optionally serialize rowData as a JSON string to bypass Arrow limits
+    # (e.g. cells with heterogeneous lists or sets). The frontend's parseData
+    # fall-back in parsers.ts handles gridOptions.rowData as a JSON string.
+    if isinstance(data, pd.DataFrame) and grid_options is not None:
+        should_json_serialize = False
+        if use_json_serialization is True:
+            should_json_serialize = True
+        elif use_json_serialization == "auto":
+            should_json_serialize = not _dataframe_arrow_compatible(data)
+
+        if should_json_serialize:
+            grid_options["rowData"] = data.to_json(
+                orient="records", default_handler=str
+            )
+            data = None
 
     # Process JsCode objects
     if unsafe_allow_jscode and grid_options:

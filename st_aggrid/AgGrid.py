@@ -69,6 +69,7 @@ def AgGrid(
     show_download_button: bool = True,
     on_grid_state_change: Optional[Callable] = None,
     on_api_response_change: Optional[Callable] = None,
+    use_json_serialization: Union[bool, Literal["auto"]] = "auto",
     **default_column_parameters,
 ) -> AgGridResult:
     """Renders a DataFrame using AG-Grid (CCv2, no iframe).
@@ -174,7 +175,11 @@ def AgGrid(
 
     # Parse data and gridOptions
     data_df, gridOptions, _column_types = _parse_data_and_grid_options(
-        data, gridOptions, default_column_parameters, allow_unsafe_jscode
+        data,
+        gridOptions,
+        default_column_parameters,
+        allow_unsafe_jscode,
+        use_json_serialization=use_json_serialization,
     )
 
     custom_css = custom_css or {}

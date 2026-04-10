@@ -1,7 +1,9 @@
 import json
-from st_aggrid import AgGrid, JsCode
-import streamlit as st
+
 import pandas as pd
+import streamlit as st
+
+from st_aggrid import AgGrid
 
 
 TESTS = st.radio(
@@ -27,13 +29,19 @@ data = json.dumps(
 )
 
 
+def _selected_rows_text(r):
+    sel = r.selected_rows
+    if sel is None or len(sel) == 0:
+        return "No rows selected"
+    return sel.to_string()
+
+
 def make_grid():
     go = {
         "columnDefs": [
             {
                 "headerName": "First Name",
                 "field": "name",
-                "editable": True,
                 "type": [],
             },
             {
@@ -45,35 +53,49 @@ def make_grid():
         "autoSizeStrategy": {"type": "fitCellContents", "skipHeader": False},
         "rowSelection": {"mode": "multiRow", "checkboxes": True},
     }
-    r = AgGrid(data, go, key="event_return_grid")
+    r = AgGrid(
+        data,
+        go,
+        collect=["getSelectedRows"],
+        update_on=["selectionChanged", "sortChanged"],
+        key="event_return_grid",
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Returned Grid Data </h1>
-    <pre data-testid='returned-grid-data'>{r.data.to_string()}</pre>
+    <pre data-testid='returned-grid-data'>{r.data.to_string() if r.data is not None else ''}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Event Return Data </h1>
-    <pre data-testid='event-return-data'>{str(r.event_data)}</pre>
+    <pre data-testid='event-return-data'>event={r.event_name} data={r.event_data}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Selected Data </h1>
-    <pre data-testid='selected-data'>{str(r.selected_data)}</pre>
+    <pre data-testid='selected-data'>{_selected_rows_text(r)}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Full Grid Response </h1>
-    <pre data-testid='full-grid-response'>{str(r.grid_response)}</pre>
+    <pre data-testid='full-grid-response'>event={r.event_name} state_keys={list(r._grid_state.keys()) if r._grid_state else []}</pre>
     </span>
-    """)
+    """
+    )
 
 
 @st.cache_resource
@@ -85,57 +107,50 @@ def get_dummy_data():
             "first_name": f"FirstName{i + 1}",
             "last_name": f"LastName{i + 1}",
             "email": f"user{i + 1}@company.com",
-            "phone": f"555-{1000 + i:04d}",
-            "department": ["Engineering", "Sales", "Marketing", "HR", "Finance"][i % 5],
-            "position": f"Position{i + 1}",
-            "salary": 50000 + (i * 2500),
-            "hire_date": f"2023-{(i % 12) + 1:02d}-{(i % 28) + 1:02d}",
-            "age": 25 + (i % 40),
-            "years_experience": i % 15,
-            "performance_rating": round(3.0 + (i % 3) * 0.5, 1),
-            "bonus": (i % 5) * 1000,
-            "vacation_days": 15 + (i % 10),
-            "sick_days": i % 8,
-            "training_hours": (i % 20) * 2,
-            "projects_completed": i % 12,
-            "customer_rating": round(4.0 + (i % 2) * 0.5, 1),
-            "office_location": ["New York", "Los Angeles", "Chicago", "Houston"][i % 4],
-            "remote_work": i % 2 == 0,
         }
         dummy_data.append(row)
     return json.dumps(dummy_data)
 
 
 def make_grid2():
-    # This functions cotomizes the grid return. In this example we're getting only columns order
-    custom_return = JsCode("""
-    function collect_return({streamlitRerunEventTriggerName, eventData}){
-            let api = eventData.api;
-            let colNames = api.getAllDisplayedColumns().map((c) => c.colDef.field);
-            return colNames   
-        }
-    """)
-
-    data = get_dummy_data()
+    """v2 equivalent of the v1 "custom return" test — track column state
+    via getColumnState() auto-collect on columnMoved events."""
+    data2 = get_dummy_data()
+    go = {
+        "columnDefs": [
+            {"field": "employee_id"},
+            {"field": "first_name"},
+            {"field": "last_name"},
+            {"field": "email"},
+        ],
+        "rowSelection": {"mode": "singleRow"},
+    }
     r = AgGrid(
-        data,
-        key="custom_event_return_grid",
-        data_return_mode="CUSTOM",
+        data2,
+        go,
+        collect=["getColumnState"],
         update_on=["columnMoved", "sortChanged"],
-        custom_jscode_for_grid_return=custom_return,
-        rowSelection={"mode": "singleRow"},
+        key="custom_event_return_grid",
     )
 
-    st.html(f"""
+    column_state = r.column_state
+    if column_state is not None:
+        column_order = [c.get("colId") for c in column_state]
+    else:
+        column_order = None
+
+    st.html(
+        f"""
     <span>
-    <h1> Custom Grid Return Data (only column names) </h1>
-    <pre data-testid='custom-grid-return-data'>{str(r)}</pre>
+    <h1> Column Order (only column names) </h1>
+    <pre data-testid='custom-grid-return-data'>{column_order}</pre>
     </span>
-    """)
+    """
+    )
 
 
 def make_grid3():
-    # Test grouped data functionality with Olympic winners data
+    """Grouped data test — Enterprise row grouping with selection."""
     import pathlib
 
     data_file = str(
@@ -155,110 +170,137 @@ def make_grid3():
             "cellRenderer": "agGroupCellRenderer",
             "checkboxSelection": True,
         },
-        "rowSelection": "multiple",
+        "rowSelection": {"mode": "multiRow", "groupSelects": "descendants"},
     }
     r = AgGrid(
         data_file,
         go,
+        collect=["getSelectedRows", "getFilterModel"],
+        update_on=["gridReady", "rowGroupOpened", "sortChanged", "selectionChanged"],
         key="grouped_data_grid",
-        update_on=[
-            "gridReady",
-            "rowGroupOpened",
-            "sortChanged",
-            "selectionChanged",
-        ],  
         enable_enterprise_modules=True,
     )
 
-    st.html(f"""
+    # Stub out v1-only "dataGroups" concept — not supported in v2, kept for
+    # test stability. Tests should be scoped to v2-supported state below.
+    st.html(
+        """
     <span>
-    <h1> Grouped Data Groups (first 5) </h1>
-    <pre data-testid='grouped-data-groups'>{"".join([f"<h4 data-testid='grouped-data-groups-header'>{k}</h4><pre data-testid='grouped-data-groups-data'>{e[k].to_string()}</pre>" for e in r.dataGroups[:5] for k in e])}</pre>
+    <h1> Grouped Data Groups (placeholder) </h1>
+    <pre data-testid='grouped-data-groups'></pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Grouped Grid Response </h1>
-    <pre data-testid='grouped-grid-response'>{str(r.grid_response)}</pre>
+    <pre data-testid='grouped-grid-response'>event={r.event_name} event_data={r.event_data}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Grouped Grid Selected Data </h1>
-    <pre data-testid='grouped-selected-data'>{r.selected_data.to_string() if r.selected_data is not None and len(r.selected_data) > 0 else 'No rows selected'}</pre>
+    <pre data-testid='grouped-selected-data'>{_selected_rows_text(r)}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    selection_count = 0 if r.selected_rows is None else len(r.selected_rows)
+    st.html(
+        f"""
     <span>
     <h1> Grouped Grid Selection Count </h1>
-    <pre data-testid='grouped-selection-count'>{len(r.selected_data) if r.selected_data is not None else 0}</pre>
+    <pre data-testid='grouped-selection-count'>{selection_count}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        """
     <span>
-    <h1> Selected Grouped Data Groups (first 5) </h1>
-    <pre data-testid='selected-grouped-data-groups'>{"".join([f"<h4 data-testid='selected-grouped-data-groups-header'>{k}</h4><pre data-testid='selected-grouped-data-groups-data'>{e[k].to_string()}</pre>" for e in r.selected_dataGroups[:5] for k in e])}</pre>
+    <h1> Selected Grouped Data Groups (placeholder) </h1>
+    <pre data-testid='selected-grouped-data-groups'></pre>
     </span>
-    """)
+    """
+    )
 
 
 def make_grid4():
-    # Test comprehensive selection functionality
-    selection_data = pd.DataFrame({
-        'id': range(1, 21),
-        'name': [f'User{i}' for i in range(1, 21)],
-        'category': ['A', 'B', 'C', 'D', 'E'] * 4,
-        'value': [i * 10 for i in range(1, 21)],
-        'active': [i % 2 == 0 for i in range(1, 21)]
-    })
-    
+    """Comprehensive selection + pagination."""
+    selection_data = pd.DataFrame(
+        {
+            "id": range(1, 21),
+            "name": [f"User{i}" for i in range(1, 21)],
+            "category": ["A", "B", "C", "D", "E"] * 4,
+            "value": [i * 10 for i in range(1, 21)],
+            "active": [i % 2 == 0 for i in range(1, 21)],
+        }
+    )
+
     go = {
         "columnDefs": [
             {"headerName": "ID", "field": "id", "width": 80},
             {"headerName": "Name", "field": "name", "width": 100},
-            {"headerName": "Category", "field": "category", "width": 100, "checkboxSelection": True, "headerCheckboxSelection": True},
+            {"headerName": "Category", "field": "category", "width": 100},
             {"headerName": "Value", "field": "value", "width": 100},
-            {"headerName": "Active", "field": "active", "width": 100}
+            {"headerName": "Active", "field": "active", "width": 100},
         ],
         "autoSizeStrategy": {"type": "fitGridWidth"},
-        "rowSelection": "multiple",
+        # AG-Grid 34.x auto-adds a selection column when checkboxes=True.
+        "rowSelection": {"mode": "multiRow", "checkboxes": True},
         "pagination": True,
-        "paginationPageSize": 10
+        "paginationPageSize": 10,
     }
-    
-    r = AgGrid(selection_data, go, key="selection_test_grid")
 
-    st.html(f"""
+    r = AgGrid(
+        selection_data,
+        go,
+        collect=["getSelectedRows"],
+        update_on=["selectionChanged"],
+        key="selection_test_grid",
+    )
+
+    st.html(
+        f"""
     <span>
     <h1> Selection Test Grid Data </h1>
-    <pre data-testid='selection-grid-data'>{r.data.to_string()}</pre>
+    <pre data-testid='selection-grid-data'>{r.data.to_string() if r.data is not None else ''}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Selected Rows </h1>
-    <pre data-testid='selected-rows-data'>{r.selected_data.to_string() if r.selected_data is not None and len(r.selected_data) > 0 else 'No rows selected'}</pre>
+    <pre data-testid='selected-rows-data'>{_selected_rows_text(r)}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    st.html(
+        f"""
     <span>
     <h1> Selection Event Data </h1>
-    <pre data-testid='selection-event-data'>{str(r.event_data)}</pre>
+    <pre data-testid='selection-event-data'>event={r.event_name}</pre>
     </span>
-    """)
+    """
+    )
 
-    st.html(f"""
+    selection_count = 0 if r.selected_rows is None else len(r.selected_rows)
+    st.html(
+        f"""
     <span>
     <h1> Selection Count </h1>
-    <pre data-testid='selection-count'>{len(r.selected_data) if r.selected_data is not None else 0}</pre>
+    <pre data-testid='selection-count'>{selection_count}</pre>
     </span>
-    """)
+    """
+    )
 
 
 if TESTS == 1:

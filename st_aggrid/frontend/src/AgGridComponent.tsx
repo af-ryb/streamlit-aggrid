@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useMemo } from "react"
+import React, { useRef, useState, useCallback, useEffect, useMemo } from "react"
 import { AgGridReact } from "ag-grid-react"
 
 import {
@@ -71,7 +71,12 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   setStateValue,
   setTriggerValue,
 }) => {
+  // Grid API is held both as a ref (for imperative calls from callbacks and
+  // effects that don't need to re-run on mount) and as state (so hooks like
+  // `useAutoCollect` that attach event listeners re-run once the grid signals
+  // readiness, not just on the next Streamlit-driven re-render).
   const gridApiRef = useRef<GridApi | null>(null)
+  const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const gridContainerRef = useRef<HTMLDivElement>(null)
   const prevDataRef = useRef<AgGridData | undefined>(undefined)
 
@@ -141,9 +146,10 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     [data.update_on]
   )
 
-  // Auto-collect hook
+  // Auto-collect hook — needs a stable `gridApi` value that changes exactly
+  // once the grid becomes ready, so `useState` (not the ref) is the source.
   useAutoCollect({
-    gridApi: gridApiRef.current,
+    gridApi,
     collectConfig,
     updateOn,
     setStateValue,
@@ -152,7 +158,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Explicit API call hook
   useExplicitApiCall({
-    gridApi: gridApiRef.current,
+    gridApi,
     apiCallRequest: data.api_call,
     setTriggerValue,
     debug,
@@ -192,6 +198,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   const onGridReady = useCallback(
     (event: GridReadyEvent) => {
       gridApiRef.current = event.api
+      setGridApi(event.api)
 
       if (debug) {
         console.log("[AgGridComponent] Grid ready", event)
