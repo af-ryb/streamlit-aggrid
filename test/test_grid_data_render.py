@@ -149,3 +149,25 @@ def test_auto_serialization_fallback(page: Page):
     expect(frame0.locator(".ag-root")).to_be_visible()
     # This grid uses 'auto' serialization, should still render properly
     expect(frame0.locator(".ag-row")).to_have_count(3)
+
+
+def test_grid_data_reactivity(page: Page):
+    """Regression: the grid must reflect DataFrame changes under a stable Streamlit key.
+
+    Historically, AgGridComponent's useMemo/useEffect combo never propagated
+    new rowData after the first render, so callers had to churn `key` to force
+    a remount. This test adds rows by clicking a button and verifies the grid
+    picks them up without the key changing.
+
+    Note: CCv2 components render inline (no iframe), so we locate `.ag-root`
+    directly under the Streamlit key-scoped container.
+    """
+    container = page.locator(".st-key-grid_data_reactivity")
+    expect(container.locator(".ag-root")).to_be_visible()
+    expect(container.locator(".ag-row")).to_have_count(3)
+
+    page.get_by_role("button", name="Add reactivity row").click()
+    expect(container.locator(".ag-row")).to_have_count(4)
+
+    page.get_by_role("button", name="Add reactivity row").click()
+    expect(container.locator(".ag-row")).to_have_count(5)

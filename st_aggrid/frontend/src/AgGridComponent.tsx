@@ -73,7 +73,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 }) => {
   const gridApiRef = useRef<GridApi | null>(null)
   const gridContainerRef = useRef<HTMLDivElement>(null)
-  const prevDataRef = useRef<AgGridData | null>(null)
+  const prevDataRef = useRef<AgGridData | undefined>(undefined)
 
   const debug = data.debug || false
 
@@ -94,27 +94,42 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     proAssetsInjected = true
   }
 
-  // Parse grid options and row data
+  // Parsed row data — recomputed when the incoming rowData reference changes.
+  // Passed as a separate prop to <AgGridReact> so AG-Grid applies it reactively
+  // with immutable-data semantics (preserves selection/scroll when getRowId is stable).
+  const rowData = useMemo(
+    () => parseData(data),
+    [data.rowData]
+  )
+
+  // Stable getRowId based on the auto_unique_id marker, if present.
+  // Memoized by rowData so identity stays stable across re-renders while schema is unchanged.
+  const autoGetRowId = useMemo(() => {
+    if (
+      rowData.length > 0 &&
+      Object.prototype.hasOwnProperty.call(rowData[0], "::auto_unique_id::")
+    ) {
+      return (params: GetRowIdParams) =>
+        params.data["::auto_unique_id::"] as string
+    }
+    return undefined
+  }, [rowData])
+
+  // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
     const go = parseGridOptions(data)
-    go.rowData = parseData(data)
+    // Defensive: strip any rowData that may have been carried over so the
+    // separate <AgGridReact rowData> prop is the single source of truth.
+    delete (go as any).rowData
 
-    // Auto row ID
-    if (!("getRowId" in go)) {
-      if (
-        Array.isArray(go.rowData) &&
-        go.rowData.length > 0 &&
-        go.rowData[0].hasOwnProperty("::auto_unique_id::")
-      ) {
-        go.getRowId = (params: GetRowIdParams) =>
-          params.data["::auto_unique_id::"] as string
-      }
+    // Honor user-provided getRowId; fall back to the auto_unique_id marker.
+    if (!("getRowId" in go) && autoGetRowId) {
+      go.getRowId = autoGetRowId
     }
 
     return go
-    // Only recompute when gridOptions or theme change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.gridOptions, data.theme, data.streamlit_theme, data.allow_unsafe_jscode])
+  }, [data.gridOptions, data.theme, data.streamlit_theme, data.allow_unsafe_jscode, autoGetRowId])
 
   // Memoize config arrays to avoid re-registering listeners on every render
   const collectConfig = useMemo(
@@ -143,28 +158,27 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     debug,
   })
 
-  // Handle data updates (rowData, gridOptions, columns_state changed)
+  // Handle runtime updates that must go through the imperative API.
+  // rowData is NOT handled here — it flows via the <AgGridReact rowData> prop.
   useEffect(() => {
-    if (!gridApiRef.current || !prevDataRef.current) return
+    if (!gridApiRef.current) return
 
     const prevData = prevDataRef.current
+    prevDataRef.current = data
 
-    // Check if rowData changed
-    const currentRowData = parseData(data)
-    const prevRowData = parseData(prevData)
-    if (!isEqual(currentRowData, prevRowData)) {
-      gridApiRef.current.updateGridOptions({ rowData: currentRowData })
-    }
+    // First commit — nothing to diff against; onGridReady already applied initial state.
+    if (!prevData) return
 
-    // Check if gridOptions changed (excluding rowData)
+    // Diff gridOptions (excluding rowData, which is handled by the prop)
     const prevGo = omit(prevData.gridOptions, "rowData")
     const currGo = omit(data.gridOptions, "rowData")
     if (!isEqual(prevGo, currGo)) {
       const go = parseGridOptions(data)
+      delete (go as any).rowData
       gridApiRef.current.updateGridOptions(go)
     }
 
-    // Check if columns_state changed
+    // Diff columns_state
     if (!isEqual(prevData.columns_state, data.columns_state)) {
       if (data.columns_state != null) {
         gridApiRef.current.applyColumnState({
@@ -173,8 +187,6 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         })
       }
     }
-
-    prevDataRef.current = data
   }, [data])
 
   const onGridReady = useCallback(
@@ -248,6 +260,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       />
       <AgGridReact
         onGridReady={onGridReady}
+        rowData={rowData}
         gridOptions={gridOptions}
       />
     </div>
