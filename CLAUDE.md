@@ -13,11 +13,11 @@ Read-only grid — no cell editing. Focus: display, selection, filtering, sortin
 ```
 st_aggrid/                   # Python package
 ├── __init__.py              # Public API exports
-├── AgGrid.py                # Main AgGrid() function + call_grid_api()
+├── aggrid.py                # Main AgGrid() function + call_grid_api()
 ├── component.py             # CCv2 component registration (loads built JS/CSS)
 ├── result.py                # AgGridResult wrapper
 ├── grid_options_builder.py  # GridOptionsBuilder helper
-├── shared.py                # JsCode, StAggridTheme, AgGridTheme, walk_gridOptions
+├── shared.py                # JsCode, StAggridTheme, AgGridTheme, walk_grid_options
 ├── aggrid_utils.py          # Data/gridOptions parsing
 └── frontend/                # TypeScript/React frontend (Vite)
     ├── src/

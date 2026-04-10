@@ -1,25 +1,21 @@
 import json
 import pathlib
+import re
+from collections.abc import Mapping
 from enum import Enum, EnumMeta
-from typing import List, Literal, Mapping, Optional, TypedDict
+from typing import List, Literal, Optional, TypedDict
 
 
-def getAllGridOptions():
-    jsonRoot = pathlib.Path(__file__).parent / "json"
-    allOptions = json.load(open(jsonRoot / "gridOptions.json"))
-    return allOptions
+def _get_all_grid_options():
+    json_root = pathlib.Path(__file__).parent / "json"
+    with open(json_root / "gridOptions.json") as f:
+        return json.load(f)
 
 
-def getAllColumnProps():
-    jsonRoot = pathlib.Path(__file__).parent / "json"
-    allProps = json.load(open(jsonRoot / "columnProps.json"))
-    return allProps
-
-
-def getAllGridEvents():
-    jsonRoot = pathlib.Path(__file__).parent / "json"
-    allGridEvents = json.load(open(jsonRoot / "gridEvents.json"))
-    return allGridEvents
+def _get_all_column_props():
+    json_root = pathlib.Path(__file__).parent / "json"
+    with open(json_root / "columnProps.json") as f:
+        return json.load(f)
 
 
 class MetaEnum(EnumMeta):
@@ -45,8 +41,6 @@ class JsCode:
         Args:
             js_code (str): javascript function code as str
         """
-        import re
-
         match_js_comment_expression = r"\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$"
         js_code = re.sub(
             re.compile(match_js_comment_expression, re.MULTILINE), r"\1", js_code
@@ -58,29 +52,20 @@ class JsCode:
         self.js_code = f"{js_placeholder}{one_line_jscode}{js_placeholder}"
 
 
-class JsCodeEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, JsCode):
-            return o.js_code
-        return super().default(o)
-
-
-def walk_gridOptions(go, func):
+def walk_grid_options(go, func):
     """Recursively walk grid options applying func at each leaf node.
 
     Args:
         go (dict): gridOptions dictionary
         func (callable): a function to apply at leaf nodes
     """
-    from collections.abc import Mapping
-
     if isinstance(go, (Mapping, list)):
         for i, k in enumerate(go):
             if isinstance(go[k], Mapping):
-                walk_gridOptions(go[k], func)
+                walk_grid_options(go[k], func)
             elif isinstance(go[k], list):
                 for j in go[k]:
-                    walk_gridOptions(j, func)
+                    walk_grid_options(j, func)
             else:
                 go[k] = func(go[k])
 
@@ -101,7 +86,7 @@ class StAggridThemeType(TypedDict):
 
 class StAggridTheme(dict):
     def __init__(self, base: Optional[Literal["alpine", "balham", "quartz"]] = None):
-        super()
+        super().__init__()
 
         self["params"] = {}
         self["parts"] = list()
@@ -112,10 +97,10 @@ class StAggridTheme(dict):
     def base(self, base: Literal["alpine", "balham", "quartz"]):
         self["base"] = base
 
-    def withParams(self, **params: Mapping[str, str | int]):
+    def with_params(self, **params: Mapping[str, str | int]):
         self["params"].update(params)
         return self
 
-    def withParts(self, *parts: List[str]):
-        self["parts"] = list(set(self["parts"]).union(set(parts)))
+    def with_parts(self, *parts: str):
+        self["parts"] = list(dict.fromkeys([*self["parts"], *parts]))
         return self

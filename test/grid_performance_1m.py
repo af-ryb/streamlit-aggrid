@@ -70,7 +70,7 @@ start_time = time.time()
 
 grid_response = AgGrid(
     df,
-    gridOptions=grid_options,
+    grid_options=grid_options,
     theme="alpine",
     key="performance_grid_1m",
     collect=["getSelectedRows", "getColumnState"],

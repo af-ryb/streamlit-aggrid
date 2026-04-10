@@ -107,7 +107,7 @@ if 14 in TESTS:
         "(value && typeof value === 'object') ? JSON.stringify(value) : value"
     )
 
-    gridOptions = {
+    grid_options = {
         "columnDefs": [
             {"field": "hashable_int", "headerName": "Int"},
             {"field": "hashable_str", "headerName": "String"},
@@ -123,7 +123,7 @@ if 14 in TESTS:
     }
     AgGrid(
         mixed_data,
-        gridOptions=gridOptions,
+        grid_options=grid_options,
         key="test_mixed_data",
         use_json_serialization=True,
     )

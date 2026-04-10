@@ -27,7 +27,7 @@ grid_options = gb.build()
 
 r = AgGrid(
     df,
-    gridOptions=grid_options,
+    grid_options=grid_options,
     enable_enterprise_modules=False,
     height=300,
     key="drag_grid",

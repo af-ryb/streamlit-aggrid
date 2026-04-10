@@ -26,13 +26,13 @@ df = get_data()
 # Configure grid options
 gb = GridOptionsBuilder.from_dataframe(df)
 gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-gb.configure_pagination(enabled=True, paginationAutoPageSize=True)
+gb.configure_pagination(enabled=True, auto_page_size=True)
 grid_options = gb.build()
 
 # Render grid with auto-collect
 result: AgGridResult = AgGrid(
     df,
-    gridOptions=grid_options,
+    grid_options=grid_options,
     height=400,
     collect=["getSelectedRows", "getFilterModel", "getColumnState"],
     update_on=["selectionChanged", "filterChanged", "sortChanged"],

@@ -1,12 +1,13 @@
-import os
 import json
-import pandas as pd
-
-from typing import Any, Mapping, Tuple
-from st_aggrid.grid_options_builder import GridOptionsBuilder
-from st_aggrid.shared import JsCode, walk_gridOptions
+import os
+from collections.abc import Mapping
 from io import StringIO
 from pathlib import Path
+
+import pandas as pd
+
+from st_aggrid.grid_options_builder import GridOptionsBuilder
+from st_aggrid.shared import JsCode, walk_grid_options
 
 
 def _dataframe_arrow_compatible(df: "pd.DataFrame") -> bool:
@@ -125,7 +126,7 @@ def _parse_data_and_grid_options(
 
     # Process JsCode objects
     if unsafe_allow_jscode and grid_options:
-        walk_gridOptions(
+        walk_grid_options(
             grid_options, lambda v: v.js_code if isinstance(v, JsCode) else v
         )
 

@@ -1,19 +1,13 @@
-import streamlit as st
-import pandas as pd
-import logging
 import uuid
 from typing import Callable, Dict, List, Literal, Optional, Union
-from collections.abc import Mapping
-from pathlib import Path
 
-from st_aggrid.shared import (
-    JsCode,
-    StAggridTheme,
-    AgGridTheme,
-)
+import pandas as pd
+import streamlit as st
+
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
 from st_aggrid.component import _aggrid_component
 from st_aggrid.result import AgGridResult
+from st_aggrid.shared import AgGridTheme, StAggridTheme
 
 
 def _get_streamlit_theme() -> Optional[Dict]:
@@ -31,7 +25,6 @@ def _get_streamlit_theme() -> Optional[Dict]:
         # Detect light/dark based on background color luminance
         base = "light"
         if bg:
-            # Simple heuristic: dark backgrounds have low luminance
             bg_clean = bg.lstrip("#")
             if len(bg_clean) == 6:
                 r, g, b = int(bg_clean[:2], 16), int(bg_clean[2:4], 16), int(bg_clean[4:6], 16)
@@ -53,7 +46,7 @@ def _get_streamlit_theme() -> Optional[Dict]:
 
 def AgGrid(
     data: Union[pd.DataFrame, str] = None,
-    gridOptions: Optional[Dict] = None,
+    grid_options: Optional[Dict] = None,
     height: int = 400,
     collect: Optional[List[str]] = None,
     update_on: Optional[List] = None,
@@ -66,10 +59,12 @@ def AgGrid(
     key: Optional[str] = None,
     show_toolbar: bool = False,
     show_search: bool = True,
-    show_download_button: bool = True,
+    show_download_button: bool = False,
     on_grid_state_change: Optional[Callable] = None,
     on_api_response_change: Optional[Callable] = None,
     use_json_serialization: Union[bool, Literal["auto"]] = "auto",
+    debug: bool = False,
+    pro_assets: Optional[List[Dict]] = None,
     **default_column_parameters,
 ) -> AgGridResult:
     """Renders a DataFrame using AG-Grid (CCv2, no iframe).
@@ -80,8 +75,10 @@ def AgGrid(
         The data to be displayed. Accepts Pandas/Polars DataFrames,
         JSON string in records format, or path to a JSON file.
 
-    gridOptions : dict, optional
+    grid_options : dict, optional
         AG-Grid options dictionary. If None, auto-generated from data.
+        Keys inside this dictionary must use AG-Grid's camelCase naming
+        (``columnDefs``, ``defaultColDef``, ``rowSelection``, …).
 
     height : int, optional
         Grid height in pixels. Set to None for auto-height. Default: 400.
@@ -97,7 +94,7 @@ def AgGrid(
         Default: ["selectionChanged", "filterChanged", "sortChanged"].
 
     allow_unsafe_jscode : bool, optional
-        Allow JsCode injection in gridOptions. Default: False.
+        Allow JsCode injection in grid_options. Default: False.
 
     enable_enterprise_modules : bool | str, optional
         Enable AG-Grid Enterprise features. Default: False.
@@ -125,13 +122,25 @@ def AgGrid(
         Show search in toolbar. Default: True.
 
     show_download_button : bool, optional
-        Show CSV download button in toolbar. Default: True.
+        Show CSV download button in toolbar. Default: False.
 
     on_grid_state_change : callable, optional
         Callback when auto-collected grid state changes.
 
     on_api_response_change : callable, optional
         Callback when an explicit API call returns a response.
+
+    use_json_serialization : bool | "auto", optional
+        Whether to serialize rowData as a JSON string (bypasses Arrow
+        limits for DataFrames with heterogeneous list/set cells).
+        Default: "auto" — detect at runtime.
+
+    debug : bool, optional
+        Enable verbose client-side logging. Default: False.
+
+    pro_assets : list[dict], optional
+        Extra JS/CSS assets to inject on the client side.
+        Each item is ``{"js": "<url>"}`` or ``{"css": "<url>"}``.
 
     **default_column_parameters
         Additional parameters passed to defaultColDef.
@@ -169,14 +178,10 @@ def AgGrid(
             f"{theme} is not valid. Available: {AgGridTheme.__members__}"
         )
 
-    # Extract non-gridOption params from kwargs
-    debug = default_column_parameters.pop("debug", False)
-    pro_assets = default_column_parameters.pop("pro_assets", None)
-
-    # Parse data and gridOptions
-    data_df, gridOptions, _column_types = _parse_data_and_grid_options(
+    # Parse data and grid_options
+    data_df, grid_options, _column_types = _parse_data_and_grid_options(
         data,
-        gridOptions,
+        grid_options,
         default_column_parameters,
         allow_unsafe_jscode,
         use_json_serialization=use_json_serialization,
@@ -185,7 +190,7 @@ def AgGrid(
     custom_css = custom_css or {}
 
     if height is None:
-        gridOptions["domLayout"] = "autoHeight"
+        grid_options["domLayout"] = "autoHeight"
 
     # Detect Streamlit theme
     streamlit_theme = _get_streamlit_theme()
@@ -205,10 +210,11 @@ def AgGrid(
             else data_df
         )
 
-    # Build data payload for CCv2
+    # Build data payload for CCv2. Keys must stay camelCase where the frontend
+    # AgGridData TypeScript interface expects camelCase (rowData, gridOptions).
     component_data = {
-        "rowData": data_df,  # DataFrame -- CCv2 should Arrow-serialize it
-        "gridOptions": gridOptions,
+        "rowData": data_df,  # CCv2 will Arrow-serialize the DataFrame
+        "gridOptions": grid_options,
         "height": height,
         "collect": collect,
         "update_on": update_on,
@@ -228,10 +234,13 @@ def AgGrid(
     }
 
     # Ensure callbacks are set so result attributes exist
+    def _noop() -> None:
+        return None
+
     if on_grid_state_change is None:
-        on_grid_state_change = lambda: None
+        on_grid_state_change = _noop
     if on_api_response_change is None:
-        on_api_response_change = lambda: None
+        on_api_response_change = _noop
 
     # Mount the component
     result = _aggrid_component(
@@ -264,8 +273,9 @@ def call_grid_api(key: str, method: str, params: Optional[Dict] = None) -> None:
 
     Example
     -------
-    >>> if st.button("Export CSV"):
-    ...     call_grid_api("my_grid", "exportDataAsCsv", {"fileName": "export.csv"})
+    `if st.button("Export CSV"):
+         call_grid_api("my_grid", "exportDataAsCsv", {"fileName": "export.csv"})
+    `
     """
     call_id = str(uuid.uuid4())
     st.session_state[f"_aggrid_api_call_{key}"] = {

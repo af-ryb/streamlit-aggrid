@@ -1,5 +1,10 @@
+import logging
 from collections import defaultdict
-from st_aggrid.shared import getAllColumnProps, getAllGridOptions
+
+from st_aggrid.shared import _get_all_column_props, _get_all_grid_options
+
+logger = logging.getLogger(__name__)
+
 
 class GridOptionsBuilder:
     """Builder for gridOptions dictionary"""
@@ -8,7 +13,7 @@ class GridOptionsBuilder:
         def ddict():
             return defaultdict(ddict)
 
-        self.__grid_options = ddict()
+        self._grid_options = ddict()
         self.sideBar: dict = dict()
 
     @staticmethod
@@ -25,10 +30,10 @@ class GridOptionsBuilder:
         """
 
         if (
-        hasattr(dataframe, '__class__') and 
-        dataframe.__class__.__module__ and
-        'polars' in dataframe.__class__.__module__ and
-        dataframe.__class__.__name__ == 'DataFrame'
+            hasattr(dataframe, "__class__")
+            and dataframe.__class__.__module__
+            and "polars" in dataframe.__class__.__module__
+            and dataframe.__class__.__name__ == "DataFrame"
         ):
             dataframe = dataframe.to_pandas(use_pyarrow_extension_array=False)
 
@@ -47,19 +52,19 @@ class GridOptionsBuilder:
             "V": [],
         }
 
-        COLUMN_PROPS = [i["name"] for i in getAllColumnProps()]
-        GRID_OPTIONS = [i["name"] for i in getAllGridOptions()]
+        column_props = {i["name"] for i in _get_all_column_props()}
+        grid_options = {i["name"] for i in _get_all_grid_options()}
 
         gb = GridOptionsBuilder()
 
         # fetch extra args that should go to DefaultColumns
         for k, v in default_column_parameters.items():
-            if k in COLUMN_PROPS:
+            if k in column_props:
                 gb.configure_default_column(**{k: v})
-            elif k in GRID_OPTIONS:
+            elif k in grid_options:
                 gb.configure_grid_options(**{k: v})
             else:
-                print(f"{k} is not a valid gridOption or columnDef.")
+                logger.warning("%s is not a valid gridOption or columnDef.", k)
 
         if any("." in col for col in map(str, dataframe.columns)):
             gb.configure_grid_options(suppressFieldDotNotation=True)
@@ -67,16 +72,11 @@ class GridOptionsBuilder:
         for col_name, col_type in zip(map(str, dataframe.columns), dataframe.dtypes):
             gb.configure_column(field=col_name, type=type_mapper.get(col_type.kind, []))
 
-        gb.configure_grid_options(
-            autoSizeStrategy={"type": "fitGridWidth"}
-        )
+        gb.configure_grid_options(autoSizeStrategy={"type": "fitGridWidth"})
 
         return gb
 
-    def configure_default_column(
-        self,
-        **other_default_column_properties,
-    ):
+    def configure_default_column(self, **other_default_column_properties):
         """Configure default column.
 
         Args:
@@ -84,23 +84,18 @@ class GridOptionsBuilder:
                 Key value pairs that will be merged to defaultColDef dict.
                 Check ag-grid documentation for available properties.
         """
-        defaultColDef = {}
-        if other_default_column_properties:
-            defaultColDef = {**defaultColDef, **other_default_column_properties}
-
-        self.__grid_options["defaultColDef"] = {
-            **self.__grid_options["defaultColDef"],
+        self._grid_options["defaultColDef"] = {
+            **self._grid_options["defaultColDef"],
             **other_default_column_properties,
         }
 
-    def configure_auto_height(self, autoHeight=True):
-        """
-        Makes grid autoheight
+    def configure_auto_height(self, enabled: bool = True):
+        """Makes grid autoheight.
 
         Args:
-            autoHeight (bool, optional): enable or disable autoheight. Defaults to True.
+            enabled (bool, optional): enable or disable autoheight. Defaults to True.
         """
-        if autoHeight:
+        if enabled:
             self.configure_grid_options(domLayout="autoHeight")
         else:
             self.configure_grid_options(domLayout="normal")
@@ -111,20 +106,21 @@ class GridOptionsBuilder:
         Args:
             props (dict): props dicts will be merged to gridOptions root.
         """
-        self.__grid_options.update(props)
+        self._grid_options.update(props)
 
-    def configure_columns(self, column_names=[], **props):
+    def configure_columns(self, column_names=None, **props):
         """Batch configures columns. Key-pair values from props dict will be merged
         to colDefs which field property is in column_names list.
 
         Args:
             column_names (list, optional):
                 columns field properties. If any of colDefs matches **props dict is merged.
-                Defaults to [].
+                Defaults to None.
         """
-        for k in self.__grid_options["columnDefs"]:
+        column_names = column_names or []
+        for k in self._grid_options["columnDefs"]:
             if k in column_names:
-                self.__grid_options["columnDefs"][k].update(props)
+                self._grid_options["columnDefs"][k].update(props)
 
     def configure_column(self, field, header_name=None, **other_column_properties):
         """Configures an individual column
@@ -134,21 +130,24 @@ class GridOptionsBuilder:
             field (String): field name, usually equals the column header.
             header_name (String, optional): [description]. Defaults to None.
         """
-        if not self.__grid_options.get("columnDefs", None):
-            self.__grid_options["columnDefs"] = defaultdict(dict)
+        if not self._grid_options.get("columnDefs", None):
+            self._grid_options["columnDefs"] = defaultdict(dict)
 
-        colDef = {
+        col_def = {
             "headerName": field if header_name is None else header_name,
             "field": field,
         }
 
         if other_column_properties:
-            colDef = {**colDef, **other_column_properties}
+            col_def = {**col_def, **other_column_properties}
 
-        self.__grid_options["columnDefs"][field].update(colDef)
+        self._grid_options["columnDefs"][field].update(col_def)
 
     def configure_side_bar(
-        self, filters_panel=True, columns_panel=True, defaultToolPanel=""
+        self,
+        filters_panel: bool = True,
+        columns_panel: bool = True,
+        default_tool_panel: str = "",
     ):
         """configures the side panel of ag-grid.
            Side panels are enterprise features, please check www.ag-grid.com
@@ -160,9 +159,9 @@ class GridOptionsBuilder:
             columns_panel (bool, optional):
                 Enable columns side panel. Defaults to True.
 
-            defaultToolPanel (str, optional): The default tool panel that should open when grid renders.
-                                              Either "filters" or "columns".
-                                              If value is blank, panel will start closed (default)
+            default_tool_panel (str, optional): The default tool panel that should open when grid renders.
+                                                Either "filters" or "columns".
+                                                If value is blank, panel will start closed (default)
         """
         filter_panel = {
             "id": "filters",
@@ -172,7 +171,7 @@ class GridOptionsBuilder:
             "toolPanel": "agFiltersToolPanel",
         }
 
-        columns_panel = {
+        columns_panel_def = {
             "id": "columns",
             "labelDefault": "Columns",
             "labelKey": "columns",
@@ -181,14 +180,14 @@ class GridOptionsBuilder:
         }
 
         if filters_panel or columns_panel:
-            sideBar = {"toolPanels": [], "defaultToolPanel": defaultToolPanel}
+            side_bar = {"toolPanels": [], "defaultToolPanel": default_tool_panel}
 
             if filters_panel:
-                sideBar["toolPanels"].append(filter_panel)
+                side_bar["toolPanels"].append(filter_panel)
             if columns_panel:
-                sideBar["toolPanels"].append(columns_panel)
+                side_bar["toolPanels"].append(columns_panel_def)
 
-            self.__grid_options["sideBar"] = sideBar
+            self._grid_options["sideBar"] = side_bar
 
     def configure_selection(
         self,
@@ -198,11 +197,11 @@ class GridOptionsBuilder:
         header_checkbox_filtered_only: bool = True,
         pre_select_all_rows: bool = False,
         pre_selected_rows: list = None,
-        rowMultiSelectWithClick: bool = False,
-        suppressRowDeselection: bool = False,
-        suppressRowClickSelection: bool = False,
-        groupSelectsChildren: bool = True,
-        groupSelectsFiltered: bool = True,
+        row_multi_select_with_click: bool = False,
+        suppress_row_deselection: bool = False,
+        suppress_row_click_selection: bool = False,
+        group_selects_children: bool = True,
+        group_selects_filtered: bool = True,
     ):
         """Configure grid selection features
 
@@ -224,65 +223,66 @@ class GridOptionsBuilder:
             pre_selected_rows (list, optional):
                 Use list of dataframe row iloc index to set corresponding rows as selected state on load. Defaults to None.
 
-            rowMultiSelectWithClick (bool, optional):
+            row_multi_select_with_click (bool, optional):
                 If False user must hold shift to multiselect. Defaults to True if selection_mode is 'multiple'.
 
-            suppressRowDeselection (bool, optional):
+            suppress_row_deselection (bool, optional):
                 Set to true to prevent rows from being deselected if you hold down Ctrl and click the row
                 (i.e. once a row is selected, it remains selected until another row is selected in its place).
                 By default the grid allows deselection of rows.
                 Defaults to False.
 
-            suppressRowClickSelection (bool, optional):
+            suppress_row_click_selection (bool, optional):
                 Supress row selection by clicking. Usefull for checkbox selection for instance
                 Defaults to False.
 
-            groupSelectsChildren (bool, optional):
+            group_selects_children (bool, optional):
                 When rows are grouped selecting a group select all children.
                 Defaults to True.
 
-            groupSelectsFiltered (bool, optional):
+            group_selects_filtered (bool, optional):
                 When a group is selected filtered rows are also selected.
                 Defaults to True.
         """
         if selection_mode == "disabled":
-            self.__grid_options.pop("rowSelection", None)
-            self.__grid_options.pop("rowMultiSelectWithClick", None)
-            self.__grid_options.pop("suppressRowDeselection", None)
-            self.__grid_options.pop("suppressRowClickSelection", None)
-            self.__grid_options.pop("groupSelectsChildren", None)
-            self.__grid_options.pop("groupSelectsFiltered", None)
+            self._grid_options.pop("rowSelection", None)
+            self._grid_options.pop("rowMultiSelectWithClick", None)
+            self._grid_options.pop("suppressRowDeselection", None)
+            self._grid_options.pop("suppressRowClickSelection", None)
+            self._grid_options.pop("groupSelectsChildren", None)
+            self._grid_options.pop("groupSelectsFiltered", None)
             return
 
         if use_checkbox:
-            suppressRowClickSelection = True
-            first_key = next(iter(self.__grid_options["columnDefs"].keys()))
-            self.__grid_options["columnDefs"][first_key]["checkboxSelection"] = True
+            suppress_row_click_selection = True
+            first_key = next(iter(self._grid_options["columnDefs"].keys()))
+            self._grid_options["columnDefs"][first_key]["checkboxSelection"] = True
             if header_checkbox:
-                self.__grid_options["columnDefs"][first_key][
+                self._grid_options["columnDefs"][first_key][
                     "headerCheckboxSelection"
                 ] = True
                 if header_checkbox_filtered_only:
-                    self.__grid_options["columnDefs"][first_key][
+                    self._grid_options["columnDefs"][first_key][
                         "headerCheckboxSelectionFilteredOnly"
                     ] = True
 
         if pre_selected_rows:
-            # self.__grid_options["preSelectedRows"] = pre_selected_rows
-            self.__grid_options["initialState"]["rowSelection"] = pre_selected_rows
+            self._grid_options["initialState"]["rowSelection"] = pre_selected_rows
 
-        self.__grid_options["rowSelection"] = selection_mode
-        self.__grid_options["rowMultiSelectWithClick"] = rowMultiSelectWithClick
-        self.__grid_options["suppressRowDeselection"] = suppressRowDeselection
-        self.__grid_options["suppressRowClickSelection"] = suppressRowClickSelection
-        self.__grid_options["groupSelectsChildren"] = (
-            groupSelectsChildren and selection_mode == "multiple"
+        self._grid_options["rowSelection"] = selection_mode
+        self._grid_options["rowMultiSelectWithClick"] = row_multi_select_with_click
+        self._grid_options["suppressRowDeselection"] = suppress_row_deselection
+        self._grid_options["suppressRowClickSelection"] = suppress_row_click_selection
+        self._grid_options["groupSelectsChildren"] = (
+            group_selects_children and selection_mode == "multiple"
         )
-        self.__grid_options["groupSelectsFiltered"] = groupSelectsFiltered
-        # self.__grid_options["preSelectAllRows"] = pre_select_all_rows
+        self._grid_options["groupSelectsFiltered"] = group_selects_filtered
 
     def configure_pagination(
-        self, enabled=True, paginationAutoPageSize=True, paginationPageSize=10
+        self,
+        enabled: bool = True,
+        auto_page_size: bool = True,
+        page_size: int = 10,
     ):
         """Configure grid's pagination features
 
@@ -290,42 +290,41 @@ class GridOptionsBuilder:
             enabled (bool, optional):
                 Self explanatory. Defaults to True.
 
-            paginationAutoPageSize (bool, optional):
+            auto_page_size (bool, optional):
                 Calculates optimal pagination size based on grid Height. Defaults to True.
 
-            paginationPageSize (int, optional):
+            page_size (int, optional):
                 Forces page to have this number of rows per page. Defaults to 10.
         """
         if not enabled:
-            self.__grid_options.pop("pagination", None)
-            self.__grid_options.pop("paginationAutoPageSize", None)
-            self.__grid_options.pop("paginationPageSize", None)
+            self._grid_options.pop("pagination", None)
+            self._grid_options.pop("paginationAutoPageSize", None)
+            self._grid_options.pop("paginationPageSize", None)
             return
 
-        self.__grid_options["pagination"] = True
-        if paginationAutoPageSize:
-            self.__grid_options["paginationAutoPageSize"] = paginationAutoPageSize
+        self._grid_options["pagination"] = True
+        if auto_page_size:
+            self._grid_options["paginationAutoPageSize"] = auto_page_size
         else:
-            self.__grid_options["paginationPageSize"] = paginationPageSize
+            self._grid_options["paginationPageSize"] = page_size
 
     def configure_first_column_as_index(
         self,
-        suppressMenu: bool = True,
-        headerText: str = "",
-        resizable=False,
-        sortable=True,
+        suppress_menu: bool = True,
+        header_text: str = "",
+        resizable: bool = False,
+        sortable: bool = True,
     ):
         """
         Configures the first column definition to look as an index column.
 
         Args:
-            suppressMenu (bool, optional): Suppresses the header menu for the index col. Defaults to True.
-            headerText (str, optional): Header for the index column. Defaults to empty string.
+            suppress_menu (bool, optional): Suppresses the header menu for the index col. Defaults to True.
+            header_text (str, optional): Header for the index column. Defaults to empty string.
             resizable (bool, optional): Make index column resizable. Defaults to False.
             sortable (bool, optional): Make index column sortable. Defaults to True.
 
         """
-
         index_options = {
             "minWidth": 0,
             "cellStyle": {"color": "white", "background-color": "gray"},
@@ -333,12 +332,12 @@ class GridOptionsBuilder:
             "resizable": resizable,
             "sortable": sortable,
             "suppressMovable": True,
-            "suppressMenu": suppressMenu,
+            "suppressMenu": suppress_menu,
             "menuTabs": ["filterMenuTab"],
         }
-        first_col_def = next(iter(self.__grid_options["columnDefs"]))
+        first_col_def = next(iter(self._grid_options["columnDefs"]))
 
-        self.configure_column(first_col_def, headerText, **index_options)
+        self.configure_column(first_col_def, header_text, **index_options)
 
     def build(self):
         """Builds the gridOptions dictionary
@@ -346,8 +345,8 @@ class GridOptionsBuilder:
         Returns:
             dict: Returns a dicionary containing the configured grid options
         """
-        self.__grid_options["columnDefs"] = list(
-            self.__grid_options["columnDefs"].values()
+        self._grid_options["columnDefs"] = list(
+            self._grid_options["columnDefs"].values()
         )
 
-        return self.__grid_options
+        return self._grid_options

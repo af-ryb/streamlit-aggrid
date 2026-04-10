@@ -44,7 +44,7 @@ The `collect` parameter specifies which AG-Grid API methods to call automaticall
 ```python
 result = AgGrid(
     df,
-    gridOptions=grid_options,
+    grid_options=grid_options,
     collect=["getSelectedRows", "getFilterModel", "getColumnState"],
     update_on=["selectionChanged", "filterChanged", "sortChanged",
                ("columnResized", 300), ("columnMoved", 500)],
@@ -73,7 +73,7 @@ from st_aggrid import AgGrid, call_grid_api
 
 @st.fragment
 def grid_section():
-    result = AgGrid(df, gridOptions=grid_options, key="my_grid")
+    result = AgGrid(df, grid_options=grid_options, key="my_grid")
 
     if st.button("Get Column State"):
         call_grid_api("my_grid", "getColumnState")
@@ -96,10 +96,10 @@ gb = GridOptionsBuilder.from_dataframe(df)
 gb.configure_default_column(enableRowGroup=True, minWidth=100)
 gb.configure_selection("multiple", use_checkbox=True)
 gb.configure_side_bar(filters_panel=True, columns_panel=True)
-gb.configure_pagination(enabled=True, paginationAutoPageSize=True)
+gb.configure_pagination(enabled=True, auto_page_size=True)
 grid_options = gb.build()
 
-result = AgGrid(df, gridOptions=grid_options, key="my_grid")
+result = AgGrid(df, grid_options=grid_options, key="my_grid")
 ```
 
 ### Themes
@@ -115,8 +115,8 @@ AgGrid(df, theme="material")
 from st_aggrid import StAggridTheme
 
 theme = StAggridTheme("quartz")
-theme.withParams(accentColor="#ff0000", headerFontSize=14)
-theme.withParts("colorSchemeDark", "iconSetAlpine")
+theme.with_params(accentColor="#ff0000", headerFontSize=14)
+theme.with_parts("colorSchemeDark", "iconSetAlpine")
 
 AgGrid(df, theme=theme)
 ```
@@ -128,7 +128,7 @@ AG-Grid Enterprise features (row grouping, pivoting, Excel export, etc.) require
 ```python
 AgGrid(
     df,
-    gridOptions=grid_options,
+    grid_options=grid_options,
     enable_enterprise_modules=True,          # or "enterprise+AgCharts"
     license_key="your-license-key",
     key="my_grid",
@@ -149,7 +149,7 @@ cell_renderer = JsCode("""
 """)
 
 gb.configure_column("Name", cellRenderer=cell_renderer)
-result = AgGrid(df, gridOptions=gb.build(), allow_unsafe_jscode=True, key="my_grid")
+result = AgGrid(df, grid_options=gb.build(), allow_unsafe_jscode=True, key="my_grid")
 ```
 
 ### Toolbar
@@ -171,11 +171,11 @@ AgGrid(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `data` | DataFrame / str | None | Data to display |
-| `gridOptions` | dict | None | AG-Grid options (auto-generated from data if None) |
+| `grid_options` | dict | None | AG-Grid options (auto-generated from data if None) |
 | `height` | int | 400 | Grid height in px (None for auto-height) |
 | `collect` | list[str] | `["getSelectedRows"]` | AG-Grid API methods to auto-collect |
 | `update_on` | list | `["selectionChanged", "filterChanged", "sortChanged"]` | Events triggering auto-collect |
-| `allow_unsafe_jscode` | bool | False | Allow JsCode in gridOptions |
+| `allow_unsafe_jscode` | bool | False | Allow JsCode in grid_options |
 | `enable_enterprise_modules` | bool/str | False | Enable enterprise features |
 | `license_key` | str | None | AG-Grid license key |
 | `columns_state` | dict | None | Initial column state |
@@ -231,7 +231,7 @@ grid_options = gb.build()
 def grid_section():
     result = AgGrid(
         df,
-        gridOptions=grid_options,
+        grid_options=grid_options,
         collect=["getSelectedRows", "getColumnState"],
         update_on=["selectionChanged", ("columnResized", 300)],
         show_toolbar=True,
