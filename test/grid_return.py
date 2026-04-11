@@ -251,7 +251,7 @@ def make_grid4():
             {"headerName": "Active", "field": "active", "width": 100},
         ],
         "autoSizeStrategy": {"type": "fitGridWidth"},
-        # AG-Grid 34.x auto-adds a selection column when checkboxes=True.
+        # AG-Grid auto-adds a selection column when checkboxes=True.
         "rowSelection": {"mode": "multiRow", "checkboxes": True},
         "pagination": True,
         "paginationPageSize": 10,

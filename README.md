@@ -2,7 +2,7 @@
 
 Streamlit component for [AG-Grid](https://www.ag-grid.com/) built on Custom Components v2 (no iframe).
 
-AG-Grid version: [34.3.1](https://www.ag-grid.com/archive/34.3.1/)
+AG-Grid version: [35.2.1](https://www.ag-grid.com/archive/35.2.1/)
 
 ## Install
 

@@ -40,13 +40,13 @@ test/                        # Playwright e2e tests
 
 ## AG-Grid Version
 
-**Current: 34.3.1**
+**Current: 35.2.1**
 
 AG-Grid packages in `st_aggrid/frontend/package.json`:
-- `ag-grid-community` — `^34.3.1`
-- `ag-grid-enterprise` — `34.3.1`
-- `ag-grid-react` — `34.3.1`
-- `ag-charts-enterprise` — `^12.3.1`
+- `ag-grid-community` — `^35.2.1`
+- `ag-grid-enterprise` — `35.2.1`
+- `ag-grid-react` — `35.2.1`
+- `ag-charts-enterprise` — `^13.2.1`
 
 When updating AG-Grid:
 1. Update all `ag-grid-*` packages in `st_aggrid/frontend/package.json`
