@@ -3,7 +3,7 @@ from st_aggrid import AgGrid, JsCode
 import pandas as pd
 import json
 
-TESTS = list(range(20))
+TESTS = list(range(21))
 
 if 1 in TESTS:
     """grid renders lists"""
@@ -107,7 +107,7 @@ if 14 in TESTS:
         "(value && typeof value === 'object') ? JSON.stringify(value) : value"
     )
 
-    gridOptions = {
+    grid_options = {
         "columnDefs": [
             {"field": "hashable_int", "headerName": "Int"},
             {"field": "hashable_str", "headerName": "String"},
@@ -123,7 +123,7 @@ if 14 in TESTS:
     }
     AgGrid(
         mixed_data,
-        gridOptions=gridOptions,
+        grid_options=grid_options,
         key="test_mixed_data",
         use_json_serialization=True,
     )
@@ -139,3 +139,22 @@ if 15 in TESTS:
         }
     )
     AgGrid(empty_unhashable, key="test_empty_unhashable", use_json_serialization=True)
+
+if 20 in TESTS:
+    """Data reactivity: DataFrame can change without remounting the grid (stable key)"""
+    if "reactivity_rows" not in st.session_state:
+        st.session_state.reactivity_rows = 3
+    st.button(
+        "Add reactivity row",
+        on_click=lambda: st.session_state.update(
+            reactivity_rows=st.session_state.reactivity_rows + 1
+        ),
+    )
+    reactivity_df = pd.DataFrame(
+        {
+            "id": list(range(st.session_state.reactivity_rows)),
+            "name": [f"row_{i}" for i in range(st.session_state.reactivity_rows)],
+        }
+    )
+    # stable key — the grid must reactively pick up new rowData without a remount
+    AgGrid(reactivity_df, key="grid_data_reactivity")

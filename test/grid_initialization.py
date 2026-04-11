@@ -79,4 +79,4 @@ if 6 in TESTS:
     import pathlib
     data_file = str(pathlib.Path(__file__).parent.joinpath("olympic-winners.json").absolute())
     go_file = str(pathlib.Path(__file__).parent.joinpath("test-gridOptions.json").absolute())
-    AgGrid(data_file, gridOptions=go_file, key="grid_loads_data_and_go_json_from_file")
+    AgGrid(data_file, grid_options=go_file, key="grid_loads_data_and_go_json_from_file")

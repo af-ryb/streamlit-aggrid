@@ -12,6 +12,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!st_aggrid/frontend/build/
 develop-eggs/
 dist/
 downloads/
@@ -185,7 +186,6 @@ streamlit_aggrid.egg-info/*
 streamlit_aggrid.egg-info/PKG-INFO
 Pipfile.lock
 Pipfile
-#/poetry.lock
 /.env
 
 ########################################################################

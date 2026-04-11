@@ -1,24 +1,24 @@
-.grid-wrapper {
+.st-aggrid-scope .grid-wrapper {
   display: flex;
-  flex-direction: column; /* Stack toolbar and grid vertically */
+  flex-direction: column;
   width: 100%;
-  height: 100%; /* Ensure the wrapper takes the full height of the parent */
+  height: 100%;
 }
 
-.grid-toolbar-container {
+.st-aggrid-scope .grid-toolbar-container {
   position: relative;
   z-index: 1000;
-  background-color: var(--ag-background-color, #fff); /* Match AG Grid theme */
-  padding: 8px 10px; /* Add padding for the toolbar */
-  border-bottom: 1px solid var(--ag-border-color, #ccc); /* Add a separator */
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
-  height: 50px; /* Set a fixed height for the toolbar */
-  box-sizing: border-box; /* Include padding and border in the height */
+  background-color: var(--ag-background-color, #fff);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ag-border-color, #ccc);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  height: 50px;
+  box-sizing: border-box;
 }
 
-#gridContainer {
+.st-aggrid-scope #gridContainer {
   position: relative;
-  flex: 1; /* Allow the grid to take the remaining space */
+  flex: 1;
   width: 100%;
-  height: calc(100% - 50px); /* Subtract the toolbar height from the total height */
+  height: calc(100% - 50px);
 }

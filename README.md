@@ -1,238 +1,257 @@
-# streamlit-aggrid
+# streamlit-aggrid v2
 
-[![Open in Streamlit][share_badge]][share_link] [![GitHub][github_badge]][github_link] [![PyPI][pypi_badge]][pypi_link] [![Downloads][downloads_badge]][downloads_link]
+Streamlit component for [AG-Grid](https://www.ag-grid.com/) built on Custom Components v2 (no iframe).
 
-> [!IMPORTANT]
-> 💡 **Support the Development of streamlit-aggrid!**  
-> This project is the result of countless hours of dedication by a solo Python developer. If you find it useful, consider giving back to help keep it alive and thriving.  
-> 
-> ### Ways to Contribute:
-> - **[Donate via PayPal](https://www.paypal.com/donate?hosted_button_id=8HGLA4JZBYFPQ):** A quick and secure way to show your support.  
-> 
-> Every contribution, no matter the size, makes a difference and helps ensure the continued improvement of this project. Thank you for your generosity! 🙌
+AG-Grid version: [35.2.1](https://www.ag-grid.com/archive/35.2.1/)
 
-> For sponsoring, development support, features prioritization you can [email me](mailto:pablo.fonseca+staggrid@gmail.com).
+## Install
 
-[Live examples](https://staggrid-examples.streamlit.app/) and documentation on Streamlit Cloud.
+From git:
 
----
-
-**AgGrid** is an awesome grid for web frontend. More information in [https://www.ag-grid.com/](https://www.ag-grid.com/). Consider purchasing a license from Ag-Grid if you are going to use enterprise features!
-
-Current AgGrid version is [34.3.1](https://www.ag-grid.com/archive/34.3.1/)
-
-# Install
-
-```
-pip install streamlit-aggrid
-
+```bash
+pip install git+https://github.com/af-ryb/streamlit-aggrid.git@v2_component
 ```
 
-# Quick Use
-
-Create an example.py file
+## Quick Start
 
 ```python
 from st_aggrid import AgGrid
 import pandas as pd
 
-df = pd.read_csv('https://raw.githubusercontent.com/fivethirtyeight/data/master/airline-safety/airline-safety.csv')
-AgGrid(df)
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob", "Charlie"],
+    "Age": [25, 30, 35],
+    "Score": [88.5, 92.3, 76.1],
+})
+
+result = AgGrid(df, key="my_grid")
 ```
 
-Run :
+## Core Concepts
 
-```shell
-streamlit run example.py
+### No iframe
+
+v2 uses Streamlit Custom Components v2 which renders directly in the DOM, eliminating the iframe overhead. Data is transferred via Arrow (PyArrow) for efficiency.
+
+### Read-only grid
+
+This fork removes all data editing functionality. The grid is for display, selection, filtering, sorting, and data export only.
+
+### Auto-Collect
+
+The `collect` parameter specifies which AG-Grid API methods to call automatically after each grid event. Results are available as properties on the returned `AgGridResult`:
+
+```python
+result = AgGrid(
+    df,
+    grid_options=grid_options,
+    collect=["getSelectedRows", "getFilterModel", "getColumnState"],
+    update_on=["selectionChanged", "filterChanged", "sortChanged",
+               ("columnResized", 300), ("columnMoved", 500)],
+    key="my_grid",
+)
+
+result.selected_rows   # DataFrame of selected rows (or None)
+result.filter_model    # dict with active filters
+result.column_state    # list of column state dicts
+result.event_name      # name of the event that triggered the update
+result.event_data      # serialized event payload
 ```
 
-# Demo
+**Defaults:** `collect=["getSelectedRows"]`, `update_on=["selectionChanged", "filterChanged", "sortChanged"]`.
 
-Grid data is sent back to streamlit and can be reused in other components. In the example below a chart is updated on grid edition.
+The `update_on` list accepts AG-Grid event names. Use a tuple `(event_name, debounce_ms)` for high-frequency events like `columnResized`.
 
-![example image](https://github.com/PablocFonseca/streamlit-aggrid/raw/main/group_selection_example.gif)
+Any AG-Grid API method that returns serializable data can be used in `collect`. The result key is derived from the method name: `getSelectedRows` -> `result.selected_rows`, `getFilterModel` -> `result.filter_model`, or via `result.get("selectedRows")`.
 
-# Development Notes
+### Explicit API Calls
 
-Version 1.2.0
- - Added `server_sync_strategy` parameter to control data synchronization between server and client
- - Deprecates try_to_convert_back_to_original_types, now grid will always try to keep proper datatypes when editing data.
- - Upgrades internal ag-grid to version 34.3.1
- - post1: fixes empty data initialization.
- - post2: fixes callback triggering multiple times, when other streamlit widgets updates
+For one-off actions (export, getting state on demand) use `call_grid_api`. It writes a request to `session_state`; the grid executes it on the next rerun. Use `@st.fragment` to avoid full page rerun:
 
-Version 1.1.9
- - Updates internal grid to 34.2.0
- - Fixes BigInt serialization bug, caused by the new PyArrow serialization.
+```python
+from st_aggrid import AgGrid, call_grid_api
 
-Version 1.1.8
-- **Major refactor**: Introduced collector-based architecture for grid data return processing
-- Added new `DataReturnMode.CUSTOM` allowing custom JavaScript data collection logic
-- Improved data serialization and handling of complex data types (data is now transfered using Streamlit`s ArrowTable protobuff)
-- Enhanced performance for large datasets through optimized data processing
-- Added comprehensive test suite for grid return functionality
-- Added deprecation warnings for `GridUpdateMode` (use `update_on` parameter instead)
-- Enhanced documentation with detailed parameter descriptions
+@st.fragment
+def grid_section():
+    result = AgGrid(df, grid_options=grid_options, key="my_grid")
 
-Version 1.1.7
+    if st.button("Get Column State"):
+        call_grid_api("my_grid", "getColumnState")
+        st.rerun(scope="fragment")
 
-- Updates inner Ag-Grid to v. 34.0.2
-- Fixes a bug related to moving columns with grandTotalRow present
+    if result.api_response:
+        st.json(result.api_response)
 
-Version 1.1.5
+grid_section()
+```
 
-- Fix licensing when not using License bundled with AgCharts.
-- Added option for fullscreen mode.
-- Refactored grid toolbar.
+### GridOptionsBuilder
 
-Version 1.1.4
+Configure grid options without writing raw dicts:
 
-- onGridReady Event fires when set in grid Options.
-- Fixes grid return when data input data is Json.
-- post1 fixes packaging bug caused by poetry update to 2.1.2
+```python
+from st_aggrid import GridOptionsBuilder
 
-Version 1.1.3
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_default_column(enableRowGroup=True, minWidth=100)
+gb.configure_selection("multiple", use_checkbox=True)
+gb.configure_side_bar(filters_panel=True, columns_panel=True)
+gb.configure_pagination(enabled=True, auto_page_size=True)
+grid_options = gb.build()
 
-- fixes enterprise modules being enabled by default. (If using enterprise features, buy a license from Ag Grid.)
-- fixes grid initialization when neither data nor gridOptions are set.
-- 1.1.3.post1 fixes [#317](https://github.com/PablocFonseca/streamlit-aggrid/issues/317)
+result = AgGrid(df, grid_options=grid_options, key="my_grid")
+```
 
-Version 1.1.2
+### Themes
 
-- adds PR #308 - Callbacl functionality
+```python
+# Built-in themes
+AgGrid(df, theme="streamlit")  # matches Streamlit light/dark (default)
+AgGrid(df, theme="alpine")
+AgGrid(df, theme="balham")
+AgGrid(df, theme="material")
 
-Version 1.1.1
+# Custom theme
+from st_aggrid import StAggridTheme
 
-- Solves [#306](https://github.com/PablocFonseca/streamlit-aggrid/issues/306) and [#305](https://github.com/PablocFonseca/streamlit-aggrid/issues/305)
+theme = StAggridTheme("quartz")
+theme.with_params(accentColor="#ff0000", headerFontSize=14)
+theme.with_parts("colorSchemeDark", "iconSetAlpine")
 
-Version 1.1.0
+AgGrid(df, theme=theme)
+```
 
-- Updated AgGrid to version 32.3
-- Added partial support for the aggrid [Theming](https://www.ag-grid.com/javascript-data-grid/theming/) - Check [example](https://staggrid-examples.streamlit.app/Themes)
-- Cleaned project dependencies (Altair < 5)
+### Enterprise Features
 
-Version 1.0.5
+AG-Grid Enterprise features (row grouping, pivoting, Excel export, etc.) require a license from [ag-grid.com](https://www.ag-grid.com/):
 
-- Updated AgGrid to version 31.3
+```python
+AgGrid(
+    df,
+    grid_options=grid_options,
+    enable_enterprise_modules=True,          # or "enterprise+AgCharts"
+    license_key="your-license-key",
+    key="my_grid",
+)
+```
 
-Version 1.0.4
+### Custom JavaScript
 
-- Added information on the event that triggered app rerun
+Inject JS functions into gridOptions with `JsCode`:
 
-Version 1.0.2
+```python
+from st_aggrid import JsCode
 
-- Moved a lot of response processment to python side.
-- Changed grid return object.
-- Fix bugs and code cleanup.
+cell_renderer = JsCode("""
+    function(params) {
+        return '<b>' + params.value + '</b>';
+    }
+""")
 
-> [!WARNING]
-> v1.0.0 breaks compatibility with previous versions and many people reached me to say that it is unstable.  
-> Main changes are on gridReturn object as I'm moving heavy processment to python side.  
-> I'm working to stabilize it, if you find any issues, please open a topic on the issue tracker  
-> with a reproductile example, if possible.  
-> Meanwhile use the last v.0.3.4 if things are not working for you! I hope to have everything fixed soon.
+gb.configure_column("Name", cellRenderer=cell_renderer)
+result = AgGrid(df, grid_options=gb.build(), allow_unsafe_jscode=True, key="my_grid")
+```
 
-Version 0.3.5
+### Toolbar
 
-- Merged many PR, thanks everybody.
-- Grid State can be saved and retrieved. Many people requested this one. Live Example [Here](https://staggrid-examples.streamlit.app/?example=%27Grid%20State%27)
+```python
+AgGrid(
+    df,
+    show_toolbar=True,           # overlay toolbar on hover
+    show_search=True,            # quick search filter
+    show_download_button=True,   # CSV export button
+    key="my_grid",
+)
+```
 
-Version 0.3.4
+## API Reference
 
-- Added quickfilter
-- Added Excel Export Module
-- Bugfixes (an probably introduced new ones :/)
-- Code cleanup
-- Updated Ag-Grit to 29.1.0 (including ag-grid-react) which will cause direct HTML returns to stop rendering ([#198](https://github.com/PablocFonseca/streamlit-aggrid/issues/198)). Use a [cellRenderer](https://www.ag-grid.com/javascript-data-grid/component-cell-renderer/) instead.
+### `AgGrid()`
 
-Version 0.3.3
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `data` | DataFrame / str | None | Data to display |
+| `grid_options` | dict | None | AG-Grid options (auto-generated from data if None) |
+| `height` | int | 400 | Grid height in px (None for auto-height) |
+| `collect` | list[str] | `["getSelectedRows"]` | AG-Grid API methods to auto-collect |
+| `update_on` | list | `["selectionChanged", "filterChanged", "sortChanged"]` | Events triggering auto-collect |
+| `allow_unsafe_jscode` | bool | False | Allow JsCode in grid_options |
+| `enable_enterprise_modules` | bool/str | False | Enable enterprise features |
+| `license_key` | str | None | AG-Grid license key |
+| `columns_state` | dict | None | Initial column state |
+| `theme` | str/StAggridTheme | "streamlit" | Grid theme |
+| `custom_css` | dict | None | Custom CSS rules |
+| `key` | str | None | Streamlit widget key |
+| `show_toolbar` | bool | False | Show toolbar |
+| `show_search` | bool | True | Show search in toolbar |
+| `show_download_button` | bool | True | Show CSV download |
+| `on_grid_state_change` | callable | None | Callback on state change |
+| `on_api_response_change` | callable | None | Callback on API response |
 
-- Fixes [#132](https://github.com/PablocFonseca/streamlit-aggrid/issues/132)
-- Fixes [#131](https://github.com/PablocFonseca/streamlit-aggrid/issues/131) and [#130](https://github.com/PablocFonseca/streamlit-aggrid/issues/130)
-- Added Sparklines [#118](https://github.com/PablocFonseca/streamlit-aggrid/issues/118)
-- Changed Grid Return to support [#117](https://github.com/PablocFonseca/streamlit-aggrid/issues/117)
-- Rebuilt streamlit theme
+### `AgGridResult`
 
-Version 0.3.0
+| Property | Type | Description |
+|---|---|---|
+| `.selected_rows` | DataFrame / None | Selected rows |
+| `.column_state` | list[dict] / None | Column state |
+| `.filter_model` | dict / None | Active filters |
+| `.sort_model` | list[dict] / None | Active sorts |
+| `.grid_state` | dict / None | Full grid state |
+| `.event_name` | str / None | Triggering event name |
+| `.event_data` | dict / None | Serialized event data |
+| `.api_response` | dict / None | Explicit API call response |
+| `.data` | DataFrame / None | Original input data |
+| `.get(key, default)` | Any | Access any collected value |
 
-- Merged some PR (Thanks everybody!) check PR at github!
-- Added class parsing in React Side, so more advanced CellRenderers can be used. (Thanks [kjakaitis](https://github.com/kjakaitis))
-- Added gridOptionsBuilder.configure_first_column_as_index() to, well, style the first columns as an index (MultiIndex to come!)
-- Improved serialization performance by using simpler pandas to_json method (PR #62, #85)
-- Added option to render plain json instead of pd.dataframes
-- gridOptions may be loaded from file paths or strings
-- gridReturn is now a @dataclass with rowIndex added to selected_rows, (previous version returned only the selected data, now you can know which row was selected)
-- Changed GridReturnMode behavior. Now update_on accepts a list of gridEvents that will trigger a streamlit refresh, making it possible to subscribe to any [gridEvent](https://www.ag-grid.com/javascript-data-grid/grid-events/).
-- Removed dot-env and simplejson dependencies.
-- Other smaller fixes and typos corrections.
+### `call_grid_api(key, method, params=None)`
 
-Version 0.2.3
+Queue an explicit AG-Grid API call. Use inside `@st.fragment` with `st.rerun(scope="fragment")`.
 
-- small fixes
-- Merged PR #44 and #25 (thanks [msabramo](https://github.com/msabramo) and [ljnsn](https://github.com/ljnsn))
-- Merged PR #58 - allow nesting dataframes. Included an example in exampes folder.
+## Full Example
 
-Version 0.2.2
+```python
+import streamlit as st
+import pandas as pd
+from st_aggrid import AgGrid, GridOptionsBuilder, call_grid_api
 
-- Updated frontend dependencies to latest version
-- Corrected text color for better viz when using streamlit theme (thanks [jasonpmcculloch](https://github.com/jasonpmcculloch))
-- Switched default theme to Balham Light ('light'), if you want to use streamlit theme set `theme='streamlit'` on agGrid call
+st.set_page_config(layout="wide")
 
-Version 0.2.0
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob", "Charlie", "Diana", "Eve"],
+    "Department": ["Eng", "Eng", "Sales", "Sales", "Eng"],
+    "Salary": [95000, 88000, 72000, 81000, 99000],
+})
 
-- Support Themes
-- Incorporated Pull Requests with fixes and pre-select rows (Thanks [randomseed42](https://github.com/randomseed42) and [msabramo](https://github.com/msabramo))
-- You can use strings instead of importing GridUpdateMode and DataReturnMode enumerators
-- it works fine with st.forms!
-- new theme example in example folder
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_selection("multiple", use_checkbox=True)
+gb.configure_column("Salary", type="numericColumn")
+grid_options = gb.build()
 
-Version 0.1.9
+@st.fragment
+def grid_section():
+    result = AgGrid(
+        df,
+        grid_options=grid_options,
+        collect=["getSelectedRows", "getColumnState"],
+        update_on=["selectionChanged", ("columnResized", 300)],
+        show_toolbar=True,
+        key="demo",
+    )
 
-- Small fixes
-- Organized examples folder
+    col1, col2 = st.columns(2)
 
-Version 0.1.8
+    with col1:
+        st.subheader("Selected Rows")
+        if result.selected_rows is not None:
+            st.dataframe(result.selected_rows)
 
-- Fixes a bug that breaks the grid when NaN or Inf values are present in the data
+    with col2:
+        if st.button("Show Column State"):
+            call_grid_api("demo", "getColumnState")
+            st.rerun(scope="fragment")
 
-Version 0.1.7
+        if result.api_response:
+            st.json(result.api_response)
 
-- Fixes a bug that happened when converting data back from the grid with only one row
-- Added license_key parameter on AgGrid call.
-
-Version 0.1.6
-
-- Fixes issue [#3](https://github.com/PablocFonseca/streamlit-aggrid/issues/3)
-- Adds support for timedelta columns check [example][share_link]
-
-Version 0.1.5
-
-- small bug fixes
-- there is an option to avoid grid re-initialization on app update (check fixed_key_example.py on examples folder or [here](https://share.streamlit.io/pablocfonseca/streamlit-aggrid/main/examples/fixed_key_example.py))
-
-Version 0.1.3
-
-- Fixed bug where cell was blank after edition.
-- Added enable_enterprise_modules argument to AgGrid call for enabling/disabling [enterprise features](https://www.ag-grid.com/documentation/javascript/licensing/)
-- It is now possible to inject js functions on gridOptions. Enabling advanced customizations such as conditional formatting (check 4<sup>th</sup> column on the [example](share_link))
-
-Version 0.1.2
-
-- added customCurrencyFormat as column type
-
-Version 0.1.0:
-
-- I worked a little bit more on making the example app functional.
-- Couple configuration options for update mode (How frontend updates streamlit) and for data returns (grid should return data filtered? Sorted?)
-- Some basic level of row selection
-- Added some docstrings specially on gridOptionsBuilder methods
-- Lacks performance for production. JS Client code is slow...
-
-[share_badge]: https://static.streamlit.io/badges/streamlit_badge_black_white.svg
-[share_link]: https://staggrid-examples.streamlit.app/
-[github_badge]: https://badgen.net/badge/icon/GitHub?icon=github&color=black&label
-[github_link]: https://github.com/PablocFonseca/streamlit-aggrid
-[pypi_badge]: https://badgen.net/pypi/v/streamlit-aggrid?icon=pypi&color=black&label?
-[pypi_link]: https://www.pypi.org/project/streamlit-aggrid/
-[downloads_badge]: https://img.shields.io/pypi/dm/streamlit-aggrid
-[downloads_link]: https://pypi.org/project/streamlit-aggrid/#files
+grid_section()
+```
