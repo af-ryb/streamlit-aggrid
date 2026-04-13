@@ -182,6 +182,11 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       const go = parseGridOptions(data)
       delete (go as any).rowData
       gridApiRef.current.updateGridOptions(go)
+      // updateGridOptions swaps columnDefs in place but doesn't re-render
+      // already-painted cells, so property changes such as cellStyle /
+      // cellClass / cellRenderer won't clear stale inline styles. Redraw
+      // rows to guarantee the DOM reflects the new configuration.
+      gridApiRef.current.redrawRows()
     }
 
     // Diff columns_state
