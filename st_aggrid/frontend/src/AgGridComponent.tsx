@@ -22,6 +22,7 @@ import GridToolBar from "./components/GridToolBar"
 
 import {
   addCustomCSS,
+  extractColumnStateFromDefs,
   injectProAssets,
 } from "./utils/gridUtils"
 
@@ -182,6 +183,27 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       const go = parseGridOptions(data)
       delete (go as any).rowData
       gridApiRef.current.updateGridOptions(go)
+
+      // updateGridOptions applies new columnDefs but AG-Grid preserves its
+      // internal column state for properties like hide, rowGroup, pivot,
+      // aggFunc, pinned. Extract these from the new columnDefs and force
+      // them via applyColumnState so Python-side changes take effect.
+      if (!isEqual(prevData.gridOptions?.columnDefs, data.gridOptions?.columnDefs)) {
+        const colState = extractColumnStateFromDefs(data.gridOptions?.columnDefs)
+        if (colState.length > 0) {
+          gridApiRef.current.applyColumnState({
+            state: colState,
+            applyOrder: false,
+          })
+          if (debug) {
+            console.log(
+              "[AgGridComponent] Applied column state from columnDefs:",
+              colState
+            )
+          }
+        }
+      }
+
       // updateGridOptions swaps columnDefs in place but doesn't re-render
       // already-painted cells, so property changes such as cellStyle /
       // cellClass / cellRenderer won't clear stale inline styles. Redraw
