@@ -111,13 +111,17 @@ export function useAutoCollect({
         ;(gridApi as any).addEventListener(eventName, debouncedHandler)
         cleanupRef.current.push(() => {
           debouncedHandler.cancel()
-          ;(gridApi as any).removeEventListener(eventName, debouncedHandler)
+          if (!gridApi.isDestroyed()) {
+            ;(gridApi as any).removeEventListener(eventName, debouncedHandler)
+          }
         })
       } else {
         const handler = (e: any) => collectAndSend(entry, e)
         ;(gridApi as any).addEventListener(entry, handler)
         cleanupRef.current.push(() => {
-          ;(gridApi as any).removeEventListener(entry, handler)
+          if (!gridApi.isDestroyed()) {
+            ;(gridApi as any).removeEventListener(entry, handler)
+          }
         })
       }
 

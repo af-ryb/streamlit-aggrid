@@ -168,7 +168,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // Handle runtime updates that must go through the imperative API.
   // rowData is NOT handled here — it flows via the <AgGridReact rowData> prop.
   useEffect(() => {
-    if (!gridApiRef.current) return
+    if (!gridApiRef.current || gridApiRef.current.isDestroyed()) return
 
     const prevData = prevDataRef.current
     prevDataRef.current = data
@@ -206,7 +206,13 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         // grouping step onwards. Without this, columns that transition
         // from hidden to visible show empty cells because AG-Grid
         // skips valueGetter/aggregation evaluation for hidden columns.
-        gridApiRef.current.refreshClientSideRowModel("group")
+        try {
+          gridApiRef.current.refreshClientSideRowModel("group")
+        } catch (err) {
+          if (debug) {
+            console.warn("[AgGridComponent] refreshClientSideRowModel failed:", err)
+          }
+        }
       }
 
       // updateGridOptions swaps columnDefs in place but doesn't re-render
