@@ -108,15 +108,23 @@ export function extractColumnStateFromDefs(
       hasStateProps = true
     }
 
-    // initialRowGroupIndex needs rowGroup boolean for applyColumnState
-    if ("initialRowGroupIndex" in def && !("rowGroup" in def)) {
-      entry.rowGroup = def.initialRowGroupIndex != null
+    // Derive the rowGroup boolean from the effective index. Explicit
+    // rowGroupIndex wins over initialRowGroupIndex even when it's null —
+    // otherwise we'd emit the contradictory state `{rowGroupIndex: null,
+    // rowGroup: true}` that leaves the column stuck as a row group.
+    if (!("rowGroup" in def) && ("rowGroupIndex" in def || "initialRowGroupIndex" in def)) {
+      const effectiveIdx =
+        "rowGroupIndex" in def ? def.rowGroupIndex : def.initialRowGroupIndex
+      entry.rowGroup = effectiveIdx != null
+      hasStateProps = true
     }
 
-    // Same for initialPivotIndex / initialPivot
-    if (("initialPivotIndex" in def || "initialPivot" in def) && !("pivot" in def)) {
-      entry.pivot =
-        (def.initialPivotIndex != null) || (def.initialPivot === true)
+    // Same logic for pivot — explicit pivotIndex (including null) wins.
+    if (!("pivot" in def) && ("pivotIndex" in def || "initialPivotIndex" in def || "initialPivot" in def)) {
+      const effectiveIdx =
+        "pivotIndex" in def ? def.pivotIndex : def.initialPivotIndex
+      entry.pivot = effectiveIdx != null || def.initialPivot === true
+      hasStateProps = true
     }
 
     if (hasStateProps) {
@@ -149,8 +157,12 @@ export function extractRowGroupColumns(
       const colId = def.colId ?? def.field
       if (!colId) continue
 
-      // rowGroupIndex takes precedence over initialRowGroupIndex
-      const idx = def.rowGroupIndex ?? def.initialRowGroupIndex
+      // rowGroupIndex takes precedence over initialRowGroupIndex. Python
+      // passes `null` to mean "not grouped", so use `in` rather than `??`
+      // to distinguish explicit-null from not-set — otherwise the nullish
+      // fallback would re-group the column on the ungroup transition.
+      const idx =
+        "rowGroupIndex" in def ? def.rowGroupIndex : def.initialRowGroupIndex
       if (idx != null) {
         groups.push({ colId, index: idx })
       } else if (def.rowGroup === true) {

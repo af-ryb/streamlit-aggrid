@@ -169,10 +169,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // Handle runtime updates that must go through the imperative API.
   // rowData is NOT handled here — it flows via the <AgGridReact rowData> prop.
   useEffect(() => {
-    if (!gridApiRef.current || gridApiRef.current.isDestroyed()) return
-
+    // Capture the previous data and always update the ref before any early
+    // return — AG-Grid's onGridReady fires asynchronously after this effect,
+    // so on first run gridApi is null. If we return early without updating
+    // the ref, the next effect run sees prevData as undefined and skips the
+    // diff block below, dropping the user's first widget-driven update.
     const prevData = prevDataRef.current
     prevDataRef.current = data
+
+    if (!gridApiRef.current || gridApiRef.current.isDestroyed()) return
 
     // First commit — nothing to diff against; onGridReady already applied initial state.
     if (!prevData) return

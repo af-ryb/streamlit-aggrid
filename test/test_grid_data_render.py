@@ -171,3 +171,5 @@ def test_grid_data_reactivity(page: Page):
 
     page.get_by_role("button", name="Add reactivity row").click()
     expect(container.locator(".ag-row")).to_have_count(5)
+
+
