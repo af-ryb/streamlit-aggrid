@@ -202,6 +202,11 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
             )
           }
         }
+        // Force recalculation of the client-side row model from the
+        // grouping step onwards. Without this, columns that transition
+        // from hidden to visible show empty cells because AG-Grid
+        // skips valueGetter/aggregation evaluation for hidden columns.
+        gridApiRef.current.refreshClientSideRowModel("group")
       }
 
       // updateGridOptions swaps columnDefs in place but doesn't re-render
