@@ -22,6 +22,8 @@ import GridToolBar from "./components/GridToolBar"
 
 import {
   addCustomCSS,
+  extractColumnStateFromDefs,
+  extractRowGroupColumns,
   injectProAssets,
 } from "./utils/gridUtils"
 
@@ -167,10 +169,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // Handle runtime updates that must go through the imperative API.
   // rowData is NOT handled here — it flows via the <AgGridReact rowData> prop.
   useEffect(() => {
-    if (!gridApiRef.current) return
-
+    // Capture the previous data and always update the ref before any early
+    // return — AG-Grid's onGridReady fires asynchronously after this effect,
+    // so on first run gridApi is null. If we return early without updating
+    // the ref, the next effect run sees prevData as undefined and skips the
+    // diff block below, dropping the user's first widget-driven update.
     const prevData = prevDataRef.current
     prevDataRef.current = data
+
+    if (!gridApiRef.current || gridApiRef.current.isDestroyed()) return
 
     // First commit — nothing to diff against; onGridReady already applied initial state.
     if (!prevData) return
@@ -182,6 +189,64 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       const go = parseGridOptions(data)
       delete (go as any).rowData
       gridApiRef.current.updateGridOptions(go)
+
+      // updateGridOptions applies new columnDefs but AG-Grid preserves its
+      // internal column state for properties like hide, rowGroup, pivot,
+      // aggFunc, pinned. Extract these from the new columnDefs and force
+      // them via applyColumnState so Python-side changes take effect.
+      if (!isEqual(prevData.gridOptions?.columnDefs, data.gridOptions?.columnDefs)) {
+        const colState = extractColumnStateFromDefs(data.gridOptions?.columnDefs)
+        if (colState.length > 0) {
+          gridApiRef.current.applyColumnState({
+            state: colState,
+            applyOrder: false,
+          })
+        }
+
+        // Use dedicated setRowGroupColumns API instead of relying on
+        // applyColumnState for row grouping — it's the only reliable
+        // way to add/remove row groups on a live grid in pivot mode.
+        const rowGroupCols = extractRowGroupColumns(data.gridOptions?.columnDefs)
+        gridApiRef.current.setRowGroupColumns(rowGroupCols)
+
+        if (debug) {
+          console.log(
+            "[AgGridComponent] Applied column state from columnDefs:",
+            colState,
+            "rowGroupColumns:",
+            rowGroupCols
+          )
+        }
+      }
+
+      // pivotMode must be set explicitly after column state changes —
+      // updateGridOptions bundles it with columnDefs which can cause
+      // AG-Grid to process them in the wrong order.
+      if (prevData.gridOptions?.pivotMode !== data.gridOptions?.pivotMode) {
+        gridApiRef.current.setGridOption(
+          "pivotMode",
+          data.gridOptions?.pivotMode ?? false
+        )
+        if (debug) {
+          console.log(
+            "[AgGridComponent] Set pivotMode:",
+            data.gridOptions?.pivotMode
+          )
+        }
+      }
+
+      // Force recalculation of the client-side row model from the
+      // grouping step onwards. Without this, columns that transition
+      // from hidden to visible show empty cells because AG-Grid
+      // skips valueGetter/aggregation evaluation for hidden columns.
+      try {
+        gridApiRef.current.refreshClientSideRowModel("group")
+      } catch (err) {
+        if (debug) {
+          console.warn("[AgGridComponent] refreshClientSideRowModel failed:", err)
+        }
+      }
+
       // updateGridOptions swaps columnDefs in place but doesn't re-render
       // already-painted cells, so property changes such as cellStyle /
       // cellClass / cellRenderer won't clear stale inline styles. Redraw

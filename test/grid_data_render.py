@@ -158,3 +158,4 @@ if 20 in TESTS:
     )
     # stable key — the grid must reactively pick up new rowData without a remount
     AgGrid(reactivity_df, key="grid_data_reactivity")
+
