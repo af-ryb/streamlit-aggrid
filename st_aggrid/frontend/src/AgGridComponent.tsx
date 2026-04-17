@@ -202,16 +202,33 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
             )
           }
         }
-        // Force recalculation of the client-side row model from the
-        // grouping step onwards. Without this, columns that transition
-        // from hidden to visible show empty cells because AG-Grid
-        // skips valueGetter/aggregation evaluation for hidden columns.
-        try {
-          gridApiRef.current.refreshClientSideRowModel("group")
-        } catch (err) {
-          if (debug) {
-            console.warn("[AgGridComponent] refreshClientSideRowModel failed:", err)
-          }
+      }
+
+      // pivotMode must be set explicitly after column state changes —
+      // updateGridOptions bundles it with columnDefs which can cause
+      // AG-Grid to process them in the wrong order.
+      if (prevData.gridOptions?.pivotMode !== data.gridOptions?.pivotMode) {
+        gridApiRef.current.setGridOption(
+          "pivotMode",
+          data.gridOptions?.pivotMode ?? false
+        )
+        if (debug) {
+          console.log(
+            "[AgGridComponent] Set pivotMode:",
+            data.gridOptions?.pivotMode
+          )
+        }
+      }
+
+      // Force recalculation of the client-side row model from the
+      // grouping step onwards. Without this, columns that transition
+      // from hidden to visible show empty cells because AG-Grid
+      // skips valueGetter/aggregation evaluation for hidden columns.
+      try {
+        gridApiRef.current.refreshClientSideRowModel("group")
+      } catch (err) {
+        if (debug) {
+          console.warn("[AgGridComponent] refreshClientSideRowModel failed:", err)
         }
       }
 
