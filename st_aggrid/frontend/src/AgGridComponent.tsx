@@ -23,6 +23,7 @@ import GridToolBar from "./components/GridToolBar"
 import {
   addCustomCSS,
   extractColumnStateFromDefs,
+  extractRowGroupColumns,
   injectProAssets,
 } from "./utils/gridUtils"
 
@@ -195,12 +196,21 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
             state: colState,
             applyOrder: false,
           })
-          if (debug) {
-            console.log(
-              "[AgGridComponent] Applied column state from columnDefs:",
-              colState
-            )
-          }
+        }
+
+        // Use dedicated setRowGroupColumns API instead of relying on
+        // applyColumnState for row grouping — it's the only reliable
+        // way to add/remove row groups on a live grid in pivot mode.
+        const rowGroupCols = extractRowGroupColumns(data.gridOptions?.columnDefs)
+        gridApiRef.current.setRowGroupColumns(rowGroupCols)
+
+        if (debug) {
+          console.log(
+            "[AgGridComponent] Applied column state from columnDefs:",
+            colState,
+            "rowGroupColumns:",
+            rowGroupCols
+          )
         }
       }
 

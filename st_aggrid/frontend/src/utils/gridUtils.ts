@@ -127,3 +127,39 @@ export function extractColumnStateFromDefs(
 
   return result
 }
+
+/**
+ * Extract ordered row group column IDs from columnDefs.
+ * Returns column IDs sorted by their group index, suitable for
+ * `gridApi.setRowGroupColumns()`.
+ */
+export function extractRowGroupColumns(
+  columnDefs: any[] | undefined
+): string[] {
+  if (!columnDefs || !Array.isArray(columnDefs)) return []
+
+  const groups: { colId: string; index: number }[] = []
+
+  function walk(defs: any[]) {
+    for (const def of defs) {
+      if (def.children && Array.isArray(def.children)) {
+        walk(def.children)
+        continue
+      }
+      const colId = def.colId ?? def.field
+      if (!colId) continue
+
+      // rowGroupIndex takes precedence over initialRowGroupIndex
+      const idx = def.rowGroupIndex ?? def.initialRowGroupIndex
+      if (idx != null) {
+        groups.push({ colId, index: idx })
+      } else if (def.rowGroup === true) {
+        groups.push({ colId, index: groups.length })
+      }
+    }
+  }
+
+  walk(columnDefs)
+  groups.sort((a, b) => a.index - b.index)
+  return groups.map((g) => g.colId)
+}
