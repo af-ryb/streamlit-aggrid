@@ -39,6 +39,7 @@ interface AgGridComponentProps {
   data: AgGridData
   setStateValue: (key: string, value: any) => void
   setTriggerValue: (key: string, value: any) => void
+  parentElement: HTMLElement
 }
 
 // Track whether modules have been registered to avoid double registration
@@ -74,6 +75,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   data,
   setStateValue,
   setTriggerValue,
+  parentElement,
 }) => {
   // Grid API is held both as a ref (for imperative calls from callbacks and
   // effects that don't need to re-run on mount) and as state (so hooks like
@@ -86,10 +88,11 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   const debug = data.debug || false
 
-  // Live Streamlit theme (reads CSS custom properties on the host DOM and
-  // subscribes to their changes). Used instead of any Python-side detection,
-  // which can't see UI-level theme toggles.
-  const streamlitTheme = useStreamlitTheme()
+  // Live Streamlit theme (reads --st-* CSS custom properties from the
+  // component's wrapper element and subscribes to their changes). Used
+  // instead of any Python-side detection, which can't see UI-level theme
+  // toggles — those only update CSS variables, no server rerun.
+  const streamlitTheme = useStreamlitTheme(parentElement)
 
   // Register modules once
   registerModules(data)

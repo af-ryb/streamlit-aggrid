@@ -33,6 +33,7 @@ const render: FrontendRenderer = ({
         data={data}
         setStateValue={setStateValue}
         setTriggerValue={setTriggerValue}
+        parentElement={parentElement as HTMLElement}
       />
     </ErrorBoundary>
   )

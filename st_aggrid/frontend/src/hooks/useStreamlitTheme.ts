@@ -2,10 +2,12 @@ import { useEffect, useState } from "react"
 import type { StreamlitThemeInfo } from "../types/AgGridTypes"
 
 // Streamlit exposes its active theme as CSS custom properties (`--st-*`)
-// on the document root. Reading them directly is the only way to reflect
-// the user's live theme choice — `st.get_option("theme.*")` on the Python
-// side only sees what's in config.toml, not what the user picked in the
-// Settings → Theme menu (which updates CSS variables without a rerun).
+// on a wrapper element around each CCv2 component instance (per docs
+// https://docs.streamlit.io/develop/concepts/custom-components/components-v2/theming).
+// The variables inherit down the DOM, so we can read them from the
+// component's own parentElement via getComputedStyle. The Python-side
+// `st.get_option("theme.*")` can't see user-level Light/Dark toggles —
+// those update the CSS vars in the browser without a server rerun.
 const VAR_BACKGROUND = "--st-background-color"
 const VAR_TEXT = "--st-text-color"
 const VAR_PRIMARY = "--st-primary-color"
@@ -38,11 +40,12 @@ function computeBase(bg: string): "light" | "dark" {
   return lum < 0.5 ? "dark" : "light"
 }
 
-function readTheme(): StreamlitThemeInfo | null {
+function readTheme(element: Element | null): StreamlitThemeInfo | null {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return null
   }
-  const styles = getComputedStyle(document.documentElement)
+  const target = element ?? document.documentElement
+  const styles = getComputedStyle(target)
   const bg = styles.getPropertyValue(VAR_BACKGROUND).trim()
   if (!bg) return null
 
@@ -77,37 +80,36 @@ function themesEqual(
   )
 }
 
-export function useStreamlitTheme(): StreamlitThemeInfo | null {
+export function useStreamlitTheme(
+  element: Element | null
+): StreamlitThemeInfo | null {
   const [theme, setTheme] = useState<StreamlitThemeInfo | null>(() =>
-    readTheme()
+    readTheme(element)
   )
 
   useEffect(() => {
-    // Re-read after mount in case CSS variables weren't ready on first call.
-    const initial = readTheme()
-    setTheme((prev) => (themesEqual(prev, initial) ? prev : initial))
+    if (!element) return
 
     const recheck = () => {
-      const next = readTheme()
+      const next = readTheme(element)
       setTheme((prev) => (themesEqual(prev, next) ? prev : next))
     }
 
-    // Streamlit's theme toggle updates CSS variables on <html>/<body> and may
-    // also swap classes or data-attributes. Observe both elements for any
-    // attribute change and recompute.
+    // Initial re-read after mount in case variables weren't ready synchronously.
+    recheck()
+
+    // Streamlit doesn't document an explicit theme-change event. CSS variables
+    // are updated somewhere up the DOM tree when the user toggles the theme.
+    // Observe the whole document for attribute changes on style/class/data-theme
+    // — the filter keeps this cheap even with subtree:true.
     const observer = new MutationObserver(recheck)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["style", "class", "data-theme"],
+      subtree: true,
     })
-    if (document.body) {
-      observer.observe(document.body, {
-        attributes: true,
-        attributeFilter: ["style", "class", "data-theme"],
-      })
-    }
 
-    // Also follow system color-scheme changes (Streamlit's "Auto" mode).
+    // System color-scheme changes (Streamlit "Auto" mode follows OS).
     const mql = window.matchMedia?.("(prefers-color-scheme: dark)")
     const onMqChange = () => recheck()
     mql?.addEventListener?.("change", onMqChange)
@@ -116,7 +118,7 @@ export function useStreamlitTheme(): StreamlitThemeInfo | null {
       observer.disconnect()
       mql?.removeEventListener?.("change", onMqChange)
     }
-  }, [])
+  }, [element])
 
   return theme
 }
