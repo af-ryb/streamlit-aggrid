@@ -104,9 +104,14 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // Parsed row data — recomputed when the incoming rowData reference changes.
   // Passed as a separate prop to <AgGridReact> so AG-Grid applies it reactively
   // with immutable-data semantics (preserves selection/scroll when getRowId is stable).
+  // Depends on both data.rowData (Arrow path) and data.gridOptions.rowData
+  // (JSON-fallback path, used when the DataFrame contains dict cells and
+  // the Python side serializes via to_json instead of Arrow) — otherwise
+  // the fallback path never re-parses and cells for dynamically added
+  // columns stay empty.
   const rowData = useMemo(
     () => parseData(data),
-    [data.rowData]
+    [data.rowData, data.gridOptions?.rowData]
   )
 
   // Stable getRowId based on the auto_unique_id marker, if present.
