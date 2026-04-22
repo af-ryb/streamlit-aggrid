@@ -10,40 +10,6 @@ from st_aggrid.result import AgGridResult
 from st_aggrid.shared import AgGridTheme, StAggridTheme
 
 
-def _get_streamlit_theme() -> Optional[Dict]:
-    """Detect current Streamlit theme and return as a dict for the frontend."""
-    try:
-        primary = st.get_option("theme.primaryColor")
-        bg = st.get_option("theme.backgroundColor")
-        secondary_bg = st.get_option("theme.secondaryBackgroundColor")
-        text = st.get_option("theme.textColor")
-        font = st.get_option("theme.font")
-
-        if not primary:
-            return None
-
-        # Detect light/dark based on background color luminance
-        base = "light"
-        if bg:
-            bg_clean = bg.lstrip("#")
-            if len(bg_clean) == 6:
-                r, g, b = int(bg_clean[:2], 16), int(bg_clean[2:4], 16), int(bg_clean[4:6], 16)
-                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-                if luminance < 0.5:
-                    base = "dark"
-
-        return {
-            "primaryColor": primary,
-            "backgroundColor": bg,
-            "secondaryBackgroundColor": secondary_bg,
-            "textColor": text,
-            "font": font or "Source Sans Pro",
-            "base": base,
-        }
-    except Exception:
-        return None
-
-
 def AgGrid(
     data: Union[pd.DataFrame, str] = None,
     grid_options: Optional[Dict] = None,
@@ -192,9 +158,6 @@ def AgGrid(
     if height is None:
         grid_options["domLayout"] = "autoHeight"
 
-    # Detect Streamlit theme
-    streamlit_theme = _get_streamlit_theme()
-
     # Check for pending explicit API call
     api_call = None
     if key:
@@ -223,7 +186,6 @@ def AgGrid(
         "license_key": license_key,
         "columns_state": columns_state,
         "theme": theme_obj,
-        "streamlit_theme": streamlit_theme,
         "custom_css": custom_css,
         "show_toolbar": show_toolbar,
         "show_search": show_search,
