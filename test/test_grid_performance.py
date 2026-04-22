@@ -6,6 +6,8 @@ from playwright.sync_api import Page, expect
 
 from e2e_utils import StreamlitRunner
 
+pytestmark = pytest.mark.slow
+
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 PERFORMANCE_TEST_FILE = ROOT_DIRECTORY / "test" / "grid_performance_1m.py"
 
