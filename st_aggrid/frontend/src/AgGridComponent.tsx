@@ -17,6 +17,8 @@ import omit from "lodash/omit"
 
 import { useAutoCollect } from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
+import { useStreamlitTheme } from "./hooks/useStreamlitTheme"
+import { ThemeParser } from "./ThemeParser"
 
 import GridToolBar from "./components/GridToolBar"
 
@@ -37,6 +39,7 @@ interface AgGridComponentProps {
   data: AgGridData
   setStateValue: (key: string, value: any) => void
   setTriggerValue: (key: string, value: any) => void
+  parentElement: HTMLElement
 }
 
 // Track whether modules have been registered to avoid double registration
@@ -72,6 +75,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   data,
   setStateValue,
   setTriggerValue,
+  parentElement,
 }) => {
   // Grid API is held both as a ref (for imperative calls from callbacks and
   // effects that don't need to re-run on mount) and as state (so hooks like
@@ -83,6 +87,12 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   const prevDataRef = useRef<AgGridData | undefined>(undefined)
 
   const debug = data.debug || false
+
+  // Live Streamlit theme (reads --st-* CSS custom properties from the
+  // component's wrapper element and subscribes to their changes). Used
+  // instead of any Python-side detection, which can't see UI-level theme
+  // toggles — those only update CSS variables, no server rerun.
+  const streamlitTheme = useStreamlitTheme(parentElement)
 
   // Register modules once
   registerModules(data)
@@ -104,9 +114,14 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // Parsed row data — recomputed when the incoming rowData reference changes.
   // Passed as a separate prop to <AgGridReact> so AG-Grid applies it reactively
   // with immutable-data semantics (preserves selection/scroll when getRowId is stable).
+  // Depends on both data.rowData (Arrow path) and data.gridOptions.rowData
+  // (JSON-fallback path, used when the DataFrame contains dict cells and
+  // the Python side serializes via to_json instead of Arrow) — otherwise
+  // the fallback path never re-parses and cells for dynamically added
+  // columns stay empty.
   const rowData = useMemo(
     () => parseData(data),
-    [data.rowData]
+    [data.rowData, data.gridOptions?.rowData]
   )
 
   // Stable getRowId based on the auto_unique_id marker, if present.
@@ -124,7 +139,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
-    const go = parseGridOptions(data)
+    const go = parseGridOptions(data, streamlitTheme)
     // Defensive: strip any rowData that may have been carried over so the
     // separate <AgGridReact rowData> prop is the single source of truth.
     delete (go as any).rowData
@@ -136,7 +151,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
     return go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.gridOptions, data.theme, data.streamlit_theme, data.allow_unsafe_jscode, autoGetRowId])
+  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId])
 
   // Memoize config arrays to avoid re-registering listeners on every render
   const collectConfig = useMemo(
@@ -264,6 +279,19 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       }
     }
   }, [data])
+
+  // Apply theme changes imperatively on an already-initialized grid.
+  // AG-Grid's Theming API doesn't pick up a new `theme` bundled in
+  // gridOptions via reconciliation — it needs an explicit setGridOption.
+  useEffect(() => {
+    if (!gridApiRef.current || gridApiRef.current.isDestroyed()) return
+    const themeParser = new ThemeParser()
+    const newTheme = themeParser.parse(data.theme, streamlitTheme ?? undefined)
+    gridApiRef.current.setGridOption("theme", newTheme)
+    if (debug) {
+      console.log("[AgGridComponent] Applied theme update:", streamlitTheme)
+    }
+  }, [streamlitTheme, data.theme, gridApi, debug])
 
   const onGridReady = useCallback(
     (event: GridReadyEvent) => {

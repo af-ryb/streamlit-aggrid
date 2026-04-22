@@ -28,6 +28,23 @@ def _dataframe_arrow_compatible(df: "pd.DataFrame") -> bool:
         return False
 
 
+def _has_dict_cells(df: "pd.DataFrame") -> bool:
+    """Return True if any object-dtype column contains a Python dict value.
+
+    Arrow infers a unified ``struct<union_of_keys>`` type for dict columns,
+    forcing every row to carry the same keys (missing keys become null).
+    That breaks heterogeneous JSON payloads whose per-row shape must be
+    preserved. JSON serialization keeps each row's keys intact.
+    """
+    for col in df.columns:
+        if df[col].dtype != "object":
+            continue
+        for v in df[col]:
+            if isinstance(v, dict):
+                return True
+    return False
+
+
 def _parse_data_and_grid_options(
     data,
     grid_options,
@@ -116,7 +133,10 @@ def _parse_data_and_grid_options(
         if use_json_serialization is True:
             should_json_serialize = True
         elif use_json_serialization == "auto":
-            should_json_serialize = not _dataframe_arrow_compatible(data)
+            should_json_serialize = (
+                not _dataframe_arrow_compatible(data)
+                or _has_dict_cells(data)
+            )
 
         if should_json_serialize:
             grid_options["rowData"] = data.to_json(

@@ -11,7 +11,6 @@ export interface AgGridData {
   license_key?: string
   columns_state?: any
   theme: any
-  streamlit_theme?: StreamlitThemeInfo
   custom_css?: { [key: string]: { [key: string]: string } }
   show_toolbar: boolean
   show_search: boolean

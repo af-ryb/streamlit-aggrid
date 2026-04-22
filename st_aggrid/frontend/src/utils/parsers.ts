@@ -4,9 +4,12 @@ import { deepMap } from "../utils"
 import { parseJsCodeFromPython } from "./gridUtils"
 import { columnFormaters } from "../customColumns"
 import { ThemeParser } from "../ThemeParser"
-import type { AgGridData } from "../types/AgGridTypes"
+import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 
-export function parseGridOptions(data: AgGridData): GridOptions {
+export function parseGridOptions(
+  data: AgGridData,
+  streamlitTheme?: StreamlitThemeInfo | null
+): GridOptions {
   let gridOptions: GridOptions = cloneDeep(data.gridOptions)
 
   if (data.allow_unsafe_jscode) {
@@ -26,9 +29,13 @@ export function parseGridOptions(data: AgGridData): GridOptions {
     columnFormaters
   )
 
-  // Process theming
+  // Process theming — prefer the live theme read from host CSS variables
+  // over any server-side value, which can't see user-level theme toggles.
   const themeParser = new ThemeParser()
-  gridOptions.theme = themeParser.parse(data.theme, data.streamlit_theme)
+  gridOptions.theme = themeParser.parse(
+    data.theme,
+    streamlitTheme ?? undefined
+  )
 
   return gridOptions
 }

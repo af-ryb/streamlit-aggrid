@@ -1,6 +1,6 @@
 [project]
 name = "streamlit-aggrid"
-version = "2.0.1"
+version = "2.0.2"
 description = "Streamlit component implementation of ag-grid (CCv2, no iframe)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,3 +48,9 @@ only-include = ["st_aggrid"]
 
 [tool.hatch.build.targets.sdist]
 only-include = ["st_aggrid", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: long-running performance tests (1M-row grid); excluded by default, run with -m slow",
+]
