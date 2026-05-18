@@ -203,6 +203,17 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     if (!isEqual(prevGo, currGo)) {
       const go = parseGridOptions(data)
       delete (go as any).rowData
+
+      // Snapshot the live sort before updateGridOptions. Re-processing
+      // columnDefs reverts sort to the colDef `initialSort` default, so the
+      // user's interactive sort would be lost. Sort is runtime state (like
+      // selection/scroll) — preserve it across the config update rather than
+      // letting the Python-declared default win.
+      const savedSortState = gridApiRef.current
+        .getColumnState()
+        .filter((c) => c.sort != null)
+        .map((c) => ({ colId: c.colId, sort: c.sort, sortIndex: c.sortIndex }))
+
       gridApiRef.current.updateGridOptions(go)
 
       // updateGridOptions applies new columnDefs but AG-Grid preserves its
@@ -260,6 +271,20 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         if (debug) {
           console.warn("[AgGridComponent] refreshClientSideRowModel failed:", err)
         }
+      }
+
+      // Restore the interactive sort captured before updateGridOptions.
+      // `defaultState: { sort: null }` clears sort on any column not in the
+      // snapshot, so a grid the user explicitly un-sorted stays un-sorted.
+      gridApiRef.current.applyColumnState({
+        state: savedSortState,
+        defaultState: { sort: null },
+      })
+      if (debug) {
+        console.log(
+          "[AgGridComponent] Restored sort state:",
+          savedSortState
+        )
       }
 
       // updateGridOptions swaps columnDefs in place but doesn't re-render
