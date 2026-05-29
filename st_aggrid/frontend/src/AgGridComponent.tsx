@@ -24,6 +24,7 @@ import GridToolBar from "./components/GridToolBar"
 
 import {
   addCustomCSS,
+  columnStateToInitialState,
   extractColumnStateFromDefs,
   extractRowGroupColumns,
   extractRowGroupColumnsFromState,
@@ -153,6 +154,20 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     return go
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId])
+
+  // Saved column layout applied at grid *creation* (pre-paint) via the
+  // `initialState` prop, so restored columns never flash in then hide. AG-Grid
+  // reads `initialState` only when the grid is created; Streamlit reruns reuse
+  // the same component (key stable), and a view switch remounts (key changes)
+  // to re-read it — exactly the restore boundaries we care about.
+  const initialState = useMemo(
+    () =>
+      columnStateToInitialState(
+        data.columns_state,
+        data.gridOptions?.pivotMode
+      ),
+    [data.columns_state, data.gridOptions?.pivotMode]
+  )
 
   // Memoize config arrays to avoid re-registering listeners on every render
   const collectConfig = useMemo(
@@ -334,15 +349,14 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         console.log("[AgGridComponent] Grid ready", event)
       }
 
-      // Apply initial columns state
+      // Column layout is restored pre-paint via the `initialState` prop (see
+      // the `initialState` memo) — no post-paint applyColumnState here, which
+      // is what caused the restore flicker. Row groups are re-affirmed as a
+      // safety net: AG-Grid's `initialState.rowGroup` is reliable at creation,
+      // but setRowGroupColumns guards against pivot-mode edge cases and is a
+      // no-op when groups already match (it touches grouping only, so it can't
+      // flash a value column).
       if (data.columns_state) {
-        event.api.applyColumnState({
-          state: data.columns_state,
-          applyOrder: true,
-        })
-        // applyColumnState does not reliably build row groups while pivot
-        // mode is on — drive them explicitly from the same state. Guarded
-        // so saved state without row groups doesn't clobber colDef defaults.
         const rg = extractRowGroupColumnsFromState(data.columns_state)
         if (rg.length > 0) {
           event.api.setRowGroupColumns(rg)
@@ -406,6 +420,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         onGridReady={onGridReady}
         rowData={rowData}
         gridOptions={gridOptions}
+        initialState={initialState}
       />
     </div>
   )
