@@ -63,6 +63,22 @@ export function useAutoCollect({
     (eventName: string, eventData: any) => {
       if (!gridApi) return
 
+      // Skip programmatic (api-sourced) column events. Applying saved column
+      // state on mount/restore (initialState + onGridReady setRowGroupColumns
+      // + the columns_state re-apply effect) fires AG-Grid events with
+      // source="api"/"apiNoSortChange". Echoing those back via setStateValue
+      // triggers a Streamlit fragment rerun (and a restore->capture->re-apply
+      // loop / column flicker). Only user actions should sync state — this
+      // mirrors dash_app's is_programmatic_grid_event, moved upstream so the
+      // rerun is never triggered, not merely the capture suppressed.
+      const source = eventData?.source
+      if (typeof source === "string" && source.startsWith("api")) {
+        if (debug) {
+          console.log(`[useAutoCollect] Skipping programmatic "${eventName}" (source=${source})`)
+        }
+        return
+      }
+
       const result: GridStateResult = {
         eventName,
         eventData: serializeEventData(eventData),
