@@ -26,6 +26,7 @@ import {
   addCustomCSS,
   extractColumnStateFromDefs,
   extractRowGroupColumns,
+  extractRowGroupColumnsFromState,
   injectProAssets,
 } from "./utils/gridUtils"
 
@@ -301,6 +302,12 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           state: data.columns_state,
           applyOrder: true,
         })
+        // applyColumnState does not reliably (re)build row groups while
+        // pivot mode is on — drive them explicitly from the same state.
+        // Called unconditionally so an explicit un-group is honored.
+        gridApiRef.current.setRowGroupColumns(
+          extractRowGroupColumnsFromState(data.columns_state)
+        )
       }
     }
   }, [data])
@@ -333,6 +340,13 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           state: data.columns_state,
           applyOrder: true,
         })
+        // applyColumnState does not reliably build row groups while pivot
+        // mode is on — drive them explicitly from the same state. Guarded
+        // so saved state without row groups doesn't clobber colDef defaults.
+        const rg = extractRowGroupColumnsFromState(data.columns_state)
+        if (rg.length > 0) {
+          event.api.setRowGroupColumns(rg)
+        }
       }
 
       // Handle pre-selection

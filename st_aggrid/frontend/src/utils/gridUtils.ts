@@ -175,3 +175,26 @@ export function extractRowGroupColumns(
   groups.sort((a, b) => a.index - b.index)
   return groups.map((g) => g.colId)
 }
+
+/**
+ * Extract ordered row group column IDs from a ColumnState[] array — i.e. the
+ * shape produced by `gridApi.getColumnState()` and round-tripped through the
+ * `columns_state` prop. `applyColumnState` alone does not reliably (re)build
+ * row groups while pivot mode is on, so callers pair it with
+ * `gridApi.setRowGroupColumns()` fed by this function.
+ */
+export function extractRowGroupColumnsFromState(
+  state: ColumnState[] | null | undefined
+): string[] {
+  if (!state || !Array.isArray(state)) return []
+
+  const groups = state
+    .filter((c) => c.rowGroup === true || c.rowGroupIndex != null)
+    .map((c) => ({
+      colId: c.colId as string,
+      index: c.rowGroupIndex ?? Number.MAX_SAFE_INTEGER,
+    }))
+
+  groups.sort((a, b) => a.index - b.index)
+  return groups.map((g) => g.colId)
+}
