@@ -63,6 +63,34 @@ export function useAutoCollect({
     (eventName: string, eventData: any) => {
       if (!gridApi) return
 
+      // Skip programmatic (api-sourced) column events. Applying saved column
+      // state on mount/restore (initialState + onGridReady setRowGroupColumns
+      // + the columns_state re-apply effect) fires AG-Grid events with
+      // source="api"/"apiNoSortChange". Echoing those back via setStateValue
+      // triggers a Streamlit fragment rerun (and a restore->capture->re-apply
+      // loop / column flicker). Only user actions should sync state — this
+      // mirrors dash_app's is_programmatic_grid_event, moved upstream so the
+      // rerun is never triggered, not merely the capture suppressed.
+      //
+      // Also skip sizing-driven sources: the fitGridWidth refit listener calls
+      // sizeColumnsToFit() on displayedColumnsChanged, which emits a
+      // columnResized with source="sizeColumnsToFit" (likewise "flex" /
+      // "autosizeColumns"). Capturing those would persist the auto-fit widths
+      // as if the user set them and fire a needless rerun.
+      const source = eventData?.source
+      const isProgrammatic =
+        typeof source === "string" &&
+        (source.startsWith("api") ||
+          source === "sizeColumnsToFit" ||
+          source === "flex" ||
+          source === "autosizeColumns")
+      if (isProgrammatic) {
+        if (debug) {
+          console.log(`[useAutoCollect] Skipping programmatic "${eventName}" (source=${source})`)
+        }
+        return
+      }
+
       const result: GridStateResult = {
         eventName,
         eventData: serializeEventData(eventData),

@@ -1,4 +1,4 @@
-import type { ColumnState } from "ag-grid-community"
+import type { ColumnState, GridState } from "ag-grid-community"
 
 type CSSDict = { [key: string]: { [key: string]: string } }
 
@@ -174,4 +174,114 @@ export function extractRowGroupColumns(
   walk(columnDefs)
   groups.sort((a, b) => a.index - b.index)
   return groups.map((g) => g.colId)
+}
+
+/**
+ * Extract ordered row group column IDs from a ColumnState[] array — i.e. the
+ * shape produced by `gridApi.getColumnState()` and round-tripped through the
+ * `columns_state` prop. `applyColumnState` alone does not reliably (re)build
+ * row groups while pivot mode is on, so callers pair it with
+ * `gridApi.setRowGroupColumns()` fed by this function.
+ */
+export function extractRowGroupColumnsFromState(
+  state: ColumnState[] | null | undefined
+): string[] {
+  if (!state || !Array.isArray(state)) return []
+
+  const groups = state
+    .filter((c) => c.rowGroup === true || c.rowGroupIndex != null)
+    .map((c) => ({
+      colId: c.colId as string,
+      index: c.rowGroupIndex ?? Number.MAX_SAFE_INTEGER,
+    }))
+
+  groups.sort((a, b) => a.index - b.index)
+  return groups.map((g) => g.colId)
+}
+
+/**
+ * Convert a `ColumnState[]` (the shape produced by `gridApi.getColumnState()`
+ * and round-tripped through the `columns_state` prop) into an AG-Grid
+ * `GridState`, so saved column layout can be applied at grid *creation* via the
+ * `initialState` prop — before the first paint — instead of in `onGridReady`
+ * after the grid has already rendered its default columns (which causes a
+ * visible column flicker).
+ *
+ * `partialColumnState` is intentionally left unset (complete state): a value
+ * column that is present in the colDefs but absent from `aggregationModel` is
+ * cleared at creation, so a column the saved state hides never flashes into
+ * view. (Tradeoff: a metric column added *after* a view was saved is hidden
+ * until the view is re-saved — the project's accepted "re-save to migrate"
+ * drift behaviour.)
+ *
+ * Only the Tier A sections are emitted (visibility / order / sizing / pinning /
+ * sort / row-group / pivot / aggregation). Filters, group expansion and
+ * scroll/focus are out of scope.
+ */
+export function columnStateToInitialState(
+  state: ColumnState[] | null | undefined,
+  pivotMode?: boolean
+): GridState | undefined {
+  if (!state || !Array.isArray(state) || state.length === 0) return undefined
+
+  const colIds = (cs: ColumnState[]): string[] =>
+    cs.map((c) => c.colId).filter((id): id is string => !!id)
+
+  const initial: GridState = {}
+
+  const orderedColIds = colIds(state)
+  if (orderedColIds.length > 0) initial.columnOrder = { orderedColIds }
+
+  const hiddenColIds = colIds(state.filter((c) => c.hide === true))
+  if (hiddenColIds.length > 0) initial.columnVisibility = { hiddenColIds }
+
+  const columnSizingModel = state
+    .filter((c) => c.colId && c.width != null)
+    .map((c) => ({ colId: c.colId as string, width: c.width as number }))
+  if (columnSizingModel.length > 0)
+    initial.columnSizing = { columnSizingModel }
+
+  const leftColIds = colIds(
+    state.filter((c) => c.pinned === "left" || c.pinned === true)
+  )
+  const rightColIds = colIds(state.filter((c) => c.pinned === "right"))
+  if (leftColIds.length > 0 || rightColIds.length > 0)
+    initial.columnPinning = { leftColIds, rightColIds }
+
+  const sortModel = state
+    .filter((c) => c.colId && c.sort != null)
+    .slice()
+    .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+    .map((c) => ({ colId: c.colId as string, sort: c.sort as "asc" | "desc" }))
+  if (sortModel.length > 0) initial.sort = { sortModel }
+
+  const groupColIds = extractRowGroupColumnsFromState(state)
+  if (groupColIds.length > 0) initial.rowGroup = { groupColIds }
+
+  // Only named aggregation functions can live in grid state; non-string
+  // aggFuncs (inline JS) and cleared columns (null) are omitted.
+  const aggregationModel = state
+    .filter((c) => c.colId && typeof c.aggFunc === "string")
+    .map((c) => ({ colId: c.colId as string, aggFunc: c.aggFunc as string }))
+  if (aggregationModel.length > 0)
+    initial.aggregation = { aggregationModel }
+
+  const pivotColIds = colIds(
+    state
+      .filter((c) => c.pivot === true || c.pivotIndex != null)
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.pivotIndex ?? Number.MAX_SAFE_INTEGER) -
+          (b.pivotIndex ?? Number.MAX_SAFE_INTEGER)
+      )
+  )
+  // pivotMode activation is driven by gridOptions.pivotMode (the caller passes
+  // it in), NOT inferred from the presence of pivot columns: a column can be
+  // configured as a pivot column while pivot mode is off. Default to `false`
+  // when the option is absent so a saved view never force-enables pivot mode.
+  if (pivotColIds.length > 0)
+    initial.pivot = { pivotMode: pivotMode ?? false, pivotColIds }
+
+  return Object.keys(initial).length > 0 ? initial : undefined
 }
