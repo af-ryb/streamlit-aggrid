@@ -276,8 +276,12 @@ export function columnStateToInitialState(
           (b.pivotIndex ?? Number.MAX_SAFE_INTEGER)
       )
   )
+  // pivotMode activation is driven by gridOptions.pivotMode (the caller passes
+  // it in), NOT inferred from the presence of pivot columns: a column can be
+  // configured as a pivot column while pivot mode is off. Default to `false`
+  // when the option is absent so a saved view never force-enables pivot mode.
   if (pivotColIds.length > 0)
-    initial.pivot = { pivotMode: pivotMode ?? true, pivotColIds }
+    initial.pivot = { pivotMode: pivotMode ?? false, pivotColIds }
 
   return Object.keys(initial).length > 0 ? initial : undefined
 }
