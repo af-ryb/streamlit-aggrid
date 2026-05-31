@@ -20,6 +20,8 @@ def AgGrid(
     enable_enterprise_modules: Union[bool, Literal["enterpriseOnly", "enterprise+AgCharts"]] = False,
     license_key: Optional[str] = None,
     columns_state: Optional[Dict] = None,
+    columns_state_mode: Literal["replace", "merge"] = "replace",
+    initial_state: Optional[Dict] = None,
     theme: Union[str, StAggridTheme, None] = "streamlit",
     custom_css: Optional[Dict] = None,
     key: Optional[str] = None,
@@ -69,7 +71,27 @@ def AgGrid(
         AG-Grid Enterprise license key.
 
     columns_state : dict, optional
-        Initial column state (visibility, order, width).
+        A ColumnState[] list (the shape of ``getColumnState()``) applied to the
+        grid. Covers visibility, order, width, pinning, sort, rowGroup, pivot and
+        aggFunc. To clear an aggregation in pivot mode pass an explicit
+        ``aggFunc: None`` (an omitted key leaves the aggregation in place) — the
+        ``st_aggrid.column_state`` helpers do this for you.
+
+    columns_state_mode : {"replace", "merge"}, optional
+        How ``columns_state`` is applied. ``"replace"`` (default) applies it as a
+        full layout (``applyOrder=True``) — use for restoring a complete saved
+        layout. ``"merge"`` applies it as a partial overlay (``applyOrder=False``,
+        no defaultState) so columns absent from the delta, and the user's manual
+        per-column edits, are left untouched. Use ``"merge"`` to drive visibility
+        from app controls without clobbering the user's Columns-panel edits.
+
+    initial_state : dict, optional
+        A raw AG-Grid ``GridState`` applied once at grid creation via the
+        ``initialState`` prop. Unlike ``columns_state`` it also covers
+        filterModel, group expansion, focus and scroll — use it to restore a full
+        saved view. AG-Grid reads it only at creation, so switching views must
+        remount the grid (change ``key``). Takes precedence over ``columns_state``
+        for the pre-paint initial state.
 
     theme : str | StAggridTheme, optional
         Grid theme. Options: "streamlit", "alpine", "balham", "material",
@@ -185,6 +207,8 @@ def AgGrid(
         "enable_enterprise_modules": enable_enterprise_modules,
         "license_key": license_key,
         "columns_state": columns_state,
+        "columns_state_mode": columns_state_mode,
+        "initial_state": initial_state,
         "theme": theme_obj,
         "custom_css": custom_css,
         "show_toolbar": show_toolbar,

@@ -10,6 +10,8 @@ export interface AgGridData {
   enable_enterprise_modules: boolean | "enterpriseOnly" | "enterprise+AgCharts"
   license_key?: string
   columns_state?: any
+  columns_state_mode?: "replace" | "merge"
+  initial_state?: any
   theme: any
   custom_css?: { [key: string]: { [key: string]: string } }
   show_toolbar: boolean

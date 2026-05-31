@@ -52,21 +52,21 @@ When updating AG-Grid:
 1. Update all `ag-grid-*` packages in `st_aggrid/frontend/package.json`
 2. Check if `ag-charts-enterprise` needs a compatible version bump
 3. Review AG-Grid changelog for breaking changes (API renames, removed options, theme changes)
-4. Rebuild frontend: `cd st_aggrid/frontend && yarn install && yarn build`
+4. Rebuild frontend: `cd st_aggrid/frontend && corepack yarn install && corepack yarn build`
 5. Run e2e tests: `pytest test/`
 6. Update version references in `README.md`
 
 ## Build & Dev
 
 ```bash
-# Frontend
+# Frontend — `yarn` is NOT on PATH; invoke via corepack (Yarn 4 Berry).
 cd st_aggrid/frontend
-yarn install
-yarn build          # outputs to st_aggrid/frontend/build/
-yarn dev            # dev server on port 3001
+corepack yarn install
+corepack yarn build   # tsc && vite build → st_aggrid/frontend/build/
+corepack yarn dev     # dev server on port 3001
 
 # Full build (frontend + Python wheel)
-yarn build          # root package.json — builds all workspaces then uv build
+corepack yarn build   # root package.json — builds all workspaces then uv build
 
 # Tests (Playwright e2e)
 pytest test/
@@ -76,7 +76,7 @@ uv sync             # creates .venv, installs deps + dev group (editable)
 uv run pytest test/ # run tests inside the uv-managed env
 ```
 
-Package manager: **yarn 4.1.0** (root), npm/yarn for frontend workspace.
+Package manager: **Yarn 4.1.0 (Berry)** via **corepack** — bare `yarn` is not on PATH, so run `corepack yarn …` (set `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` to skip the prompt). The pinned release is committed at `.yarn/releases/yarn-4.1.0.cjs`.
 Build tool: **Vite** (lib mode, single JS bundle + CSS).
 Python build: **hatchling** (via `uv build`).
 

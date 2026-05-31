@@ -165,14 +165,26 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // reads `initialState` only when the grid is created; Streamlit reruns reuse
   // the same component (key stable), and a view switch remounts (key changes)
   // to re-read it — exactly the restore boundaries we care about.
-  const initialState = useMemo(
-    () =>
-      columnStateToInitialState(
-        data.columns_state,
-        data.gridOptions?.pivotMode
-      ),
-    [data.columns_state, data.gridOptions?.pivotMode]
-  )
+  const initialState = useMemo(() => {
+    // A raw GridState (saved-view restore) wins pre-paint.
+    if (data.initial_state) return data.initial_state
+    // Merge mode is a partial overlay applied post-creation (onGridReady + the
+    // columns_state effect). A partial delta must NOT seed initialState — that
+    // is a full-state snapshot, so AG-Grid would treat the delta's value/agg
+    // entries as the complete column state and drop colDef-driven row groups
+    // and pivot at creation. Use the raw `initial_state` prop for pre-paint
+    // restore instead.
+    if (data.columns_state_mode === "merge") return undefined
+    return columnStateToInitialState(
+      data.columns_state,
+      data.gridOptions?.pivotMode
+    )
+  }, [
+    data.initial_state,
+    data.columns_state,
+    data.columns_state_mode,
+    data.gridOptions?.pivotMode,
+  ])
 
   // Memoize config arrays to avoid re-registering listeners on every render
   const collectConfig = useMemo(
@@ -339,16 +351,28 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     // Diff columns_state
     if (!isEqual(prevData.columns_state, data.columns_state)) {
       if (data.columns_state != null) {
+        const mergeMode = data.columns_state_mode === "merge"
+
+        // merge: a partial overlay — apply only the listed columns' state
+        //   (applyOrder:false, no defaultState) so the user's manual edits on
+        //   other columns and the existing column order are preserved.
+        // replace: a full layout restore — apply order too.
         gridApiRef.current.applyColumnState({
           state: data.columns_state,
-          applyOrder: true,
+          applyOrder: !mergeMode,
         })
-        // applyColumnState does not reliably (re)build row groups while
-        // pivot mode is on — drive them explicitly from the same state.
-        // Called unconditionally so an explicit un-group is honored.
-        gridApiRef.current.setRowGroupColumns(
-          extractRowGroupColumnsFromState(data.columns_state)
-        )
+
+        // applyColumnState does not reliably (re)build row groups while pivot
+        // mode is on, so drive them explicitly from the same state. In replace
+        // mode this runs unconditionally (an empty result honors an explicit
+        // un-group). In merge mode the delta usually carries no row-group info
+        // (e.g. a value-only visibility overlay) and feeding the resulting [] to
+        // setRowGroupColumns would wrongly clear every row group — so only touch
+        // grouping when the delta actually carries row-group entries.
+        const rowGroupCols = extractRowGroupColumnsFromState(data.columns_state)
+        if (!mergeMode || rowGroupCols.length > 0) {
+          gridApiRef.current.setRowGroupColumns(rowGroupCols)
+        }
       }
     }
   }, [data])
@@ -434,6 +458,17 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         if (rg.length > 0) {
           event.api.setRowGroupColumns(rg)
         }
+
+        // Merge mode applies its partial overlay post-creation (not via
+        // initialState — see the initialState memo). colDefs have already set
+        // up row groups / pivot / default aggregation at creation; this lays
+        // the control's visibility on top without disturbing them.
+        if (data.columns_state_mode === "merge") {
+          event.api.applyColumnState({
+            state: data.columns_state,
+            applyOrder: false,
+          })
+        }
       }
 
       // Handle pre-selection
@@ -455,7 +490,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         userOnGridReady(event)
       }
     },
-    [data.columns_state, data.gridOptions, gridOptions, debug]
+    [data.columns_state, data.columns_state_mode, data.gridOptions, gridOptions, debug]
   )
 
   const isAutoHeight = data.gridOptions?.domLayout === "autoHeight"
