@@ -71,8 +71,20 @@ export function useAutoCollect({
       // loop / column flicker). Only user actions should sync state — this
       // mirrors dash_app's is_programmatic_grid_event, moved upstream so the
       // rerun is never triggered, not merely the capture suppressed.
+      //
+      // Also skip sizing-driven sources: the fitGridWidth refit listener calls
+      // sizeColumnsToFit() on displayedColumnsChanged, which emits a
+      // columnResized with source="sizeColumnsToFit" (likewise "flex" /
+      // "autosizeColumns"). Capturing those would persist the auto-fit widths
+      // as if the user set them and fire a needless rerun.
       const source = eventData?.source
-      if (typeof source === "string" && source.startsWith("api")) {
+      const isProgrammatic =
+        typeof source === "string" &&
+        (source.startsWith("api") ||
+          source === "sizeColumnsToFit" ||
+          source === "flex" ||
+          source === "autosizeColumns")
+      if (isProgrammatic) {
         if (debug) {
           console.log(`[useAutoCollect] Skipping programmatic "${eventName}" (source=${source})`)
         }

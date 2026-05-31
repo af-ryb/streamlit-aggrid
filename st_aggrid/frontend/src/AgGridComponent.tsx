@@ -14,6 +14,7 @@ import { AllEnterpriseModule, LicenseManager } from "ag-grid-enterprise"
 
 import isEqual from "lodash/isEqual"
 import omit from "lodash/omit"
+import debounce from "lodash/debounce"
 
 import { useAutoCollect } from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
@@ -87,6 +88,10 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const gridContainerRef = useRef<HTMLDivElement>(null)
   const prevDataRef = useRef<AgGridData | undefined>(undefined)
+  // Cleanup for the displayedColumnsChanged refit listener registered in
+  // onGridReady (see the gated `sizeColumnsToFit` re-fit below). Held in a ref
+  // so the unmount effect can tear it down without re-running onGridReady.
+  const refitCleanupRef = useRef<(() => void) | null>(null)
 
   const debug = data.debug || false
 
@@ -230,6 +235,14 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         .filter((c) => c.sort != null)
         .map((c) => ({ colId: c.colId, sort: c.sort, sortIndex: c.sortIndex }))
 
+      // Snapshot the open tool panel before updateGridOptions. Re-applying
+      // gridOptions re-applies `sideBar` (whose defaultToolPanel is "" for our
+      // grids), which AG-Grid resets to its closed default — collapsing a panel
+      // the user had open while toggling column visibility. Captured now and
+      // re-opened after the column re-apply. getOpenedToolPanel() returns null
+      // when nothing is open, so the restore is naturally guarded.
+      const openedToolPanel = gridApiRef.current.getOpenedToolPanel()
+
       gridApiRef.current.updateGridOptions(go)
 
       // updateGridOptions applies new columnDefs but AG-Grid preserves its
@@ -308,6 +321,19 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       // cellClass / cellRenderer won't clear stale inline styles. Redraw
       // rows to guarantee the DOM reflects the new configuration.
       gridApiRef.current.redrawRows()
+
+      // Re-open the tool panel the config update collapsed. Guarded on a
+      // non-null snapshot (a panel the user had closed stays closed) and on the
+      // panel not already being open again (avoids a redundant re-open/flash).
+      if (
+        openedToolPanel &&
+        gridApiRef.current.getOpenedToolPanel() !== openedToolPanel
+      ) {
+        gridApiRef.current.openToolPanel(openedToolPanel)
+        if (debug) {
+          console.log("[AgGridComponent] Restored tool panel:", openedToolPanel)
+        }
+      }
     }
 
     // Diff columns_state
@@ -340,6 +366,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }, [streamlitTheme, data.theme, gridApi, debug])
 
+  // Tear down the displayedColumnsChanged refit listener on unmount (a view
+  // switch / key change remounts the component, so this fires per mount).
+  useEffect(() => {
+    return () => {
+      refitCleanupRef.current?.()
+      refitCleanupRef.current = null
+    }
+  }, [])
+
   const onGridReady = useCallback(
     (event: GridReadyEvent) => {
       gridApiRef.current = event.api
@@ -347,6 +382,44 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
       if (debug) {
         console.log("[AgGridComponent] Grid ready", event)
+      }
+
+      // Re-fit columns to grid width whenever the displayed column set changes
+      // (hide/show, pivot/group). autoSizeStrategy:{type:'fitGridWidth'} runs
+      // only at grid CREATION; updateGridOptions never re-runs it, so after a
+      // column is hidden the remaining columns don't refill the width. Gated on
+      // fitGridWidth so only grids that opted in refit (others keep their own
+      // sizing). sizeColumnsToFit emits columnResized (source 'sizeColumnsToFit'),
+      // NOT displayedColumnsChanged, so there is no refit->event->refit loop, and
+      // a user's manual drag (source 'uiColumnResized') never triggers it. The
+      // emitted columnResized is filtered from capture in useAutoCollect.
+      const fitsGridWidth =
+        (gridOptions as any)?.autoSizeStrategy?.type === "fitGridWidth"
+      if (fitsGridWidth) {
+        const debouncedRefit = debounce(
+          () => {
+            if (gridApiRef.current && !gridApiRef.current.isDestroyed()) {
+              gridApiRef.current.sizeColumnsToFit()
+            }
+          },
+          50,
+          { leading: false, trailing: true, maxWait: 200 }
+        )
+        event.api.addEventListener("displayedColumnsChanged", debouncedRefit)
+        refitCleanupRef.current = () => {
+          debouncedRefit.cancel()
+          if (!event.api.isDestroyed()) {
+            event.api.removeEventListener(
+              "displayedColumnsChanged",
+              debouncedRefit
+            )
+          }
+        }
+        if (debug) {
+          console.log(
+            "[AgGridComponent] Registered displayedColumnsChanged refit"
+          )
+        }
       }
 
       // Column layout is restored pre-paint via the `initialState` prop (see
