@@ -353,6 +353,27 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       if (data.columns_state != null) {
         const mergeMode = data.columns_state_mode === "merge"
 
+        // DIAGNOSTIC (debug only): this fires exactly when the merge/replace
+        // overlay RE-APPLIES because the delta content changed since the last
+        // render. If a column the user just hid in the Columns panel appears in
+        // `shown` here, the overlay is re-showing it (the capture<->delta lag) —
+        // the root-cause signal for the manual-hide jitter.
+        if (debug) {
+          const cs = data.columns_state as any[]
+          const shown = cs
+            .filter((e) => e?.aggFunc != null)
+            .map((e) => e.colId)
+          const hidden = cs
+            .filter((e) => "aggFunc" in e && e.aggFunc == null)
+            .map((e) => e.colId)
+          console.log(
+            `[AgGridComponent] columns_state ${
+              mergeMode ? "merge" : "replace"
+            } re-apply (delta changed): shown=${shown.length} hidden=${hidden.length}`,
+            { shown, hidden }
+          )
+        }
+
         // merge: a partial overlay — apply only the listed columns' state
         //   (applyOrder:false, no defaultState) so the user's manual edits on
         //   other columns and the existing column order are preserved.
