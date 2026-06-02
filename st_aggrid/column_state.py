@@ -39,7 +39,12 @@ columns, and the user's edits elsewhere) are left untouched.
 
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
-__all__ = ["set_visibility", "visibility_state", "derive_user_hidden"]
+__all__ = [
+    "set_visibility",
+    "visibility_state",
+    "derive_user_hidden",
+    "derive_overlay",
+]
 
 # An AG-Grid getColumnState()/applyColumnState() entry.
 ColumnState = Dict[str, object]
@@ -123,15 +128,22 @@ def visibility_state(
     governed_col_ids: Sequence[str],
     included_col_ids: Iterable[str],
     user_hidden_col_ids: Iterable[str] = (),
+    user_shown_col_ids: Iterable[str] = (),
     pivot_mode: bool = False,
     value_agg_func: Optional[AggFuncSpec] = None,
 ) -> List[ColumnState]:
-    """Build the visibility delta for a control's governed columns (union rule).
+    """Build the visibility delta for a control's governed columns (signed rule).
 
-    ``visible = included - user_hidden`` and ``hidden = governed - visible``,
-    all intersected with ``governed`` so the delta only ever touches columns
-    this control owns. Call this every rerun and apply the result with
-    ``columns_state_mode="merge"``.
+    ``visible = (included - user_hidden) | (user_shown & (governed - included))``
+    and ``hidden = governed - visible``, all intersected with ``governed`` so the
+    delta only ever touches columns this control owns. Call this every rerun and
+    apply the result with ``columns_state_mode="merge"``.
+
+    The overlay is *signed*: ``user_hidden`` removes a control-included column,
+    ``user_shown`` revives a control-excluded one. ``user_shown`` is applied only
+    within ``governed - included`` (it never overrides a ``user_hidden`` on an
+    included column); the two sets are expected to be disjoint (see
+    :func:`derive_overlay`).
 
     Parameters
     ----------
@@ -142,15 +154,21 @@ def visibility_state(
     included_col_ids : iterable of str
         Columns the control currently includes (wants shown).
     user_hidden_col_ids : iterable of str
-        Columns the user manually hid (see :func:`derive_user_hidden`). They stay
+        Columns the user manually hid (see :func:`derive_overlay`). They stay
         hidden even when the control includes them.
+    user_shown_col_ids : iterable of str
+        Columns the user manually showed while the control excluded them (see
+        :func:`derive_overlay`). They stay visible even though the control
+        excludes them. Only the subset within ``governed - included`` takes
+        effect.
     pivot_mode, value_agg_func
         See :func:`set_visibility`.
     """
     governed = set(governed_col_ids)
     included = set(included_col_ids) & governed
     user_hidden = set(user_hidden_col_ids) & governed
-    visible = included - user_hidden
+    user_shown = set(user_shown_col_ids) & governed
+    visible = (included - user_hidden) | (user_shown & (governed - included))
     hidden = governed - visible
     return set_visibility(
         visible_col_ids=visible,
@@ -171,6 +189,20 @@ def _reads_hidden(entry: Optional[ColumnState], pivot_mode: bool) -> bool:
     if pivot_mode:
         return not entry.get("aggFunc")
     return entry.get("hide") is True
+
+
+def _reads_visible(entry: Optional[ColumnState], pivot_mode: bool) -> bool:
+    """Whether a captured ColumnState entry represents a visible column.
+
+    The mirror of :func:`_reads_hidden`. A missing entry is treated as
+    not-visible: absence is not evidence of a manual show (symmetric with the
+    hidden side, so a column absent from the capture lands in neither overlay).
+    """
+    if entry is None:
+        return False
+    if pivot_mode:
+        return bool(entry.get("aggFunc"))
+    return entry.get("hide") is not True
 
 
 def derive_user_hidden(
@@ -221,3 +253,66 @@ def derive_user_hidden(
             by_id[cid] = entry
 
     return sorted(cid for cid in candidates if _reads_hidden(by_id.get(cid), pivot_mode))
+
+
+def derive_overlay(
+    captured_state: Optional[Sequence[ColumnState]],
+    *,
+    governed_col_ids: Sequence[str],
+    control_included_at_capture: Iterable[str],
+    pivot_mode: bool = False,
+) -> tuple[List[str], List[str]]:
+    """Recover the user's *signed* overlay from one captured live column state.
+
+    Returns ``(user_hidden, user_shown)`` derived from a single snapshot so both
+    halves are read against the same control-inclusion basis (no two-snapshot
+    skew):
+
+    * **user_hidden** — governed columns the control *included* at capture that
+      read hidden: a manual hide (same set :func:`derive_user_hidden` returns).
+    * **user_shown** — governed columns the control *excluded* at capture that
+      read visible: a manual show of an excluded column. A control-excluded
+      column that reads hidden is the control's doing, not the user's, and is
+      omitted.
+
+    The two candidate domains — included and ``governed - included`` — are
+    disjoint, so the returned lists never share a colId. Pass the *raw* control
+    inclusion (the same ``included_col_ids`` given to :func:`visibility_state`)
+    as ``control_included_at_capture`` so the overlay accumulates across
+    interactions and a column drops out only when the user reverses it.
+
+    Parameters
+    ----------
+    captured_state : sequence of dict | None
+        The ColumnState[] from ``AgGridResult.column_state``. ``None`` / empty ->
+        empty overlay ``([], [])``.
+    governed_col_ids : sequence of str
+        Columns this control owns.
+    control_included_at_capture : iterable of str
+        What the control included at the moment the state was captured.
+    pivot_mode : bool
+        Match the grid mode: pivot -> hidden means no aggFunc; normal ->
+        ``hide is True``.
+
+    Returns
+    -------
+    tuple[list of str, list of str]
+        ``(user_hidden, user_shown)``, each sorted.
+    """
+    governed = set(governed_col_ids)
+    included = set(control_included_at_capture) & governed
+    excluded = governed - included
+
+    by_id: Dict[str, ColumnState] = {}
+    for entry in captured_state or []:
+        cid = entry.get("colId")
+        if isinstance(cid, str):
+            by_id[cid] = entry
+
+    user_hidden = sorted(
+        cid for cid in included if _reads_hidden(by_id.get(cid), pivot_mode)
+    )
+    user_shown = sorted(
+        cid for cid in excluded if _reads_visible(by_id.get(cid), pivot_mode)
+    )
+    return user_hidden, user_shown

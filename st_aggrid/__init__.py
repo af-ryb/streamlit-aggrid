@@ -1,5 +1,6 @@
 from st_aggrid.aggrid import AgGrid, call_grid_api
 from st_aggrid.column_state import (
+    derive_overlay,
     derive_user_hidden,
     set_visibility,
     visibility_state,
@@ -21,6 +22,7 @@ __all__ = [
     "JsCode",
     "StAggridTheme",
     "call_grid_api",
+    "derive_overlay",
     "derive_user_hidden",
     "set_visibility",
     "visibility_state",

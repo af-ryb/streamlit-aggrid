@@ -7,6 +7,7 @@ Pure-Python (no browser, no Streamlit) — fast to run via
 import pytest
 
 from st_aggrid.column_state import (
+    derive_overlay,
     derive_user_hidden,
     set_visibility,
     visibility_state,
@@ -234,3 +235,191 @@ def test_round_trip_manual_hide_survives_control_toggle():
         "c": False,
         "d": False,
     }
+
+
+# --- visibility_state: user_shown (signed overlay) -------------------------
+
+
+def test_visibility_state_user_shown_default_is_backcompat():
+    # Omitting user_shown must reproduce the old behaviour exactly.
+    governed = ["a", "b", "c", "d"]
+    without = visibility_state(
+        governed_col_ids=governed,
+        included_col_ids=["a", "b", "c"],
+        user_hidden_col_ids=["b"],
+    )
+    with_empty = visibility_state(
+        governed_col_ids=governed,
+        included_col_ids=["a", "b", "c"],
+        user_hidden_col_ids=["b"],
+        user_shown_col_ids=[],
+    )
+    assert without == with_empty
+
+
+def test_visibility_state_user_shown_normal_revives_excluded():
+    governed = ["a", "b", "c", "d"]
+    state = visibility_state(
+        governed_col_ids=governed,
+        included_col_ids=["a", "b"],
+        user_hidden_col_ids=[],
+        user_shown_col_ids=["d"],  # d is control-excluded but user showed it
+    )
+    by_id = {e["colId"]: e["hide"] for e in state}
+    # visible = (included - user_hidden) ∪ (user_shown ∩ excluded) = {a, b, d}
+    assert by_id == {"a": False, "b": False, "c": True, "d": False}
+
+
+def test_visibility_state_user_shown_pivot_revives_excluded():
+    state = visibility_state(
+        governed_col_ids=["a", "b", "c"],
+        included_col_ids=["a"],
+        user_shown_col_ids=["c"],
+        pivot_mode=True,
+        value_agg_func="ratioSum",
+    )
+    by_id = {e["colId"]: e.get("aggFunc") for e in state}
+    assert by_id["a"] == "ratioSum"  # included
+    assert by_id["b"] is None  # excluded, not shown
+    assert by_id["c"] == "ratioSum"  # excluded but user-shown -> visible
+
+
+def test_visibility_state_user_shown_only_applies_to_excluded():
+    # A colId both included and (spuriously) in user_shown stays governed by
+    # included/user_hidden — user_shown never overrides a user_hidden.
+    governed = ["a", "b"]
+    state = visibility_state(
+        governed_col_ids=governed,
+        included_col_ids=["a", "b"],
+        user_hidden_col_ids=["a"],
+        user_shown_col_ids=["a"],  # a is included, so the shown-set is a no-op
+    )
+    by_id = {e["colId"]: e["hide"] for e in state}
+    assert by_id == {"a": True, "b": False}  # user_hidden wins over a stray shown
+
+
+def test_visibility_state_user_shown_ignores_ungoverned():
+    state = visibility_state(
+        governed_col_ids=["a", "b"],
+        included_col_ids=["a"],
+        user_shown_col_ids=["z"],  # not governed
+    )
+    assert {e["colId"] for e in state} == {"a", "b"}
+
+
+# --- derive_overlay (dual derive, one snapshot) ----------------------------
+
+
+def test_derive_overlay_none_state():
+    assert derive_overlay(
+        None, governed_col_ids=["a", "b"], control_included_at_capture=["a"]
+    ) == ([], [])
+
+
+def test_derive_overlay_normal_returns_pair():
+    governed = ["a", "b", "c", "d"]
+    # Control included a, b (not c, d). Captured: b hidden, d shown.
+    captured = [
+        {"colId": "a", "hide": False},
+        {"colId": "b", "hide": True},  # included + hidden -> user hid it
+        {"colId": "c", "hide": True},  # excluded + hidden -> control's doing
+        {"colId": "d", "hide": False},  # excluded + visible -> user showed it
+    ]
+    hidden, shown = derive_overlay(
+        captured,
+        governed_col_ids=governed,
+        control_included_at_capture=["a", "b"],
+    )
+    assert hidden == ["b"]
+    assert shown == ["d"]
+
+
+def test_derive_overlay_pivot_returns_pair():
+    captured = [
+        {"colId": "a", "aggFunc": "sum"},  # included + visible
+        {"colId": "b"},  # included + no aggFunc -> user hid it
+        {"colId": "c", "aggFunc": None},  # excluded + hidden -> control's doing
+        {"colId": "d", "aggFunc": "sum"},  # excluded + visible -> user showed it
+    ]
+    hidden, shown = derive_overlay(
+        captured,
+        governed_col_ids=["a", "b", "c", "d"],
+        control_included_at_capture=["a", "b"],
+        pivot_mode=True,
+    )
+    assert hidden == ["b"]
+    assert shown == ["d"]
+
+
+def test_derive_overlay_sets_are_disjoint():
+    # No governed column can land in both sets (disjoint candidate domains).
+    captured = [
+        {"colId": "a", "hide": True},
+        {"colId": "b", "hide": False},
+        {"colId": "c", "hide": True},
+        {"colId": "d", "hide": False},
+    ]
+    hidden, shown = derive_overlay(
+        captured,
+        governed_col_ids=["a", "b", "c", "d"],
+        control_included_at_capture=["a", "b"],
+    )
+    assert set(hidden).isdisjoint(set(shown))
+
+
+def test_derive_overlay_user_hidden_matches_legacy():
+    # The hidden half must equal the legacy single-set derive.
+    governed = ["a", "b", "c", "d"]
+    included = ["a", "b", "c"]
+    captured = [
+        {"colId": "a", "hide": False},
+        {"colId": "b", "hide": True},
+        {"colId": "c", "hide": False},
+        {"colId": "d", "hide": True},
+    ]
+    hidden, _shown = derive_overlay(
+        captured,
+        governed_col_ids=governed,
+        control_included_at_capture=included,
+    )
+    assert hidden == derive_user_hidden(
+        captured,
+        governed_col_ids=governed,
+        control_included_at_capture=included,
+    )
+
+
+def test_round_trip_user_shown_survives_control_save_load():
+    # Contract scenario 4: exclude a family, user manually shows one excluded
+    # column; that show survives into the next delta.
+    governed = ["cpi", "ctr", "arpu7"]
+    included = ["arpu7"]  # performance family (cpi/ctr) excluded
+
+    # User manually re-adds cpi via the Columns panel -> captured visible.
+    captured = [
+        {"colId": "cpi", "aggFunc": "ratioSum"},  # excluded but shown
+        {"colId": "ctr", "aggFunc": None},  # excluded, untouched
+        {"colId": "arpu7", "aggFunc": "ratioSum"},  # included
+    ]
+    hidden, shown = derive_overlay(
+        captured,
+        governed_col_ids=governed,
+        control_included_at_capture=included,
+        pivot_mode=True,
+    )
+    assert hidden == []
+    assert shown == ["cpi"]
+
+    # Rebuilt delta (e.g. after save->load) keeps cpi visible.
+    delta = visibility_state(
+        governed_col_ids=governed,
+        included_col_ids=included,
+        user_hidden_col_ids=hidden,
+        user_shown_col_ids=shown,
+        pivot_mode=True,
+        value_agg_func="ratioSum",
+    )
+    by_id = {e["colId"]: e.get("aggFunc") for e in delta}
+    assert by_id["cpi"] == "ratioSum"  # user_shown survived
+    assert by_id["ctr"] is None
+    assert by_id["arpu7"] == "ratioSum"
