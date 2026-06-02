@@ -284,6 +284,31 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
             rowGroupCols
           )
         }
+
+        // Re-assert the merge overlay after the colDef re-derive. The re-derive
+        // above re-shows every governed column (each colDef carries its real
+        // aggFunc), which would override the control/manual visibility the merge
+        // delta encodes. The columns_state effect below only re-applies when the
+        // delta CONTENT changed (isEqual guard) — but a colDef rebuild
+        // (row-group / layout flip) leaves the delta unchanged, so without this
+        // the excluded columns surface on every such rebuild. Runs only on a real
+        // colDef change, fires with source:"api" (skipped by capture), and is
+        // batched with the re-derive in this synchronous effect — no flash, no
+        // capture<->delta oscillation.
+        if (
+          data.columns_state != null &&
+          data.columns_state_mode === "merge"
+        ) {
+          gridApiRef.current.applyColumnState({
+            state: data.columns_state,
+            applyOrder: false,
+          })
+          if (debug) {
+            console.log(
+              "[AgGridComponent] Re-asserted merge columns_state after colDef rebuild"
+            )
+          }
+        }
       }
 
       // pivotMode must be set explicitly after column state changes —
