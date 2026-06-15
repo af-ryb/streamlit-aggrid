@@ -65,3 +65,14 @@ def test_editable_notes_render_without_spurious_writeback(page: Page):
     expect(c.locator(".ag-root")).to_be_visible()
     expect(c.locator(".ag-has-cell-notes")).to_have_count(1)
     expect(page.get_by_test_id("notes-writeback")).to_have_text("None")
+
+
+def test_group_notes_probe_marks_group_rows(page: Page):
+    """The debug_group_notes probe renders notes on row-group cells (validates the
+    group-dimension notes path; full-width groupRows is confirmed on the real grid)."""
+    _select(page, 5)
+    c = page.locator(".st-key-group_notes_probe")
+    expect(c.locator(".ag-root")).to_be_visible()
+    # Top-level group rows (campaign=promo_a / promo_b) get note markers on their
+    # auto-group-column cells.
+    expect(c.locator(".ag-has-cell-notes").first).to_be_visible(timeout=10000)

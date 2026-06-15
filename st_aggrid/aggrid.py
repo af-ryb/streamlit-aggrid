@@ -33,6 +33,7 @@ def AgGrid(
     toolbar: Optional[Dict] = None,
     notes: Optional[Dict] = None,
     notes_editable: bool = False,
+    debug_group_notes: bool = False,
     on_grid_state_change: Optional[Callable] = None,
     on_api_response_change: Optional[Callable] = None,
     use_json_serialization: Union[bool, Literal["auto"]] = "auto",
@@ -159,6 +160,15 @@ def AgGrid(
         changes are posted back to the host — read ``result.notes`` (a sticky
         ``{token, notes}`` payload that survives reruns). When False (default),
         notes are read-only annotations and nothing is sent back. Default: False.
+
+    debug_group_notes : bool, optional
+        Diagnostic probe for the planned group-dimension notes feature (AG-Grid
+        35.3 **Enterprise**; see ``REQUIREMENT-group-dimension-notes.md``). Installs
+        a full-width notesDataSource that, for every row-group, logs its
+        ``{field: key}`` dimension ancestry to the browser console and renders a
+        note showing it. Use it on a grouped/pivot grid to confirm group-row notes
+        render and to read the exact dimension keys. Read-only, no write-back; pair
+        with ``debug=True``. Default: False.
 
     on_grid_state_change : callable, optional
         Callback when auto-collected grid state changes.
@@ -290,6 +300,7 @@ def AgGrid(
         "show_find": show_find,
         "notes": notes_payload,
         "notes_editable": notes_editable,
+        "debug_group_notes": debug_group_notes,
         "api_call": api_call,
         "pro_assets": pro_assets,
         "debug": debug,

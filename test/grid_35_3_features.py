@@ -11,12 +11,21 @@ from st_aggrid import AgGrid
 
 TESTS = st.radio(
     "Select Test",
-    options=range(1, 5),
+    options=range(1, 6),
 )
 
 # "apple" appears in two cells ("apple", "pineapple") → Find should report 2 matches.
 fruit_data = pd.DataFrame(
     {"fruit": ["apple", "banana", "grape", "pineapple", "cherry", "mango"]}
+)
+
+# Grouped data for the group-dimension notes probe.
+group_data = pd.DataFrame(
+    {
+        "campaign": ["promo_a", "promo_a", "promo_b", "promo_b"],
+        "country": ["US", "DE", "US", "DE"],
+        "installs": [100, 50, 80, 40],
+    }
 )
 
 
@@ -92,6 +101,28 @@ def notes_editable_grid():
     )
 
 
+def group_notes_probe_grid():
+    """Diagnostic probe (debug_group_notes): renders a note on every row-group cell
+    and logs each group's {field: key} dimension ancestry to the console.
+    Foundation for the planned notes_groups feature."""
+    go = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True, "hide": True},
+            {"field": "country", "rowGroup": True, "hide": True},
+            {"field": "installs", "aggFunc": "sum"},
+        ],
+        "groupDefaultExpanded": -1,
+    }
+    AgGrid(
+        group_data,
+        go,
+        enable_enterprise_modules=True,
+        debug=True,
+        debug_group_notes=True,
+        key="group_notes_probe",
+    )
+
+
 if TESTS == 1:
     find_grid()
 
@@ -103,3 +134,6 @@ if TESTS == 3:
 
 if TESTS == 4:
     notes_editable_grid()
+
+if TESTS == 5:
+    group_notes_probe_grid()

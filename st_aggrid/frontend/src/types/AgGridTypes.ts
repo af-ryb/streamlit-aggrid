@@ -20,6 +20,7 @@ export interface AgGridData {
   show_find: boolean
   notes?: { [rowId: string]: { [colId: string]: any } } | null
   notes_editable?: boolean
+  debug_group_notes?: boolean
   api_call?: ApiCallRequest | null
   pro_assets?: { js?: string; css?: string }[]
   debug?: boolean

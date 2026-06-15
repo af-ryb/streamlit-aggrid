@@ -71,6 +71,21 @@ function registerModules(data: AgGridData) {
   }
 }
 
+// Build a {field: key} map of a group row's dimension ancestry (this node and
+// its parents). Used by the group-dimension notes probe (debug_group_notes) and,
+// later, the notes_groups matcher. See REQUIREMENT-group-dimension-notes.md.
+function groupDimensionAncestry(node: any): Record<string, any> {
+  const map: Record<string, any> = {}
+  let n: any = node
+  while (n) {
+    if (n.field != null && n.key != null && !(n.field in map)) {
+      map[n.field] = n.key
+    }
+    n = n.parent
+  }
+  return map
+}
+
 // Track whether custom CSS has been injected
 let cssInjected = false
 let proAssetsInjected = false
@@ -176,7 +191,39 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // without rebuilding. Skipped if the user supplied their own notesDataSource via
   // grid_options (see the merge into the gridOptions memo below).
   const notesPresent = data.notes != null
+  const debugGroupNotes = data.debug_group_notes === true
   const notesDataSource = useMemo(() => {
+    // Diagnostic probe (REQUIREMENT-group-dimension-notes.md): a full-width notes
+    // datasource that, for every group row, logs its {field: key} dimension
+    // ancestry and renders a note showing it. Confirms the full-width group-row
+    // notes path works on a real grid and reveals the exact keys to use in a
+    // future `notes_groups` matcher. Read-only; no write-back.
+    if (debugGroupNotes) {
+      return {
+        supportsFullWidthRows: true,
+        getNote: (p: any) => {
+          const node = p?.rowNode
+          if (!node || !node.group) return undefined
+          // Only mark the group-displaying cell (or the full-width group row),
+          // not every aggregated value cell on the row.
+          const onGroupCell =
+            p?.location === "fullWidthRow" ||
+            p?.column?.getColId?.() === "ag-Grid-AutoColumn" ||
+            p?.column?.getColDef?.()?.showRowGroup
+          if (!onGroupCell) return undefined
+          const ancestry = groupDimensionAncestry(node)
+          console.log("[AgGridComponent] group-notes probe", {
+            location: p?.location,
+            colId: p?.column?.getColId?.(),
+            field: node.field,
+            key: node.key,
+            ancestry,
+          })
+          return { text: JSON.stringify(ancestry), readOnly: true }
+        },
+        setNote: () => {},
+      }
+    }
     if (!notesPresent) return undefined
     return {
       getNote: ({ rowNode, column }: any) => {
@@ -218,7 +265,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notesPresent, setStateValue])
+  }, [notesPresent, debugGroupNotes, setStateValue])
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
