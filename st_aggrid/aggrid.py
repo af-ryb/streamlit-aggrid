@@ -1,4 +1,5 @@
 import uuid
+import warnings
 from typing import Callable, Dict, List, Literal, Optional, Union
 
 import pandas as pd
@@ -7,7 +8,7 @@ import streamlit as st
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
 from st_aggrid.component import _aggrid_component
 from st_aggrid.result import AgGridResult
-from st_aggrid.shared import AgGridTheme, StAggridTheme
+from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
 
 
 def AgGrid(
@@ -28,6 +29,10 @@ def AgGrid(
     show_toolbar: bool = False,
     show_search: bool = True,
     show_download_button: bool = False,
+    show_find: bool = False,
+    toolbar: Optional[Dict] = None,
+    notes: Optional[Dict] = None,
+    notes_editable: bool = False,
     on_grid_state_change: Optional[Callable] = None,
     on_api_response_change: Optional[Callable] = None,
     use_json_serialization: Union[bool, Literal["auto"]] = "auto",
@@ -112,6 +117,49 @@ def AgGrid(
     show_download_button : bool, optional
         Show CSV download button in toolbar. Default: False.
 
+    show_find : bool, optional
+        Show the Find widget in the toolbar (AG-Grid 35.3 **Enterprise** feature).
+        Find highlights and lets you navigate matches *without* hiding rows —
+        independent of ``show_search`` (quick-filter), so both can be enabled at
+        once. Requires ``enable_enterprise_modules``; no-op in community mode.
+        Tune behaviour via ``grid_options["findOptions"]``
+        (``{"caseSensitive": bool, "currentPageOnly": bool, "searchDetail": bool}``);
+        Find APIs (``findNext``, ``findGoTo``, ``findGetTotalMatches``, …) are also
+        callable from Python via ``call_grid_api``. Default: False.
+
+    toolbar : dict, optional
+        Native AG-Grid Quick Access Toolbar (AG-Grid 35.3 **Enterprise**), rendered
+        in the grid chrome (distinct from the floating overlay toggled by
+        ``show_toolbar``). Convenience for ``grid_options["toolbar"]`` — e.g.
+        ``{"items": ["agQuickFilterToolbarItem", "separator", "agFindToolbarItem"]}``.
+        Built-in items (``agQuickFilterToolbarItem``, ``agFindToolbarItem``,
+        ``agRowGroupPanelToolbarItem``, ``agPivotPanelToolbarItem``,
+        ``agMenuToolbarItem``, ``separator``) are plain strings. Custom action items
+        are **dicts** — ``{"label", "icon", "alignment", "action": JsCode(...)}`` —
+        and need ``allow_unsafe_jscode=True`` for the ``action`` callback (a bare
+        ``JsCode`` as a direct list element is NOT converted; wrap it in the item
+        dict). If you enable ``agQuickFilterToolbarItem`` / ``agFindToolbarItem``
+        here, disable the matching floating buttons (``show_search=False`` /
+        ``show_find=False``) so two inputs don't bind the same grid option.
+        Requires ``enable_enterprise_modules``. Default: None.
+
+    notes : dict, optional
+        Cell Notes (AG-Grid 35.3 **Enterprise**) seeded from the host as a map
+        ``{rowId: {colId: note_text}}`` where ``rowId`` matches the grid's
+        ``getRowId``. Notes are view-only by default (see ``notes_editable``).
+        Requires a **stable** ``getRowId`` — the auto row id is the positional
+        index and shifts if the DataFrame is re-sorted/filtered host-side, which
+        would mis-attach notes; supply your own ``getRowId`` / id column. Requires
+        ``enable_enterprise_modules`` (no-op + warning in community mode). For full
+        control you may instead supply your own ``notesDataSource`` via
+        ``grid_options`` (with ``JsCode`` + ``allow_unsafe_jscode``). Default: None.
+
+    notes_editable : bool, optional
+        When True, ``notes`` become editable in the grid (add/edit/remove) and
+        changes are posted back to the host — read ``result.notes`` (a sticky
+        ``{token, notes}`` payload that survives reruns). When False (default),
+        notes are read-only annotations and nothing is sent back. Default: False.
+
     on_grid_state_change : callable, optional
         Callback when auto-collected grid state changes.
 
@@ -143,6 +191,7 @@ def AgGrid(
         - .grid_state: Full AG-Grid state
         - .event_name: Name of triggering event
         - .api_response: Response from explicit API call
+        - .notes: Cell-note edits posted back (editable-notes grids)
         - .data: Original input DataFrame
         - .get(key): Access any auto-collected value by key
     """
@@ -180,6 +229,30 @@ def AgGrid(
     if height is None:
         grid_options["domLayout"] = "autoHeight"
 
+    # Native Quick Access Toolbar (35.3): inject the convenience param into
+    # grid_options so it rides the existing passthrough. Convert any JsCode in the
+    # toolbar items (e.g. an item's `action` callback) when unsafe jscode is on —
+    # _parse_data_and_grid_options already ran for grid_options, so this subtree
+    # needs its own pass.
+    if toolbar is not None:
+        if grid_options is None:
+            grid_options = {}
+        if allow_unsafe_jscode:
+            walk_grid_options(
+                toolbar, lambda v: v.js_code if isinstance(v, JsCode) else v
+            )
+        grid_options["toolbar"] = toolbar
+
+    # Cell Notes (35.3) require Enterprise. Warn + drop in community mode rather
+    # than shipping a notesDataSource the grid can't honor.
+    notes_payload = notes
+    if notes is not None and not enable_enterprise_modules:
+        warnings.warn(
+            "notes require enable_enterprise_modules; ignoring in community mode.",
+            stacklevel=2,
+        )
+        notes_payload = None
+
     # Check for pending explicit API call
     api_call = None
     if key:
@@ -214,6 +287,9 @@ def AgGrid(
         "show_toolbar": show_toolbar,
         "show_search": show_search,
         "show_download_button": show_download_button,
+        "show_find": show_find,
+        "notes": notes_payload,
+        "notes_editable": notes_editable,
         "api_call": api_call,
         "pro_assets": pro_assets,
         "debug": debug,

@@ -15,6 +15,7 @@ import { AllEnterpriseModule, LicenseManager } from "ag-grid-enterprise"
 import isEqual from "lodash/isEqual"
 import omit from "lodash/omit"
 import debounce from "lodash/debounce"
+import cloneDeep from "lodash/cloneDeep"
 
 import { useAutoCollect } from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
@@ -88,6 +89,30 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const gridContainerRef = useRef<HTMLDivElement>(null)
   const prevDataRef = useRef<AgGridData | undefined>(undefined)
+
+  // Live Find (AG-Grid 35.3) match counter for the toolbar's Find widget. Driven
+  // by the `findChanged` event (see onGridReady) — reading findGetTotalMatches()
+  // synchronously after setting findSearchValue returns a stale count.
+  const [findState, setFindState] = useState<{ matches: number; active: number }>(
+    { matches: 0, active: 0 }
+  )
+  const findCleanupRef = useRef<(() => void) | null>(null)
+
+  // Cell Notes (AG-Grid 35.3 Enterprise) store. Held in a ref (not state) so the
+  // getNote/setNote closures read the live map at call time and never go stale,
+  // and so mutating it on edit doesn't trigger a React re-render. Seeded from
+  // data.notes by the effect below.
+  const notesStoreRef = useRef<Record<string, Record<string, any>>>({})
+  // Editability read through a ref so the (stable) notesDataSource always sees the
+  // current value without being rebuilt when notes_editable toggles.
+  const notesEditableRef = useRef<boolean>(data.notes_editable ?? false)
+  notesEditableRef.current = data.notes_editable ?? false
+  // Monotonic token so the host can tell a fresh write-back from a stale one.
+  const notesTokenRef = useRef<number>(0)
+  // Last seeded data.notes (by content) — guards re-seeding on every rerun (the
+  // host re-sends a structurally-equal but referentially-new object each pass),
+  // which would otherwise clobber unacknowledged local edits.
+  const lastNotesRef = useRef<unknown>(undefined)
   // Cleanup for the displayedColumnsChanged refit listener registered in
   // onGridReady (see the gated `sizeColumnsToFit` re-fit below). Held in a ref
   // so the unmount effect can tear it down without re-running onGridReady.
@@ -144,6 +169,57 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     return undefined
   }, [rowData])
 
+  // Cell Notes datasource (35.3). Built only when host notes are present; stable
+  // across renders (rebuilds only when notes presence flips) so AG-Grid doesn't
+  // re-init notes on every theme/config change. The closures read the live
+  // notesStoreRef / notesEditableRef, so edits and editability changes are seen
+  // without rebuilding. Skipped if the user supplied their own notesDataSource via
+  // grid_options (see the merge into the gridOptions memo below).
+  const notesPresent = data.notes != null
+  const notesDataSource = useMemo(() => {
+    if (!notesPresent) return undefined
+    return {
+      getNote: ({ rowNode, column }: any) => {
+        const colId = column?.getColId?.()
+        if (rowNode?.id == null || colId == null) return undefined
+        const stored = notesStoreRef.current?.[rowNode.id]?.[colId]
+        if (stored == null) return undefined
+        const editable = notesEditableRef.current
+        // Accept either a plain string note or a full Note object from the host.
+        const base =
+          typeof stored === "object" && stored !== null
+            ? { ...stored }
+            : { text: String(stored) }
+        return { ...base, readOnly: editable ? base.readOnly === true : true }
+      },
+      setNote: ({ rowNode, column, note }: any) => {
+        if (!notesEditableRef.current) return
+        const colId = column?.getColId?.()
+        if (rowNode?.id == null || colId == null) return
+        const store = notesStoreRef.current
+        if (note === undefined) {
+          if (store[rowNode.id]) {
+            delete store[rowNode.id][colId]
+            if (Object.keys(store[rowNode.id]).length === 0) {
+              delete store[rowNode.id]
+            }
+          }
+        } else {
+          ;(store[rowNode.id] ??= {})[colId] = note
+        }
+        // Sticky write-back so the host can collect note edits across reruns
+        // (mirrors the csv_export sticky contract). setTriggerValue would be lost
+        // on the multi-rerun passes a multi-grid page makes.
+        notesTokenRef.current += 1
+        setStateValue("notes", {
+          token: notesTokenRef.current,
+          notes: cloneDeep(store),
+        })
+      },
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesPresent, setStateValue])
+
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
     const go = parseGridOptions(data, streamlitTheme)
@@ -156,9 +232,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       go.getRowId = autoGetRowId
     }
 
+    // Inject the data-driven notes datasource unless the user supplied their own
+    // via grid_options (the JsCode escape hatch wins).
+    if (notesDataSource && !("notesDataSource" in go)) {
+      ;(go as any).notesDataSource = notesDataSource
+    }
+
     return go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId])
+  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId, notesDataSource])
 
   // Saved column layout applied at grid *creation* (pre-paint) via the
   // `initialState` prop, so restored columns never flash in then hide. AG-Grid
@@ -436,12 +518,38 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }, [streamlitTheme, data.theme, gridApi, debug])
 
+  // Seed the notes store from host-provided notes and re-render notes on already
+  // painted cells. Guarded on a CONTENT change (isEqual) — the host re-sends a
+  // referentially-new but equal object every rerun, so a plain reference check
+  // would re-seed on each pass and clobber unacknowledged local edits. Kept out
+  // of the big `[data]` effect so it never triggers updateGridOptions/redrawRows.
+  useEffect(() => {
+    if (isEqual(lastNotesRef.current, data.notes)) return
+    lastNotesRef.current = data.notes
+    notesStoreRef.current = data.notes ? cloneDeep(data.notes) : {}
+    if (
+      data.notes != null &&
+      gridApiRef.current &&
+      !gridApiRef.current.isDestroyed()
+    ) {
+      try {
+        gridApiRef.current.refreshNotes()
+      } catch (err) {
+        if (debug) {
+          console.warn("[AgGridComponent] refreshNotes failed:", err)
+        }
+      }
+    }
+  }, [data.notes, debug])
+
   // Tear down the displayedColumnsChanged refit listener on unmount (a view
   // switch / key change remounts the component, so this fires per mount).
   useEffect(() => {
     return () => {
       refitCleanupRef.current?.()
       refitCleanupRef.current = null
+      findCleanupRef.current?.()
+      findCleanupRef.current = null
     }
   }, [])
 
@@ -452,6 +560,24 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
       if (debug) {
         console.log("[AgGridComponent] Grid ready", event)
+      }
+
+      // Keep the toolbar Find widget's match counter in sync. `findChanged`
+      // carries the settled totals (totalMatches + the active FindMatch whose
+      // numOverall is the 1-based position), so we never read a stale count.
+      // Harmless when Find is unused / community mode — the event simply never
+      // fires (FindModule isn't registered). Torn down in the unmount effect.
+      const onFindChanged = (e: any) => {
+        setFindState({
+          matches: e?.totalMatches ?? 0,
+          active: e?.activeMatch?.numOverall ?? 0,
+        })
+      }
+      event.api.addEventListener("findChanged", onFindChanged)
+      findCleanupRef.current = () => {
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener("findChanged", onFindChanged)
+        }
       }
 
       // Re-fit columns to grid width whenever the displayed column set changes
@@ -562,10 +688,18 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         enabled={data.show_toolbar ?? false}
         showSearch={data.show_search ?? true}
         showDownloadButton={data.show_download_button ?? true}
+        showFind={data.show_find ?? false}
         onQuickSearchChange={(value) => {
           gridApiRef.current?.setGridOption("quickFilterText", value)
           gridApiRef.current?.hideOverlay()
         }}
+        onFindChange={(value) => {
+          gridApiRef.current?.setGridOption("findSearchValue", value)
+        }}
+        onFindNext={() => gridApiRef.current?.findNext()}
+        onFindPrev={() => gridApiRef.current?.findPrevious()}
+        findMatches={findState.matches}
+        findActive={findState.active}
         onDownloadClick={() => {
           gridApiRef.current?.exportDataAsCsv()
         }}

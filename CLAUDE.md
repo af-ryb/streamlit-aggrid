@@ -40,13 +40,18 @@ test/                        # Playwright e2e tests
 
 ## AG-Grid Version
 
-**Current: 35.2.1**
+**Current: 35.3.1**
 
 AG-Grid packages in `st_aggrid/frontend/package.json`:
-- `ag-grid-community` — `^35.2.1`
-- `ag-grid-enterprise` — `35.2.1`
-- `ag-grid-react` — `35.2.1`
-- `ag-charts-enterprise` — `^13.2.1`
+- `ag-grid-community` — `^35.3.1`
+- `ag-grid-enterprise` — `35.3.1`
+- `ag-grid-react` — `35.3.1`
+- `ag-charts-enterprise` — `^13.3.1`
+
+Note: `ag-grid-enterprise` hard-pins `ag-grid-community` at the exact same version,
+and depends on `ag-charts-*` at an exact version too — bump all `ag-grid-*` in
+lockstep and keep `ag-charts-enterprise` aligned (35.3 requires `ag-charts` 13.3.x),
+or the build hits a duplicate-`ag-charts-types` type mismatch.
 
 When updating AG-Grid:
 1. Update all `ag-grid-*` packages in `st_aggrid/frontend/package.json`

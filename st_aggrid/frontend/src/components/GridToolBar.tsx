@@ -8,6 +8,14 @@ interface GridToolBarProps {
   showFullscreenButton?: boolean;
   showDownloadButton?: boolean;
   showSearch?: boolean;
+  // Find (AG-Grid 35.3 Enterprise): highlight & navigate matches without hiding
+  // rows. Independent from the quick-filter search above — both can be enabled.
+  showFind?: boolean;
+  onFindChange?: (value: string) => void;
+  onFindNext?: () => void;
+  onFindPrev?: () => void;
+  findMatches?: number;
+  findActive?: number;
 }
 
 const GridToolBar: React.FC<GridToolBarProps> = ({
@@ -17,8 +25,15 @@ const GridToolBar: React.FC<GridToolBarProps> = ({
   showFullscreenButton = true,
   showDownloadButton = true,
   showSearch = true,
+  showFind = false,
+  onFindChange,
+  onFindNext,
+  onFindPrev,
+  findMatches = 0,
+  findActive = 0,
 }) => {
   const [searchValue, setSearchValue] = useState("");
+  const [findValue, setFindValue] = useState("");
   const [position, setPosition] = useState({ x: 10, y: 10 });
   const [collapsed, setCollapsed] = useState(false); // State to manage collapse
 
@@ -26,6 +41,21 @@ const GridToolBar: React.FC<GridToolBarProps> = ({
     const value = e.target.value;
     setSearchValue(value);
     onQuickSearchChange?.(value); // Call only if defined
+  };
+
+  const handleFindChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setFindValue(value);
+    onFindChange?.(value);
+  };
+
+  const handleFindKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Enter → next match, Shift+Enter → previous match (browser-find ergonomics).
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) onFindPrev?.();
+      else onFindNext?.();
+    }
   };
 
   const toggleCollapsed = () => {
@@ -178,6 +208,66 @@ const GridToolBar: React.FC<GridToolBarProps> = ({
               title="Quick Search"
             />
           </div>
+        </div>
+      )}
+
+      {/* Find Input (highlight & navigate matches — independent of quick search) */}
+      {showFind && !collapsed && (
+        <div className="toolbar-find">
+          <div className="toolbar-input">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="currentColor"
+            >
+              <path d="M10 2a8 8 0 105.293 14.293l4.707 4.707 1.414-1.414-4.707-4.707A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z" />
+            </svg>
+            <input
+              type="text"
+              value={findValue}
+              onChange={handleFindChange}
+              onKeyDown={handleFindKeyDown}
+              placeholder="Find..."
+              title="Find in grid (Enter: next, Shift+Enter: previous)"
+            />
+          </div>
+          <span className="toolbar-find-count" title="Matches">
+            {findValue ? `${findActive}/${findMatches}` : ""}
+          </span>
+          <button
+            className="toolbar-button find-prev-button"
+            onClick={onFindPrev}
+            title="Previous match"
+            disabled={!findMatches}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="currentColor"
+            >
+              <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+            </svg>
+          </button>
+          <button
+            className="toolbar-button find-next-button"
+            onClick={onFindNext}
+            title="Next match"
+            disabled={!findMatches}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="currentColor"
+            >
+              <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+            </svg>
+          </button>
         </div>
       )}
     </div>
