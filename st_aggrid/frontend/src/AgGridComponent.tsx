@@ -192,6 +192,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // grid_options (see the merge into the gridOptions memo below).
   const notesPresent = data.notes != null
   const debugGroupNotes = data.debug_group_notes === true
+  const notesGroups = Array.isArray(data.notes_groups) ? data.notes_groups : null
   const notesDataSource = useMemo(() => {
     // Diagnostic probe (REQUIREMENT-group-dimension-notes.md): a full-width notes
     // datasource that, for every group row, logs its {field: key} dimension
@@ -220,6 +221,69 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
             ancestry,
           })
           return { text: JSON.stringify(ancestry), readOnly: true }
+        },
+        setNote: () => {},
+      }
+    }
+    // Group-dimension Notes (notes_groups): a note is a predicate over a group
+    // row's dimension ancestry, not a cell coordinate. A rule matches when its
+    // `match` is a subset of the row's ancestry; it is drawn on the boundary row
+    // (where the match first completes) and the most-specific rule wins on a
+    // shared row. Read-only; no write-back. See REQUIREMENT-group-dimension-notes.md.
+    if (notesGroups && notesGroups.length > 0) {
+      const valEq = (av: any, mv: any): boolean => {
+        const a = String(av)
+        const m = String(mv)
+        // Date dims stringify as "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" — compare a
+        // YYYY-MM-DD match value against the key's first 10 chars; else compare exactly.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(m)) return a.slice(0, 10) === m
+        return a === m
+      }
+      const matchesAll = (
+        m: Record<string, any>,
+        a: Record<string, any>
+      ): boolean => {
+        for (const k in m) {
+          if (!(k in a) || !valEq(a[k], m[k])) return false
+        }
+        return true
+      }
+      return {
+        supportsFullWidthRows: true,
+        getNote: (p: any) => {
+          const node = p?.rowNode
+          if (!node || !node.group) return undefined
+          // Pin to the cell that renders this node's group value, so the note is
+          // not duplicated across the per-dimension auto columns (multipleColumns).
+          const colDef = p?.column?.getColDef?.()
+          const showsThis =
+            !!colDef &&
+            (colDef.showRowGroup === true || colDef.showRowGroup === node.field)
+          const onGroupCell =
+            p?.location === "fullWidthRow" ||
+            p?.column?.getColId?.() === "ag-Grid-AutoColumn" ||
+            showsThis
+          if (!onGroupCell) return undefined
+          const anc = groupDimensionAncestry(node)
+          const ancParent = node.parent
+            ? groupDimensionAncestry(node.parent)
+            : {}
+          let best: any = null
+          let bestFields = -1
+          for (const rule of notesGroups) {
+            const m = (rule && rule.match) || {}
+            if (!matchesAll(m, anc) || matchesAll(m, ancParent)) continue
+            const nf = Object.keys(m).length
+            if (nf > bestFields) {
+              best = rule
+              bestFields = nf
+            }
+          }
+          if (!best) return undefined
+          const note = best.note
+          return typeof note === "object" && note !== null
+            ? { ...note, readOnly: true }
+            : { text: String(note), readOnly: true }
         },
         setNote: () => {},
       }
@@ -265,7 +329,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notesPresent, debugGroupNotes, setStateValue])
+  }, [notesPresent, debugGroupNotes, notesGroups, setStateValue])
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {

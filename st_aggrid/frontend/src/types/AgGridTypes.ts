@@ -20,10 +20,21 @@ export interface AgGridData {
   show_find: boolean
   notes?: { [rowId: string]: { [colId: string]: any } } | null
   notes_editable?: boolean
+  notes_groups?: NotesGroupRule[] | null
   debug_group_notes?: boolean
   api_call?: ApiCallRequest | null
   pro_assets?: { js?: string; css?: string }[]
   debug?: boolean
+}
+
+// A group-dimension Notes rule (AG-Grid 35.3 Enterprise): a note is a predicate
+// over a group row's dimension ancestry. `match` is a {field: value} subset that
+// must hold on the row (every field must be an active row group); `note` is the
+// shown text (or a Note object). Matched on the boundary row; the most-specific
+// (most fields) rule wins on a shared row. See REQUIREMENT-group-dimension-notes.md.
+export interface NotesGroupRule {
+  match: { [field: string]: string | number }
+  note: string | { text: string; [key: string]: any }
 }
 
 export interface StreamlitThemeInfo {

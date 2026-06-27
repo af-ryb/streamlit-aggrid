@@ -33,6 +33,7 @@ def AgGrid(
     toolbar: Optional[Dict] = None,
     notes: Optional[Dict] = None,
     notes_editable: bool = False,
+    notes_groups: Optional[List[Dict]] = None,
     debug_group_notes: bool = False,
     on_grid_state_change: Optional[Callable] = None,
     on_api_response_change: Optional[Callable] = None,
@@ -161,6 +162,22 @@ def AgGrid(
         ``{token, notes}`` payload that survives reruns). When False (default),
         notes are read-only annotations and nothing is sent back. Default: False.
 
+    notes_groups : list[dict], optional
+        Group-dimension Notes (AG-Grid 35.3 **Enterprise**) — read-only notes that
+        annotate **row groups** by a predicate over their dimensions, for which the
+        flat ``notes`` map can't work (group rows have grid-generated ids). Each
+        rule is ``{"match": {field: value, ...}, "note": text_or_obj}``. A rule
+        shows on a group row iff its ``match`` is a **subset** of that row's
+        dimension ancestry (so it appears regardless of which other dimensions the
+        grid groups by, or in what order — as long as every ``match`` field is an
+        active row group). It is drawn on the **boundary** row (where the match
+        first completes) and, when several rules complete on the same row, the one
+        with the **most** ``match`` fields wins. ``match`` keys are grid field ids
+        (colIds), not value labels; a ``YYYY-MM-DD`` value matches a date key by its
+        first 10 chars, others compare exactly. Read-only (no write-back). Requires
+        ``enable_enterprise_modules`` (no-op + warning in community mode).
+        Default: None.
+
     debug_group_notes : bool, optional
         Diagnostic probe for the planned group-dimension notes feature (AG-Grid
         35.3 **Enterprise**; see ``REQUIREMENT-group-dimension-notes.md``). Installs
@@ -263,6 +280,14 @@ def AgGrid(
         )
         notes_payload = None
 
+    notes_groups_payload = notes_groups
+    if notes_groups is not None and not enable_enterprise_modules:
+        warnings.warn(
+            "notes_groups require enable_enterprise_modules; ignoring in community mode.",
+            stacklevel=2,
+        )
+        notes_groups_payload = None
+
     # Check for pending explicit API call
     api_call = None
     if key:
@@ -300,6 +325,7 @@ def AgGrid(
         "show_find": show_find,
         "notes": notes_payload,
         "notes_editable": notes_editable,
+        "notes_groups": notes_groups_payload,
         "debug_group_notes": debug_group_notes,
         "api_call": api_call,
         "pro_assets": pro_assets,
