@@ -86,6 +86,32 @@ function groupDimensionAncestry(node: any): Record<string, any> {
   return map
 }
 
+// In `groupDisplayType: 'multipleColumns'`, AG-Grid generates one auto-group
+// column per row-group dimension, with colId `ag-Grid-AutoColumn-<colId>`. From
+// v36, a newly-created dimension's auto-group column is inserted at the START of
+// the column order rather than at its row-group-index slot, so after a
+// row-dimension change (e.g. swapping which field is row_2) the swapped column
+// jumps to the leftmost group position. `setRowGroupColumns` re-orders the
+// grouping (and the Row Groups panel) but not the *display* order of these
+// generated columns, and the data-update path applies column state with
+// `applyOrder: false` (to preserve the user's manual moves). Move the
+// auto-group columns, in row-group order, to the front so the displayed group
+// columns track the configured order. No-op for single-group-column display
+// (the colId is then just `ag-Grid-AutoColumn`, no per-dimension siblings) or
+// when the generated columns aren't present yet.
+function reorderAutoGroupColumns(
+  api: GridApi,
+  rowGroupColIds: string[]
+): void {
+  if (rowGroupColIds.length < 2) return
+  const autoIds = rowGroupColIds
+    .map((id) => `ag-Grid-AutoColumn-${id}`)
+    .filter((aid) => api.getColumn(aid) != null)
+  if (autoIds.length > 1) {
+    api.moveColumns(autoIds, 0)
+  }
+}
+
 // Track whether custom CSS has been injected
 let cssInjected = false
 let proAssetsInjected = false
@@ -468,6 +494,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         // way to add/remove row groups on a live grid in pivot mode.
         const rowGroupCols = extractRowGroupColumns(data.gridOptions?.columnDefs)
         gridApiRef.current.setRowGroupColumns(rowGroupCols)
+        reorderAutoGroupColumns(gridApiRef.current, rowGroupCols)
 
         if (debug) {
           console.log(
@@ -611,6 +638,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         const rowGroupCols = extractRowGroupColumnsFromState(data.columns_state)
         if (!mergeMode || rowGroupCols.length > 0) {
           gridApiRef.current.setRowGroupColumns(rowGroupCols)
+          reorderAutoGroupColumns(gridApiRef.current, rowGroupCols)
         }
       }
     }
@@ -740,6 +768,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         const rg = extractRowGroupColumnsFromState(data.columns_state)
         if (rg.length > 0) {
           event.api.setRowGroupColumns(rg)
+          reorderAutoGroupColumns(event.api, rg)
         }
 
         // Merge mode applies its partial overlay post-creation (not via
