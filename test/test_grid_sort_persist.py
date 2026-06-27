@@ -37,7 +37,7 @@ def test_sort_persists_across_rerun(page: Page):
     expect(container.locator(".ag-root")).to_be_visible()
 
     first_name = container.locator(
-        '.ag-center-cols-container .ag-row[row-index="0"] [col-id="name"]'
+        '.ag-grid-scrolling-container .ag-row[row-index="0"] [col-id="name"]'
     )
 
     # Initial render: default sort is id descending, so the top row is the

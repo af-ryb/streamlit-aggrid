@@ -27,7 +27,7 @@ def test_drag_grid_configures_row_drag_handles(page: Page):
     frame = page.locator(".st-key-drag_grid")
     expect(frame.locator(".ag-root")).to_be_visible()
 
-    rows = frame.locator(".ag-center-cols-container .ag-row")
+    rows = frame.locator(".ag-grid-scrolling-container .ag-row")
     expect(rows).to_have_count(4)
 
     # rowDrag + rowDragManaged → .ag-row-drag handle per row
@@ -51,14 +51,14 @@ def test_drag_grid_configures_row_drag_handles(page: Page):
 def test_drag_first_row_to_last(page: Page):
     frame = page.locator(".st-key-drag_grid")
     first_row_handle = (
-        frame.locator(".ag-center-cols-container .ag-row")
+        frame.locator(".ag-grid-scrolling-container .ag-row")
         .nth(0)
         .locator(".ag-row-drag")
     )
-    last_row = frame.locator(".ag-center-cols-container .ag-row").nth(-1)
+    last_row = frame.locator(".ag-grid-scrolling-container .ag-row").nth(-1)
     first_row_handle.drag_to(last_row)
     page.wait_for_timeout(500)
-    rows = frame.locator(".ag-center-cols-container .ag-row")
+    rows = frame.locator(".ag-grid-scrolling-container .ag-row")
     ids = [rows.nth(i).locator('[col-id="id"]').inner_text() for i in range(rows.count())]
     row_indices = [int(rows.nth(i).get_attribute("aria-rowindex")) for i in range(rows.count())]
     sorted_ids = [rid for _, rid in sorted(zip(row_indices, ids))]

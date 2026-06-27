@@ -201,11 +201,11 @@ def test_grid_return_test_3_grouped_data_header_checkbox(page: Page):
             page.wait_for_timeout(500)
 
     header_checkbox = frame2.locator(
-        ".ag-header-row .ag-selection-checkbox input[type='checkbox']"
+        ".ag-header-select-all input[type='checkbox']"
     ).first
     if header_checkbox.count() == 0:
         header_checkbox = frame2.locator(
-            ".ag-header-container input[type='checkbox']"
+            ".ag-header input[type='checkbox']"
         ).first
     header_checkbox.click()
     page.wait_for_timeout(1500)
@@ -284,11 +284,11 @@ def test_grid_return_test_4_header_checkbox_select_all(page: Page):
     expect(frame3.locator(".ag-row")).not_to_have_count(0)
 
     header_checkbox = frame3.locator(
-        ".ag-header-row .ag-selection-checkbox input[type='checkbox']"
+        ".ag-header-select-all input[type='checkbox']"
     ).first
     if header_checkbox.count() == 0:
         header_checkbox = frame3.locator(
-            ".ag-header-container input[type='checkbox']"
+            ".ag-header input[type='checkbox']"
         ).first
     header_checkbox.click()
     page.wait_for_timeout(1500)
