@@ -158,6 +158,10 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // onGridReady (see the gated `sizeColumnsToFit` re-fit below). Held in a ref
   // so the unmount effect can tear it down without re-running onGridReady.
   const refitCleanupRef = useRef<(() => void) | null>(null)
+  // Cleanup for the columnRowGroupChanged listener that keeps the
+  // multipleColumns auto-group columns in row-group order (registered in
+  // onGridReady). Held in a ref so the unmount effect can tear it down.
+  const rowGroupOrderCleanupRef = useRef<(() => void) | null>(null)
 
   const debug = data.debug || false
 
@@ -689,6 +693,8 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       refitCleanupRef.current = null
       findCleanupRef.current?.()
       findCleanupRef.current = null
+      rowGroupOrderCleanupRef.current?.()
+      rowGroupOrderCleanupRef.current = null
     }
   }, [])
 
@@ -716,6 +722,34 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       findCleanupRef.current = () => {
         if (!event.api.isDestroyed()) {
           event.api.removeEventListener("findChanged", onFindChanged)
+        }
+      }
+
+      // Keep the multipleColumns auto-group columns in row-group order whenever
+      // the row grouping changes by ANY means — including an interactive
+      // reorder in the Row Groups panel, which never goes through the
+      // setRowGroupColumns calls in the data-update effects (so the explicit
+      // reorder there can't catch it). v36 regroups correctly but leaves the
+      // generated auto-group columns in their old display order; re-assert it
+      // here. `moveColumns` fires `columnMoved`/`displayedColumnsChanged`, not
+      // `columnRowGroupChanged`, so this can't loop. No-op for single-group
+      // display or when the order already matches.
+      const onColumnRowGroupChanged = () => {
+        const api = gridApiRef.current
+        if (!api || api.isDestroyed()) return
+        const order = api.getRowGroupColumns().map((c) => c.getColId())
+        reorderAutoGroupColumns(api, order)
+      }
+      event.api.addEventListener(
+        "columnRowGroupChanged",
+        onColumnRowGroupChanged
+      )
+      rowGroupOrderCleanupRef.current = () => {
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener(
+            "columnRowGroupChanged",
+            onColumnRowGroupChanged
+          )
         }
       }
 
