@@ -1,8 +1,16 @@
 # Declarative Ratio Aggregation — Design
 
-**Status:** approved design, not yet planned
+**Status:** validated against a running grid; ready to plan
 **Branch:** `ratio-agg` (off `upstream-parity`)
-**Date:** 2026-08-10
+**Date:** 2026-08-10 (validated 2026-08-10)
+
+> **Validation log.** Every claim below marked *(measured)* was checked against
+> a live grid running AG-Grid 36.0.0, not reasoned about. The apparatus is
+> committed: `test/grid_ratio_js.py` runs the consumer's JavaScript verbatim
+> over the reference fixture, `test/ratio_fixture.py` owns the fixture and the
+> reference arithmetic, and `test/test_grid_ratio_js.py` pins the result. Four
+> sections changed as a result — the `fill_null` default, the value contract,
+> the migration's behaviour-change list, and the blocking prerequisite.
 
 ## Problem
 
@@ -97,7 +105,20 @@ collide with other uses of `colDef.context`.
 | `num_signs` | no | all `1` | Per-term signs, e.g. `[1, -1]` for `(a − b)/c` |
 | `multiplier` | no | `1.0` | Applied inside the numerator (CPM uses `1000`) |
 | `scale` | no | `1.0` | Applied to the final value (sec→min uses `1/60`) |
-| `fill_null` | no | `0.0` | Value when `Σden == 0`; `None` renders an empty cell |
+| `fill_null` | no | `None` | Value when `Σden == 0`; `None` renders an empty cell |
+
+**`fill_null` defaults to `None`, not `0.0`** *(revised after measurement)*.
+The JavaScript being replaced returns `null` when `Σden == 0` — its group and
+pivot cells are already blank *(measured: campaign B renders an empty ARPP cell
+at both grouping levels and in every pivot cell)*. Defaulting to `0.0` would
+have flipped those cells to `0.0000` across the consumer's dashboards, which is
+a visible data change smuggled in by a refactor. `0.0` remains available per
+column for specs that want it.
+
+Note this is deliberately *not* `MetricSpec.fill_null`'s default of `0.0`. The
+consumer's two paths disagree today — its Python materialization honours
+`fill_null` while its JS aggregation ignores it — so `to_agg_context()` must
+pass `fill_null` through explicitly rather than let either default decide.
 
 `num_signs`, when given, must have the same length as `num`.
 
@@ -135,37 +156,80 @@ depth.
 The aggregator returns an object:
 
 ```
-{ value: number | null, sums: {field: number}, valueOf(), toString() }
+{ value: number | null, sums: {field: number}, toNumber(), toString() }
 ```
 
-- `valueOf()` returns `value`, or `NaN` when `value` is null.
+- `toNumber()` returns `value` — the number, or `null`.
 - `toString()` renders the display string.
 - `sums` carries the components upward; it is the mechanism, not public API.
 
-`valueOf()` is honoured by AG-Grid's sorting — verified by sorting a group column
-ascending and descending and reading rows by `row-index` (`0.10, 10.00` then
-`10.00, 0.10`, with the grand-total row staying pinned).
+**`toNumber()`, not `valueOf()`** *(revised after measurement)*. AG-Grid 36
+declares this shape as `IAggFuncResult` and documents `toNumber()` as
+"the numeric representation of the aggregated value. Used also for sorting";
+`ag-stack`'s `_defaultComparator` calls it before comparing, and
+`RowNode.getValue` unwraps through it too, so exports, filters and charts see a
+number rather than an object. `valueOf()` is not part of any of those paths — it
+only takes effect incidentally, when `_defaultComparator` falls through to `<`
+and `>`.
+
+That incidental path breaks on nulls, which is the case this feature has to
+handle. *(Measured, sorting a group column with one null value in both
+directions and reading rows by `row-index`:)*
+
+| Hook | Column without nulls | Column with a null |
+|---|---|---|
+| `valueOf()` | sorts correctly | **does not reorder at all** |
+| `toNumber()` | sorts correctly | orders deterministically |
+
+With `valueOf()`, the null becomes `NaN`, every `NaN` comparison is false, the
+comparator returns `0`, and the rows keep their original order in both
+directions. With `toNumber()` returning `null`, AG-Grid's own null branch
+(`valueA == null → -1`) takes over.
 
 The consumer's existing value formatters already branch on
 `typeof v === 'object'`, so they keep working unchanged.
 
-**Null ordering needs an explicit comparator.** With `fill_null: None` the value
-is null and `valueOf()` yields `NaN`; every comparison against `NaN` is false,
-which leaves the relative order of those rows undefined. The fork installs the
-comparator itself, on every column whose `aggFunc` is `stRatio`, at the same
-point it registers the aggregator — the app never writes one. It orders non-null
-values numerically and places nulls last in both sort directions. A
-caller-supplied `comparator` on the colDef is left untouched.
+**Null placement uses an explicit comparator.** AG-Grid's native handling puts
+nulls first ascending and last descending. This feature places them **last in
+both directions**, so scanning for the smallest ratio never wades through empty
+cells first. That needs a comparator, which the fork installs itself on every
+column whose `aggFunc` is `stRatio`, at the same point it registers the
+aggregator — the app never writes one. It orders non-null values numerically
+via `toNumber()`. A caller-supplied `comparator` on the colDef is left
+untouched.
+
+Because a descending sort negates the comparator's result, "last in both
+directions" cannot be expressed by the return value alone; the comparator reads
+the `isDescending` argument AG-Grid passes it and flips the null branch to
+match.
 
 ### Validation
 
-Field names in `num`/`den` that do not appear in the grid's `columnDefs` are a
-Python-side error raised while building the grid options. An unknown name would
-otherwise contribute `0` to a sum and silently skew the ratio — a wrong number
-with no error is the worst outcome this feature can produce.
+Field names in `num`/`den` that do not appear in **the data** are a Python-side
+error raised while building the grid options. An unknown name would otherwise
+contribute `0` to a sum and silently skew the ratio — a wrong number with no
+error is the worst outcome this feature can produce.
 
-Structural checks, also Python-side: `num` and `den` non-empty, `num_signs`
-length matching `num`, and numeric `multiplier`/`scale`.
+**Against the data, not against `columnDefs`** *(revised — the original rule was
+wrong and would have broken the consumer)*. The aggregator reads
+`rowNode.data[field]`, so a component only has to be present in the row data; it
+does not need a column of its own. Requiring a `columnDef` would reject valid
+configurations: of the 12 distinct `num`/`den` fields the consumer's marketing
+specs reference, only 5 (`installs`, `cost`, `impressions`, `clicks`,
+`conversions`) are declared as columns. The other 7 — `revenue_total`,
+`iap_total`, `pu_total`, `ads_total`, `purch_total`, `cost_incent_cohort`,
+`cost_incent_predict`, `campaign_target_revenue` — ride in the dataframe as
+aggregation inputs only. The `columnDefs` rule would have raised on every grid
+that shows an ARPU or ROAS column.
+
+Validation therefore runs where the DataFrame is already in hand, and is skipped
+when there is none to check against (`data=None`, or a grid fed entirely through
+`grid_options["rowData"]`) rather than guessing.
+
+Structural checks, also Python-side: `num` and `den` non-empty lists of strings,
+`num_signs` length matching `num`, numeric `multiplier`/`scale`, and `fill_null`
+numeric-or-`None`. A colDef declaring `aggFunc: "stRatio"` with no
+`context["stRatio"]` is an error too.
 
 ### Boundaries
 
@@ -181,36 +245,79 @@ specs themselves do not change; they already declare these fields. Then
 `js_ratio_sum`, its `aggFuncs` registration, and `allow_unsafe_jscode` on the
 affected grids are deleted.
 
-The rewrite also closes the `fill_null` divergence recorded in `MetricSpec`:
-today the Python materialization path honours `fill_null` while the JS always
-emits `0`. After this change both paths agree. Grids whose specs set
-`fill_null=None` will start rendering empty cells where they previously rendered
-`0` — intended, and worth a scan of those specs before rollout.
+### What actually changes on screen
+
+*(Measured against the JavaScript baseline, level by level.)* Three changes, and
+no others:
+
+1. **Pivot cells become correct.** Today every pivot cell in a row shows that
+   row's total, because `ratioSum` reads `rowNode.allLeafChildren`, which is not
+   pivot-aware. On the reference fixture, campaign A shows `10.0000` in both the
+   US and DE columns where the correct values are `90.0000` and `1.1111`; the
+   pivot grid's total row shows `3.4000` in both country columns instead of
+   `8.2727` and `0.5789`. The component columns beside them are right, because
+   AG-Grid's built-in `sum` *is* pivot-aware — the ratio is the only thing wrong.
+   This is a live defect in the consumer's marketing dashboard whenever a pivot
+   column is active, not a regression risk introduced by this work.
+
+2. **Signed numerators become correct.** `ratioSum` adds every numerator term,
+   so a `num_signs=(1, -1)` spec rolls up as `(a + b)/c`. On the fixture,
+   campaign A's net CPI reads `11.2000` where the signed value is `8.8000` — and
+   the leaf rows directly beneath already show the signed value, because leaves
+   render the dataframe's precomputed scalar. The group row and its own children
+   disagree today.
+
+3. **Pivot row totals and every row-grouping value stay identical.** Verified
+   cell by cell on all six fixture columns at both grouping levels and at the
+   grand-total row.
+
+The `fill_null` divergence recorded in `MetricSpec` is *not* closed by this
+change, and deliberately so. Its Python materialization path honours
+`fill_null`, its JS aggregation ignores it and always emits null; picking
+`None` as the aggregator's default keeps every existing group and pivot cell
+rendering exactly what it renders today. Making the two paths agree is a
+separate decision with its own visible consequences — it is a change to what
+numbers users see, and it should not ride along inside a refactor.
 
 ## Verification
 
 Every ratio test must use data where `Σnum/Σden` differs from `avg(ratio)` at
-**every** level under test. The reference fixture:
+**every** level under test. That fixture, its reference arithmetic, and the
+record of exactly which nodes it *cannot* discriminate now live in
+`test/ratio_fixture.py`, guarded by `test/unit/test_ratio_fixture.py`:
 
 ```
 A/US 900/10   A/DE 100/90   B/US 10/100   B/DE 10/100
 
-group A          = 1000/100 = 10.00
-group B          =   20/200 =  0.10
+campaign A       = 1000/100 = 10.00
+campaign B       =   20/200 =  0.10
 grand total      = 1020/300 =  3.40   <- correct
 avg group ratios =              5.05  <- multi-level trap
-avg leaf ratios  =             22.83  <- single-level trap
+avg leaf ratios  =             52.87  <- single-level trap
 ```
+
+Each cell is split into two rows so pivot cells aggregate too, and so a pivot
+cell's value differs from its row's total — without that, an aggregator that
+ignores the pivot key still looks right.
+
+The fixture has blind spots and they are declared rather than discovered:
+campaign B is fixed at `10/100` in both countries by the spec's own numbers, so
+every column denominated by `installs` is degenerate there (`avg == Σ/Σ`), as is
+every column whose denominator collapses to zero. `DEGENERATE_NODES` and
+`PIVOT_BLIND_CELLS` list them, and a test asserts the measured set equals the
+declared set in both directions, so neither the list nor the data can drift
+without failing.
 
 Required coverage:
 
 - ratio at one grouping level, two grouping levels, and the grand-total row
+- pivot cells, pivot row totals, and the pivot grid's grand-total row
 - leaf rows still show the per-row ratio
 - `num_signs` with a negative term
 - `multiplier` and `scale` non-default
-- `Σden == 0` with `fill_null` at `0.0` and at `None`
+- `Σden == 0` with `fill_null` at `0.0` and at its `None` default
 - sort ascending and descending on the ratio column, read by `row-index`
-- sort with nulls present, both directions
+- sort with nulls present, both directions, asserting nulls last in each
 - unknown field name raises at build time
 - pure-Python unit tests for the validation rules, in `test/unit/`
 
@@ -218,19 +325,32 @@ Browser assertions must read `.ag-row[row-index="N"]`. DOM order does not reflec
 visual order — AG-Grid positions rows absolutely, and a probe written against DOM
 order produced a false "sorting is broken" result during design.
 
-## Blocking prerequisite
+## Prerequisite: pivot — resolved
 
-**Pivot behaviour is unverified.** The marketing dashboard is a pivot grid, so
-pivot is a hard requirement, and the prototype only exercised row grouping.
-`IAggFuncParams.aggregatedChildren` documents that "with pivot columns, only rows
-matching the pivot keys are included", and `IAggFuncParams` carries a
-`pivotResultColumn`, which suggests the mechanism holds — but it has not been
-demonstrated.
+**The mechanism holds in pivot.** *(Measured.)* A prototype implementing exactly
+the design above — `aggregatedChildren`, with child groups folded through
+`child.aggData[pivotResultColumn.getColId()]` — was put behind a pivot
+configuration and produced the correct value in every position:
 
-The implementation plan must open with a spike that puts the prototype behind a
-pivot configuration and confirms the ratio is correct in pivot cells, in pivot
-row totals, and in pivot column totals. If it does not hold, the design needs a
-pivot-specific path and this spec must be revised before building.
+| Position | Prototype | Reference |
+|---|---|---|
+| pivot cell A/US | `90.0000` | `900/10` |
+| pivot cell A/DE | `1.1111` | `100/90` |
+| pivot row total, campaign A | `10.0000` | `1000/100` |
+| pivot total row, US column | `8.2727` | `910/110` |
+| pivot total row, DE column | `0.5789` | `110/190` |
+| pivot total row, row total | `3.4000` | `1020/300` |
+
+A debug column exposing `aggregatedChildren.length` and how many carried `data`
+confirmed the intended shape at each level: leaf groups receive data rows
+(`2:2`), higher groups and the grand-total row receive child groups (`2:0`) and
+fold their stored sums, and a pivot row-total column receives all four leaves
+(`4:4`) — which is exactly what a row total needs. `IAggFuncParams`'
+documentation that "with pivot columns, only rows matching the pivot keys are
+included" holds in practice.
+
+No pivot-specific path is needed and no revision to the design follows. The
+plan therefore opens with the aggregator itself rather than a spike.
 
 ## Out of scope
 
