@@ -18,7 +18,8 @@
 - **The value object exposes `toNumber()`, not `valueOf()`.** `valueOf()` leaves a column containing a null completely unsorted.
 - **Field names are validated against the DataFrame, never against `columnDefs`.** The aggregator reads `rowNode.data[field]`; a component does not need a column. Validating against `columnDefs` would reject 7 of the consumer's 12 ratio components.
 - **No new frontend dependencies and no JS test runner.** This repo has none by design: `test/unit/` is pure Python, everything else is Playwright e2e driving a standalone Streamlit app of the same name (`test/conftest.py` auto-marks it `e2e`). TypeScript is therefore verified through the browser.
-- **`test/ratio_fixture.py` is the single source of expected numbers.** Never hand-type a ratio into a test; call `expected()` / `as_text()`.
+- **`test/ratio_fixture.py` is the single source of expected numbers** for bulk assertions: anything that loops over columns or levels derives its expectation from `expected()` / `as_text()`, never from a typed-out table.
+  A *small* number of hand-typed literal anchors is deliberate and required — `pytest.approx(8.8)`, `== "3.4000"` and friends. They are the only thing standing between the suite and a fixture that is itself wrong: a test that compares the grid to `evaluate()` and nothing else passes just as happily when both are broken. Where the task text gives a literal, keep it.
 - **Frontend rebuild after every TypeScript change:**
   ```bash
   cd st_aggrid/frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn build
@@ -472,6 +473,8 @@ The arithmetic, the value object and the registration. Pivot comes in Task 3 and
 **Files:**
 - Create: `st_aggrid/frontend/src/aggFuncs/stRatio.ts`
 - Modify: `st_aggrid/frontend/src/utils/parsers.ts`
+- Create: `test/grid_dom.py`
+- Modify: `test/test_grid_ratio_js.py` (import the extracted helpers instead of defining them)
 - Create: `test/grid_ratio_builtin.py`
 - Create: `test/test_grid_ratio_builtin.py`
 - Rebuild: `st_aggrid/frontend/build/`
@@ -638,7 +641,82 @@ AgGrid(
 )
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Extract the DOM readers into a shared module**
+
+`test_grid_ratio_js.py` already defines the two helpers this task's suite needs. Both suites read the same grid structure, so give them one definition rather than two copies.
+
+Create `test/grid_dom.py`:
+
+```python
+"""Reading rendered AG-Grid cells from a Playwright page.
+
+Row addressing goes through ``row-index``, never DOM order: AG-Grid positions
+rows absolutely, so the order elements appear in the document does not track
+the order they appear on screen. A probe written against DOM order produced a
+false "sorting is broken" result once already.
+
+Shared by every ratio e2e suite so the two never drift apart on what "the
+grand-total row" or "row 4" means.
+"""
+
+from playwright.sync_api import Page
+
+_READ_ROWS = """
+(gridIndex) => {
+  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+  const rows = {};
+  for (const row of grid.querySelectorAll('.ag-row')) {
+    const section = row.closest('.ag-floating-bottom') ? 'bottom'
+                  : row.closest('.ag-floating-top') ? 'top' : 'body';
+    const key = section + ':' + row.getAttribute('row-index');
+    // A row is split across pinned/centre containers; merge the fragments.
+    const cells = rows[key] || (rows[key] = {});
+    for (const cell of row.querySelectorAll('.ag-cell')) {
+      cells[cell.getAttribute('col-id')] = cell.textContent.trim();
+    }
+  }
+  return rows;
+}
+"""
+
+
+def read_rows(page: Page, grid_index: int) -> dict[str, dict[str, str]]:
+    """Every rendered cell of one grid, keyed ``"<section>:<row-index>"`` then
+    col-id. The ratio apps suppress virtualisation, so this returns the whole
+    grid rather than the visible window."""
+    return page.evaluate(_READ_ROWS, grid_index)
+
+
+def grand_total_row(
+    rows: dict[str, dict[str, str]], group_col_id: str = "ag-Grid-AutoColumn-campaign"
+) -> dict[str, str]:
+    """The ``grandTotalRow: "bottom"`` row.
+
+    AG-Grid renders it either in the pinned-bottom container or as the last
+    body row depending on whether the grid is scrolled, so locate it by its
+    group label rather than by a fixed key.
+    """
+    for cells in rows.values():
+        if cells.get(group_col_id) == "Total":
+            return cells
+    raise AssertionError(f"no grand-total row among {sorted(rows)}")
+```
+
+Then in `test/test_grid_ratio_js.py`, delete the local `_READ_ROWS`, `read_rows` and `grand_total_row` definitions and import them instead:
+
+```python
+from grid_dom import grand_total_row, read_rows
+```
+
+Run the baseline suite to prove the extraction was behaviour-preserving:
+
+```bash
+timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_js.py -q
+```
+
+Expected: 9 passed, exactly as before.
+
+- [ ] **Step 3: Write the failing test**
 
 Create `test/test_grid_ratio_builtin.py`:
 
@@ -655,8 +733,9 @@ the difference between JavaScript's number-to-string and Python's. Grid 1 uses
 the consumer's four-decimal formatter, so its cells compare literally against
 `as_text()` and line up with the JavaScript baseline's assertions.
 
-Rows are addressed by `row-index`: AG-Grid positions rows absolutely, so DOM
-order does not track visual order.
+Bulk assertions derive their expectations from `ratio_fixture`. The handful of
+literal numbers are deliberate anchors: a suite that only checks grid against
+`evaluate()` passes just as happily when both are wrong.
 """
 
 from pathlib import Path
@@ -665,6 +744,7 @@ import pytest
 from playwright.sync_api import Page
 
 from e2e_utils import StreamlitRunner
+from grid_dom import grand_total_row, read_rows
 from ratio_fixture import RATIO_ROWS, RATIO_SPECS, as_text, evaluate, expected
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
@@ -691,35 +771,6 @@ GROUP_ROW_DIMS = {
     11: {"campaign": "B", "country": "DE"},
 }
 LEAF_ROW_SOURCE = {2: 0, 3: 1, 5: 2, 6: 3, 9: 4, 10: 5, 12: 6, 13: 7}
-
-_READ_ROWS = """
-(gridIndex) => {
-  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
-  const rows = {};
-  for (const row of grid.querySelectorAll('.ag-row')) {
-    const section = row.closest('.ag-floating-bottom') ? 'bottom'
-                  : row.closest('.ag-floating-top') ? 'top' : 'body';
-    const key = section + ':' + row.getAttribute('row-index');
-    const cells = rows[key] || (rows[key] = {});
-    for (const cell of row.querySelectorAll('.ag-cell')) {
-      cells[cell.getAttribute('col-id')] = cell.textContent.trim();
-    }
-  }
-  return rows;
-}
-"""
-
-
-def read_rows(page: Page, grid_index: int) -> dict[str, dict[str, str]]:
-    return page.evaluate(_READ_ROWS, grid_index)
-
-
-def grand_total_row(rows: dict[str, dict[str, str]]) -> dict[str, str]:
-    for cells in rows.values():
-        if cells.get("ag-Grid-AutoColumn-campaign") == "Total":
-            return cells
-    raise AssertionError(f"no grand-total row among {sorted(rows)}")
-
 
 def assert_number(text: str, reference: float | None, where: str) -> None:
     """Compare an unformatted cell against a reference number."""
@@ -858,7 +909,7 @@ def test_a_caller_supplied_aggfunc_of_the_same_name_wins(page: Page):
     assert float(rows["body:2"]["cpi"]) == pytest.approx(400.0)
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [ ] **Step 4: Run the test to verify it fails**
 
 ```bash
 timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.py -q
@@ -866,7 +917,7 @@ timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.py -q
 
 Expected: FAIL. `stRatio` is not a registered aggregator, so AG-Grid produces no value and the ratio cells are empty — `assert_number` reports "expected 10.0, got an empty cell".
 
-- [ ] **Step 4: Write the aggregator**
+- [ ] **Step 5: Write the aggregator**
 
 Create `st_aggrid/frontend/src/aggFuncs/stRatio.ts`:
 
@@ -1003,7 +1054,7 @@ export function registerStRatio(
 }
 ```
 
-- [ ] **Step 5: Register it from `parseGridOptions`**
+- [ ] **Step 6: Register it from `parseGridOptions`**
 
 `parseGridOptions` is the single funnel every `gridOptions` object passes through — both the mount-time memo and the live `updateGridOptions` path — so registering there covers both without touching `AgGridComponent.tsx`.
 
@@ -1023,7 +1074,7 @@ and insert the call after the `columnTypes` merge, before the theme block:
 
 `gridOptions` is already a `cloneDeep` of the incoming payload at this point, so mutating it is safe.
 
-- [ ] **Step 6: Rebuild the frontend**
+- [ ] **Step 7: Rebuild the frontend**
 
 ```bash
 cd st_aggrid/frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn build
@@ -1031,7 +1082,7 @@ cd st_aggrid/frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn build
 
 Expected: `tsc` clean, then `vite build` writes exactly one `index-<hash>.js` and one `index-<hash>.css` into `build/`. Confirm with `ls st_aggrid/frontend/build/` — two files, no more.
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [ ] **Step 8: Run the test to verify it passes**
 
 ```bash
 timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.py -q
@@ -1039,7 +1090,7 @@ timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.py -q
 
 Expected: PASS. If ratio cells are still empty, check the browser console via a temporary `page.on("console", print)` — a thrown error inside an aggFunc surfaces there, not in the test output.
 
-- [ ] **Step 8: Verify the JavaScript baseline still passes**
+- [ ] **Step 9: Verify the JavaScript baseline still passes**
 
 ```bash
 timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_js.py -q
@@ -1047,12 +1098,13 @@ timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_js.py -q
 
 Expected: PASS, unchanged. Registering a new aggregator must not disturb a grid that supplies its own.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add st_aggrid/frontend/src/aggFuncs/stRatio.ts \
         st_aggrid/frontend/src/utils/parsers.ts \
         st_aggrid/frontend/build \
+        test/grid_dom.py test/test_grid_ratio_js.py \
         test/grid_ratio_builtin.py test/test_grid_ratio_builtin.py
 git commit -m "Add the built-in stRatio aggregator for row-grouped ratios"
 ```
