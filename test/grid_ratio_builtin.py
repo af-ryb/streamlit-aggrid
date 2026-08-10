@@ -185,3 +185,29 @@ AgGrid(
     height=320,
     key="ratio_builtin_pivot",
 )
+
+
+# `registerStRatio` installs the null-ordering comparator by walking
+# `columnDefs`, and the consumer this feature exists for wraps every metric
+# column in a column group. Nesting the ratio columns under `children` puts
+# that descent under test instead of under inspection.
+st.subheader("Row grouping — ratio columns nested in a column group")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "groupDisplayType": "multipleColumns",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {
+                "headerName": "Ratios",
+                "groupId": "ratios",
+                "children": ratio_column_defs(formatted=False),
+            },
+            *component_column_defs(),
+        ],
+    },
+    enable_enterprise_modules=True,
+    height=260,
+    key="ratio_builtin_grouped_cols",
+)

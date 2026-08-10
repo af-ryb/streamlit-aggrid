@@ -70,7 +70,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 4",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 5",
         timeout=60000,
     )
     page.wait_for_selector('[row-index="14"]', timeout=60000)
@@ -325,3 +325,35 @@ def test_a_caller_supplied_comparator_is_left_alone(page: Page):
 
     click_header(page, FORMATTED_GRID, "cpi", "descending")
     assert campaign_order(page, FORMATTED_GRID) == ["B", "A"]
+
+
+GROUPED_COLS_GRID = 4
+
+
+def test_the_comparator_reaches_columns_nested_in_a_column_group(page: Page):
+    """A walk that stopped at the top level would install no comparator here,
+    and ascending would fall back to AG-Grid's native nulls-first order —
+    ["B", "A"] instead of ["A", "B"]."""
+    click_header(page, GROUPED_COLS_GRID, "arpp_blank", "ascending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "ascending: nulls last"
+
+    click_header(page, GROUPED_COLS_GRID, "arpp_blank", "descending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "descending: nulls last"
+
+
+def test_ratios_still_aggregate_when_nested_in_a_column_group(page: Page):
+    """Nesting must not disturb the aggregation itself.
+
+    This grid is unformatted (`ratio_column_defs(formatted=False)`), like
+    RAW_GRID, so its cells carry the value object's raw `toString()` at full
+    float precision rather than `as_text`'s 4-decimal text — hence
+    `assert_number` here rather than a literal string comparison.
+    """
+    rows = read_rows(page, GROUPED_COLS_GRID)
+
+    assert float(rows["body:0"]["cpi"]) == pytest.approx(10.0)
+    assert_number(
+        rows["body:0"]["arpp_blank"],
+        expected("arpp_blank", campaign="A"),
+        "grouped-cols arpp_blank",
+    )
