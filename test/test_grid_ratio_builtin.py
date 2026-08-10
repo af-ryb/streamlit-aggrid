@@ -22,7 +22,15 @@ from playwright.sync_api import Page
 
 from e2e_utils import StreamlitRunner
 from grid_dom import grand_total_row, read_rows
-from ratio_fixture import RATIO_ROWS, RATIO_SPECS, as_text, evaluate, expected
+from ratio_fixture import (
+    OVERLAP_SPEC,
+    RATIO_ROWS,
+    RATIO_SPECS,
+    as_text,
+    evaluate,
+    expected,
+    rows_where,
+)
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 BUILTIN_FILE = ROOT_DIRECTORY / "test" / "grid_ratio_builtin.py"
@@ -146,6 +154,45 @@ def test_group_values_are_not_the_average_of_their_children(page: Page):
     assert float(rows["body:0"]["cpi"]) == pytest.approx(10.0)
     assert float(rows["body:1"]["cpi"]) == pytest.approx(90.0)
     assert float(rows["body:4"]["cpi"]) == pytest.approx(1.1111, rel=1e-4)
+
+
+def test_a_field_shared_by_num_and_den_is_not_double_counted(page: Page):
+    """`rebate_share = rebate / (rebate + cost)` — grid-0-only, added by
+    `overlap_column_def()`. `rebate` is summed once per *distinct* name, not
+    once per occurrence in `[*num, *den]`; a regression here compounds as
+    2^depth, so a single-level check would not catch it. Hand-verified:
+    A/US 110/1010 = 0.1089, A/DE 10/110 = 0.0909 (their average, 0.0999,
+    deliberately does not match A), A (campaign) 120/1120 = 0.1071, grand
+    total 123/1020+123 = 0.1076.
+    """
+    rows = read_rows(page, RAW_GRID)
+    col_id = OVERLAP_SPEC.col_id
+
+    assert_number(
+        rows["body:1"][col_id],
+        evaluate(OVERLAP_SPEC, rows_where(campaign="A", country="US")),
+        f"leaf-group A/US {col_id}",
+    )
+    assert_number(
+        rows["body:4"][col_id],
+        evaluate(OVERLAP_SPEC, rows_where(campaign="A", country="DE")),
+        f"leaf-group A/DE {col_id}",
+    )
+    assert_number(
+        rows["body:0"][col_id],
+        evaluate(OVERLAP_SPEC, rows_where(campaign="A")),
+        f"campaign A {col_id}",
+    )
+    assert_number(
+        grand_total_row(rows)[col_id],
+        evaluate(OVERLAP_SPEC, rows_where()),
+        f"grand total {col_id}",
+    )
+
+    # Anchors, so this cannot pass against a reference that is itself wrong.
+    assert float(rows["body:1"][col_id]) == pytest.approx(0.10891089108910891)
+    assert float(rows["body:0"][col_id]) == pytest.approx(0.10714285714285714)
+    assert float(grand_total_row(rows)[col_id]) == pytest.approx(0.10761154855643044)
 
 
 def test_existing_value_formatters_keep_working_unchanged(page: Page):

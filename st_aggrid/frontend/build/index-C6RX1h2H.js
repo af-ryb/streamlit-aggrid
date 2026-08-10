@@ -196792,7 +196792,7 @@ function uZt(e) {
 function hZt(e) {
   const t = uZt(e.colDef);
   if (!t) return null;
-  const i = [...t.num, ...t.den], s = {};
+  const i = Array.from(/* @__PURE__ */ new Set([...t.num, ...t.den])), s = {};
   for (const d of i) s[d] = 0;
   const n = (e.pivotResultColumn ?? e.column).getColId();
   for (const d of e.aggregatedChildren ?? [])

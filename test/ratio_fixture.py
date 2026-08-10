@@ -240,6 +240,20 @@ RATIO_SPECS: tuple[RatioSpec, ...] = (
 
 RATIO_SPECS_BY_ID: Mapping[str, RatioSpec] = {s.col_id: s for s in RATIO_SPECS}
 
+#: A ratio whose denominator includes its own numerator — `part / (part + rest)`,
+#: the shape retention, conversion rate and share-of-total take. Only
+#: expressible because `den` is a list, and the case where summing per
+#: occurrence rather than per distinct name silently doubles the shared field.
+#: Deliberately outside `RATIO_SPECS`: that tuple drives the JavaScript
+#: baseline suite and the degenerate-node declarations, which are about a
+#: different property and should not move for this.
+OVERLAP_SPEC = RatioSpec(
+    col_id="rebate_share",
+    header="Rebate share",
+    num=("rebate",),
+    den=("rebate", "cost"),
+)
+
 #: Dimensions, outermost first. ``campaign`` groups rows; ``country`` is the
 #: pivot dimension in the pivot grid and the second grouping level in the
 #: row-group grid.

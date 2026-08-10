@@ -23,6 +23,7 @@ from st_aggrid import AgGrid, JsCode
 
 from ratio_fixture import (
     COMPONENT_FIELDS,
+    OVERLAP_SPEC,
     PIVOT_DIM,
     RATIO_SPECS,
     ROW_DIM,
@@ -85,6 +86,23 @@ def component_column_defs() -> list[dict]:
     ]
 
 
+def overlap_column_def() -> dict:
+    """The Finding-1 regression column: `rebate` named in both `num` and
+    `den` (`rebate / (rebate + cost)`). Kept out of `ratio_column_defs` —
+    that helper feeds grids 1-4 too, and this column exists only to guard the
+    double-counting bug on grid 0 (see OVERLAP_SPEC in ratio_fixture.py)."""
+    spec = OVERLAP_SPEC
+    return {
+        "colId": spec.col_id,
+        "field": spec.col_id,
+        "headerName": spec.header,
+        "type": "numericColumn",
+        "aggFunc": "stRatio",
+        "context": {"stRatio": spec.to_context()},
+        "width": 130,
+    }
+
+
 COMMON_OPTIONS = {
     "groupDefaultExpanded": -1,
     "suppressAggFuncInHeader": True,
@@ -99,7 +117,11 @@ COMMON_OPTIONS = {
 }
 
 
-def rowgroup_grid_options(formatted: bool) -> dict:
+def rowgroup_grid_options(formatted: bool, include_overlap: bool = False) -> dict:
+    """`include_overlap` is an explicit opt-in, defaulting off: only grid 0
+    (the raw grid) gets the Finding-1 regression column, so grids 1-4's
+    column sets — and the row-index maps the test suite hardcodes — are
+    undisturbed."""
     return {
         **COMMON_OPTIONS,
         "groupDisplayType": "multipleColumns",
@@ -107,6 +129,7 @@ def rowgroup_grid_options(formatted: bool) -> dict:
             {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
             {"colId": PIVOT_DIM, "field": PIVOT_DIM, "rowGroup": True, "rowGroupIndex": 1},
             *ratio_column_defs(formatted),
+            *([overlap_column_def()] if include_overlap else []),
             *component_column_defs(),
         ],
     }
@@ -119,7 +142,7 @@ df = ratio_dataframe()
 st.subheader("Row grouping — no unsafe JavaScript at all")
 AgGrid(
     df,
-    grid_options=rowgroup_grid_options(formatted=False),
+    grid_options=rowgroup_grid_options(formatted=False, include_overlap=True),
     enable_enterprise_modules=True,
     height=520,
     key="ratio_builtin_rowgroup",
