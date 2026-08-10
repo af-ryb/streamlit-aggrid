@@ -1371,13 +1371,15 @@ def click_header(page: Page, grid_index: int, col_id: str, expect_sort: str) -> 
     grid = page.locator(".ag-root-wrapper").nth(grid_index)
     header = grid.locator(f'.ag-header-cell[col-id="{col_id}"]')
     header.click()
+    # `arg` is keyword-only on Page.wait_for_function in this Playwright
+    # version — passing the payload positionally raises TypeError.
     page.wait_for_function(
         """([gridIndex, colId, direction]) => {
              const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
              const cell = grid.querySelector(`.ag-header-cell[col-id="${colId}"]`);
              return cell && cell.getAttribute('aria-sort') === direction;
            }""",
-        [grid_index, col_id, expect_sort],
+        arg=[grid_index, col_id, expect_sort],
         timeout=10000,
     )
 
@@ -1549,7 +1551,82 @@ cd ../.. && timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.
 
 Expected: PASS, all of them.
 
-- [ ] **Step 6: Run every ratio suite plus the fast loop**
+- [ ] **Step 6: Prove `eachColDef` descends into column groups**
+
+`eachColDef` recurses into `children` for one reason: the main consumer wraps every metric column in a column group, so a walk that stopped at the top level would install no comparator at all. Nothing so far nests a ratio column, which leaves that path verified only by reading — and this repo has no JS test runner, so reading is all there would ever be.
+
+Append a fifth grid to `test/grid_ratio_builtin.py`:
+
+```python
+# `registerStRatio` installs the null-ordering comparator by walking
+# `columnDefs`, and the consumer this feature exists for wraps every metric
+# column in a column group. Nesting the ratio columns under `children` puts
+# that descent under test instead of under inspection.
+st.subheader("Row grouping — ratio columns nested in a column group")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "groupDisplayType": "multipleColumns",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {
+                "headerName": "Ratios",
+                "groupId": "ratios",
+                "children": ratio_column_defs(formatted=False),
+            },
+            *component_column_defs(),
+        ],
+    },
+    enable_enterprise_modules=True,
+    height=260,
+    key="ratio_builtin_grouped_cols",
+)
+```
+
+Widen the readiness wait in `go_to_app` from `>= 4` to `>= 5`, and append to `test/test_grid_ratio_builtin.py`:
+
+```python
+GROUPED_COLS_GRID = 4
+
+
+def test_the_comparator_reaches_columns_nested_in_a_column_group(page: Page):
+    """A walk that stopped at the top level would install no comparator here,
+    and ascending would fall back to AG-Grid's native nulls-first order —
+    ["B", "A"] instead of ["A", "B"]."""
+    click_header(page, GROUPED_COLS_GRID, "arpp_blank", "ascending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "ascending: nulls last"
+
+    click_header(page, GROUPED_COLS_GRID, "arpp_blank", "descending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "descending: nulls last"
+
+
+def test_ratios_still_aggregate_when_nested_in_a_column_group(page: Page):
+    """Nesting must not disturb the aggregation itself."""
+    rows = read_rows(page, GROUPED_COLS_GRID)
+
+    assert float(rows["body:0"]["cpi"]) == pytest.approx(10.0)
+    # This grid has no valueFormatter, so its cells carry the value object's
+    # own `toString()` — full precision. Compare numerically with
+    # `assert_number`, not against `as_text`'s four decimals.
+    assert_number(
+        rows["body:0"]["arpp_blank"],
+        expected("arpp_blank", campaign="A"),
+        "grouped-cols arpp_blank",
+    )
+```
+
+This grid groups by `campaign` only, so its group rows are `A`, `B` and the total — exactly what `campaign_order` reads. No TypeScript changes; no rebuild needed.
+
+Run it, and confirm it is a real check by temporarily making `eachColDef` non-recursive (drop the `children` branch, rebuild, watch this test fail with `["B", "A"]`), then restore and rebuild.
+
+```bash
+timeout 600 .venv/bin/python -m pytest test/test_grid_ratio_builtin.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Run every ratio suite plus the fast loop**
 
 ```bash
 .venv/bin/python -m pytest -m "not e2e" -q
@@ -1558,7 +1635,7 @@ timeout 900 .venv/bin/python -m pytest test/test_grid_ratio_js.py test/test_grid
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add st_aggrid/frontend/src/aggFuncs/stRatio.ts st_aggrid/frontend/build \
