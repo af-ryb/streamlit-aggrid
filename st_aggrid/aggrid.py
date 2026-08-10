@@ -1,3 +1,4 @@
+import inspect
 import uuid
 import warnings
 from typing import Callable, Dict, List, Literal, Optional, Union
@@ -9,6 +10,61 @@ from st_aggrid.aggrid_utils import _parse_data_and_grid_options
 from st_aggrid.component import get_aggrid_component
 from st_aggrid.result import AgGridResult
 from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
+
+
+def _callback_wants_result(callback: Callable) -> bool:
+    """True if ``callback`` accepts the grid result as a positional argument.
+
+    Callbacks were historically invoked with no arguments, so both arities have
+    to keep working. Anything whose signature cannot be read is treated as
+    zero-arity — the safe direction, since calling a zero-argument callable
+    with an argument raises at the worst possible moment.
+    """
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return False
+
+    positional = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.VAR_POSITIONAL,
+    )
+    return any(p.kind in positional for p in parameters)
+
+
+def _wrap_callback(
+    callback: Optional[Callable],
+    key: Optional[str],
+    original_data: Optional[pd.DataFrame],
+) -> Callable[[], None]:
+    """Adapt a user callback to the zero-argument shape CCv2 expects.
+
+    A callback that takes an argument is handed an ``AgGridResult`` built from
+    the component state Streamlit stores under ``key``; a zero-argument
+    callback is passed straight through.
+    """
+    if callback is None:
+        return lambda: None
+
+    if not _callback_wants_result(callback):
+        return callback
+
+    if key is None:
+        raise ValueError(
+            "A callback that accepts the grid result requires key= to be set, "
+            "because the result is read back from st.session_state[key]."
+        )
+
+    def _dispatch() -> None:
+        callback(
+            AgGridResult(
+                component_result=st.session_state.get(key),
+                original_data=original_data,
+            )
+        )
+
+    return _dispatch
 
 
 def AgGrid(
@@ -188,10 +244,14 @@ def AgGrid(
         with ``debug=True``. Default: False.
 
     on_grid_state_change : callable, optional
-        Callback when auto-collected grid state changes.
+        Called when auto-collected grid state changes. May take no arguments,
+        or a single argument which receives the ``AgGridResult``. The
+        result-taking form requires ``key`` to be set.
 
     on_api_response_change : callable, optional
-        Callback when an explicit API call returns a response.
+        Called when an explicit API call returns a response. May take no
+        arguments, or a single argument which receives the ``AgGridResult``.
+        The result-taking form requires ``key`` to be set.
 
     use_json_serialization : bool | "auto", optional
         Whether to serialize rowData as a JSON string (bypasses Arrow
@@ -332,14 +392,11 @@ def AgGrid(
         "debug": debug,
     }
 
-    # Ensure callbacks are set so result attributes exist
-    def _noop() -> None:
-        return None
-
-    if on_grid_state_change is None:
-        on_grid_state_change = _noop
-    if on_api_response_change is None:
-        on_api_response_change = _noop
+    # CCv2 callbacks take no arguments. Adapt any callback that asks for the
+    # grid result, and keep a no-op in place otherwise so the component always
+    # declares both state keys and the result attributes exist.
+    on_grid_state_change = _wrap_callback(on_grid_state_change, key, original_data)
+    on_api_response_change = _wrap_callback(on_api_response_change, key, original_data)
 
     # Mount the component
     result = get_aggrid_component()(
