@@ -1,7 +1,7 @@
 """Unit tests for st_aggrid.column_state visibility helpers.
 
 Pure-Python (no browser, no Streamlit) — fast to run via
-``pytest test/test_column_state.py``.
+``pytest test/unit/test_column_state.py``.
 """
 
 import pytest

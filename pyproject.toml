@@ -53,4 +53,5 @@ only-include = ["st_aggrid", "README.md", "LICENSE", "pyproject.toml"]
 addopts = "-m 'not slow'"
 markers = [
     "slow: long-running performance tests (1M-row grid); excluded by default, run with -m slow",
+    "e2e: drives a real browser via Playwright and needs a built frontend. Applied automatically to every test outside test/unit. Fast loop: pytest -m 'not e2e'",
 ]

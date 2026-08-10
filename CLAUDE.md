@@ -75,8 +75,10 @@ corepack yarn dev     # dev server on port 3001
 # Full build (frontend + Python wheel)
 corepack yarn build   # root package.json — builds all workspaces then uv build
 
-# Tests (Playwright e2e)
-pytest test/
+# Tests
+pytest -m "not e2e"   # fast: pure-Python unit suite in test/unit (seconds)
+pytest                # everything except the slow 1M-row performance suite
+pytest -m slow        # the performance suite on its own
 
 # Python env (dev)
 uv sync             # creates .venv, installs deps + dev group (editable)
@@ -120,4 +122,7 @@ Python build: **hatchling** (via `uv build`).
 - Python: no formatter enforced, but `ruff` is in dev dependencies.
 - TypeScript: standard React patterns, functional components with hooks.
 - Commits: imperative mood, descriptive of what changed.
-- Tests: Playwright-based e2e tests in `test/`, test apps are standalone Streamlit scripts.
+- Tests: `test/unit/` is pure Python (no browser, no Streamlit runtime).
+  Everything else is Playwright e2e — a `test_*.py` driving a standalone
+  Streamlit app of the same name — and is auto-marked `e2e` by
+  `test/conftest.py`.
