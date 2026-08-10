@@ -28,6 +28,7 @@ import pytest
 from playwright.sync_api import Page
 
 from e2e_utils import StreamlitRunner
+from grid_dom import grand_total_row, read_rows
 from ratio_fixture import (
     RATIO_ROWS,
     RATIO_SPECS,
@@ -61,46 +62,6 @@ LEAF_ROW_SOURCE = {2: 0, 3: 1, 5: 2, 6: 3, 9: 4, 10: 5, 12: 6, 13: 7}
 
 ROWGROUP_GRID = 0
 PIVOT_GRID = 1
-
-_READ_ROWS = """
-(gridIndex) => {
-  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
-  const rows = {};
-  for (const row of grid.querySelectorAll('.ag-row')) {
-    const section = row.closest('.ag-floating-bottom') ? 'bottom'
-                  : row.closest('.ag-floating-top') ? 'top' : 'body';
-    const key = section + ':' + row.getAttribute('row-index');
-    // A row is split across pinned/centre containers; merge the fragments.
-    const cells = rows[key] || (rows[key] = {});
-    for (const cell of row.querySelectorAll('.ag-cell')) {
-      cells[cell.getAttribute('col-id')] = cell.textContent.trim();
-    }
-  }
-  return rows;
-}
-"""
-
-
-def read_rows(page: Page, grid_index: int) -> dict[str, dict[str, str]]:
-    """Every rendered cell, keyed ``"<section>:<row-index>"`` then col-id.
-
-    Both grids run with virtualisation suppressed, so this returns the whole
-    grid rather than the visible window.
-    """
-    return page.evaluate(_READ_ROWS, grid_index)
-
-
-def grand_total_row(rows: dict[str, dict[str, str]]) -> dict[str, str]:
-    """The ``grandTotalRow: "bottom"`` row.
-
-    AG-Grid renders it either in the pinned-bottom container or as the last
-    body row depending on whether the grid is scrolled, so locate it by its
-    group label rather than by a fixed key.
-    """
-    for key, cells in rows.items():
-        if cells.get("ag-Grid-AutoColumn-campaign") == "Total":
-            return cells
-    raise AssertionError(f"no grand-total row among {sorted(rows)}")
 
 
 @pytest.fixture(autouse=True, scope="module")

@@ -5,6 +5,7 @@ import { parseJsCodeFromPython } from "./gridUtils"
 import { columnFormaters } from "../customColumns"
 import { ThemeParser } from "../ThemeParser"
 import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
+import { registerStRatio } from "../aggFuncs/stRatio"
 
 export function parseGridOptions(
   data: AgGridData,
@@ -28,6 +29,10 @@ export function parseGridOptions(
     gridOptions.columnTypes || {},
     columnFormaters
   )
+
+  // Built-in aggregators. A caller-supplied `aggFuncs` entry of the same name
+  // wins — see registerStRatio.
+  registerStRatio(gridOptions, data.debug === true)
 
   // Process theming — prefer the live theme read from host CSS variables
   // over any server-side value, which can't see user-level theme toggles.
