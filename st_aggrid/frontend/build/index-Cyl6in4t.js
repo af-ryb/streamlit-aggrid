@@ -196794,7 +196794,7 @@ function cZt(e) {
   if (!t) return null;
   const i = [...t.num, ...t.den], s = {};
   for (const d of i) s[d] = 0;
-  const n = e.column.getColId();
+  const n = (e.pivotResultColumn ?? e.column).getColId();
   for (const d of e.aggregatedChildren ?? [])
     if (d.data)
       for (const g of i) s[g] += Zre(d.data[g]);

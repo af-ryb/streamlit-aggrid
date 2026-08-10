@@ -62,7 +62,12 @@ export function stRatioAggFunc(params: IAggFuncParams): StRatioValue | null {
   const sums: Record<string, number> = {}
   for (const field of fields) sums[field] = 0
 
-  const colId = params.column.getColId()
+  // In pivot mode the value is produced for a pivot result column, and a child
+  // group stores its aggregation under *that* column's id. Folding through the
+  // source column's id would find nothing and collapse every group to
+  // fill_null. `aggregatedChildren` is already filtered to the pivot key, so
+  // the two compose: each child contributes only its own cell's components.
+  const colId = (params.pivotResultColumn ?? params.column).getColId()
 
   for (const child of params.aggregatedChildren ?? []) {
     if (child.data) {

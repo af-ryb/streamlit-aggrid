@@ -70,7 +70,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 3",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 4",
         timeout=60000,
     )
     page.wait_for_selector('[row-index="14"]', timeout=60000)
@@ -184,3 +184,67 @@ def test_a_caller_supplied_aggfunc_of_the_same_name_wins(page: Page):
     assert rows["body:0"]["net_cpi"] == "42"
     # Leaf rows read the dataframe, so the override touches group rows only.
     assert float(rows["body:2"]["cpi"]) == pytest.approx(400.0)
+
+
+# --------------------------------------------------------------------------
+# Pivot
+# --------------------------------------------------------------------------
+
+PIVOT_GRID = 3
+
+
+def pivot_col(country: str, col_id: str) -> str:
+    return f"pivot_country_{country}_{col_id}"
+
+
+def pivot_total_col(col_id: str) -> str:
+    return f"PivotRowTotal_pivot_country__{col_id}"
+
+
+def test_pivot_cells_are_split_by_the_pivot_key(page: Page):
+    """The defect that motivates the feature. The JavaScript shows the row's
+    total in both country columns; each cell must show its own ratio."""
+    rows = read_rows(page, PIVOT_GRID)
+    campaign_a = rows["body:0"]
+
+    for country in ("US", "DE"):
+        for col_id in RATIO_COL_IDS:
+            assert_number(
+                campaign_a[pivot_col(country, col_id)],
+                expected(col_id, campaign="A", country=country),
+                f"A/{country} {col_id}",
+            )
+
+    assert float(campaign_a[pivot_col("US", "cpi")]) == pytest.approx(90.0)
+    assert float(campaign_a[pivot_col("DE", "cpi")]) == pytest.approx(1.1111, rel=1e-4)
+
+
+def test_pivot_row_totals_are_the_ratio_across_all_pivot_keys(page: Page):
+    rows = read_rows(page, PIVOT_GRID)
+
+    for row_index, campaign in ((0, "A"), (1, "B")):
+        for col_id in RATIO_COL_IDS:
+            assert_number(
+                rows[f"body:{row_index}"][pivot_total_col(col_id)],
+                expected(col_id, campaign=campaign),
+                f"{campaign} row total {col_id}",
+            )
+
+
+def test_pivot_grand_total_row_is_split_by_the_pivot_key(page: Page):
+    """One level up: each country column of the total row carries that
+    country's ratio, and the row total carries the overall one."""
+    rows = read_rows(page, PIVOT_GRID)
+    total = rows["body:2"]
+
+    for country in ("US", "DE"):
+        for col_id in RATIO_COL_IDS:
+            assert_number(
+                total[pivot_col(country, col_id)],
+                expected(col_id, country=country),
+                f"total/{country} {col_id}",
+            )
+
+    assert float(total[pivot_col("US", "cpi")]) == pytest.approx(8.2727, rel=1e-4)
+    assert float(total[pivot_col("DE", "cpi")]) == pytest.approx(0.5789, rel=1e-4)
+    assert float(total[pivot_total_col("cpi")]) == pytest.approx(3.4)

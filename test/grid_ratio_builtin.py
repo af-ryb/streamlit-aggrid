@@ -142,3 +142,31 @@ AgGrid(
     debug=True,
     key="ratio_builtin_override",
 )
+
+
+def pivot_grid_options() -> dict:
+    """Campaign down the rows, country across the columns, with pivot row
+    totals and a grand-total row — the shape the consumer's marketing
+    dashboard runs."""
+    return {
+        **COMMON_OPTIONS,
+        "pivotMode": True,
+        "groupDisplayType": "multipleColumns",
+        "pivotRowTotals": "after",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {"colId": PIVOT_DIM, "field": PIVOT_DIM, "pivot": True, "pivotIndex": 0},
+            *ratio_column_defs(formatted=False),
+            *component_column_defs(),
+        ],
+    }
+
+
+st.subheader("Pivot — campaign down, country across")
+AgGrid(
+    df,
+    grid_options=pivot_grid_options(),
+    enable_enterprise_modules=True,
+    height=320,
+    key="ratio_builtin_pivot",
+)
