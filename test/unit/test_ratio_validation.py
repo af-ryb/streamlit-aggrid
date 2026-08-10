@@ -172,6 +172,33 @@ def test_missing_or_empty_grid_options_are_ignored():
     validate_ratio_columns({"columnDefs": []}, COLUMNS)
 
 
+def test_validation_survives_the_json_rowdata_fallback():
+    """`use_json_serialization="auto"` nulls out the DataFrame for any frame
+    with a dict cell, even in a column the ratio never touches. The check must
+    still fire — that path is exactly where a silently wrong ratio would go
+    unnoticed."""
+    import pandas as pd
+
+    from st_aggrid import AgGrid
+
+    frame = pd.DataFrame(
+        {"campaign": ["A"], "cost": [10], "installs": [2], "tags": [{"a": 1}]}
+    )
+    options = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True},
+            {
+                "colId": "cpi",
+                "aggFunc": "stRatio",
+                "context": {"stRatio": {"num": ["spend"], "den": ["installs"]}},
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="spend"):
+        AgGrid(frame, grid_options=options, key="ratio_validation_json_probe")
+
+
 def test_aggrid_rejects_an_unresolvable_ratio_before_rendering():
     """The rule has to fire from `AgGrid`, not just from the validator."""
     import pandas as pd

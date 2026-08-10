@@ -329,7 +329,7 @@ def AgGrid(
         )
 
     # Parse data and grid_options
-    data_df, grid_options, _column_types = _parse_data_and_grid_options(
+    data_df, grid_options, column_types = _parse_data_and_grid_options(
         data,
         grid_options,
         default_column_parameters,
@@ -339,11 +339,20 @@ def AgGrid(
 
     # A ratio column whose components are not in the data would aggregate to a
     # wrong number with nothing raised, so reject it here rather than let it
-    # reach the browser. Checked against the dataframe: `stRatio` reads row
-    # data, so a component needs no column of its own.
+    # reach the browser. Checked against the data's columns: `stRatio` reads
+    # row data, so a component needs no column of its own.
+    #
+    # Read from `column_types` (the dtypes snapshot) rather than `data_df`.
+    # `_parse_data_and_grid_options` sets `data_df = None` whenever it
+    # JSON-serializes rowData — which the default `use_json_serialization="auto"`
+    # does for any frame carrying a dict cell, even in a column unrelated to
+    # the ratio. Reading `data_df.columns` there would silently skip the check
+    # that is this task's entire point. The dtypes are captured before that
+    # branch, and before `::auto_unique_id::` is injected, so they are both
+    # available and cleaner.
     validate_ratio_columns(
         grid_options,
-        data_df.columns if isinstance(data_df, pd.DataFrame) else None,
+        column_types.index if column_types is not None else None,
     )
 
     custom_css = custom_css or {}

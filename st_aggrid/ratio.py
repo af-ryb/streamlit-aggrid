@@ -116,10 +116,10 @@ def validate_ratio_columns(
         The built grid options. Ignored when None or when it declares no
         columns.
     data_columns:
-        Column names available in the row data. ``None`` skips the
-        field-existence check — the structural rules still apply — because
-        there is nothing to check against rather than because anything is
-        known to be valid.
+        Column names available in the row data. When provided, field names in
+        'num' and 'den' are validated against this set. ``None`` skips the
+        field-existence check — the structural rules still apply — allowing
+        the caller to opt out when columns are not available.
     """
     if not isinstance(grid_options, dict):
         return
