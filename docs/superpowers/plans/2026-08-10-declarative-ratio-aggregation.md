@@ -1023,7 +1023,12 @@ export function stRatioAggFunc(params: IAggFuncParams): StRatioValue | null {
   const config = readStRatioConfig(params.colDef)
   if (!config) return null
 
-  const fields = [...config.num, ...config.den]
+  // Deduplicated: a name may legitimately appear in both `num` and `den`
+  // (`part / (part + rest)` — retention, conversion, share-of-total). `sums`
+  // is keyed by name, so iterating a concatenation would add such a field's
+  // contribution twice into the one slot — and because the inflated `sums` is
+  // what the parent folds, the error compounds as 2^depth.
+  const fields = Array.from(new Set([...config.num, ...config.den]))
   const sums: Record<string, number> = {}
   for (const field of fields) sums[field] = 0
 

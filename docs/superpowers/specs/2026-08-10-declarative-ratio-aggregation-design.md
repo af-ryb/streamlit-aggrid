@@ -133,6 +133,13 @@ Every field name resolves to the **sum of that field over the node's subtree**.
 `num` and `den` are lists, which is what lifts the `len(num) <= 2, all positive`
 restriction the current JS carries.
 
+A name may appear in both `num` and `den` — `part / (part + rest)` is how
+retention, conversion rate and share-of-total are written, and it is only
+expressible once `den` is a list. Each distinct name is therefore summed
+**once**, and the two lists then read that shared total. Summing per
+occurrence instead would double the shared field and, because the sums are
+folded upward, compound the error by `2^depth`.
+
 ### Aggregation mechanism
 
 The aggregation value carries its own component sums, and each level folds its
