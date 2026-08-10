@@ -8,6 +8,7 @@ import streamlit as st
 
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
 from st_aggrid.component import get_aggrid_component
+from st_aggrid.ratio import validate_ratio_columns
 from st_aggrid.result import AgGridResult
 from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
 
@@ -334,6 +335,15 @@ def AgGrid(
         default_column_parameters,
         allow_unsafe_jscode,
         use_json_serialization=use_json_serialization,
+    )
+
+    # A ratio column whose components are not in the data would aggregate to a
+    # wrong number with nothing raised, so reject it here rather than let it
+    # reach the browser. Checked against the dataframe: `stRatio` reads row
+    # data, so a component needs no column of its own.
+    validate_ratio_columns(
+        grid_options,
+        data_df.columns if isinstance(data_df, pd.DataFrame) else None,
     )
 
     custom_css = custom_css or {}
