@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
-from st_aggrid.component import _aggrid_component
+from st_aggrid.component import get_aggrid_component
 from st_aggrid.result import AgGridResult
 from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
 
@@ -342,7 +342,7 @@ def AgGrid(
         on_api_response_change = _noop
 
     # Mount the component
-    result = _aggrid_component(
+    result = get_aggrid_component()(
         data=component_data,
         key=key,
         on_grid_state_change=on_grid_state_change,

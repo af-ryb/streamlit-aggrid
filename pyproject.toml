@@ -1,6 +1,6 @@
 [project]
-name = "streamlit-aggrid"
-version = "2.1.0"
+name = "st-aggrid"
+version = "2.2.0"
 description = "Streamlit component implementation of ag-grid (CCv2, no iframe)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["streamlit >=1.44.0", "pandas >=1.4.0"]
+dependencies = ["streamlit >=1.56.0", "pandas >=1.4.0"]
 
 [project.urls]
 homepage = "https://github.com/PablocFonseca/streamlit-aggrid"

@@ -58,6 +58,8 @@ When updating AG-Grid:
 2. Check if `ag-charts-enterprise` needs a compatible version bump
 3. Review AG-Grid changelog for breaking changes (API renames, removed options, theme changes)
 4. Rebuild frontend: `cd st_aggrid/frontend && corepack yarn install && corepack yarn build`
+   (filenames are content-hashed — a rebuild changes them, so `git status` shows
+   a delete + an add for `st_aggrid/frontend/build/*`, not a modify)
 5. Run e2e tests: `pytest test/`
 6. Update version references in `README.md`
 
@@ -67,7 +69,7 @@ When updating AG-Grid:
 # Frontend — `yarn` is NOT on PATH; invoke via corepack (Yarn 4 Berry).
 cd st_aggrid/frontend
 corepack yarn install
-corepack yarn build   # tsc && vite build → st_aggrid/frontend/build/
+corepack yarn build   # rm -rf build && tsc && vite build → st_aggrid/frontend/build/
 corepack yarn dev     # dev server on port 3001
 
 # Full build (frontend + Python wheel)
@@ -87,12 +89,31 @@ Python build: **hatchling** (via `uv build`).
 
 ## Key Design Decisions
 
-- **CCv2 no-iframe**: Component registered via `st.components.v2.component()` in `component.py`. JS and CSS are read from the build directory and inlined.
-- **CSS minification disabled**: `cssMinify: false` in vite.config.ts — Streamlit CCv2 inline CSS detection requires newlines.
+- **CCv2 no-iframe**: Component registered lazily via `st.components.v2.component()` in `component.py` (see Packaging & asset delivery). JS and CSS are served from `frontend/build` as static assets, not inlined.
+- **CSS minification enabled**: assets are served by path (glob-matched filename), not read into an inline string, so `looks_like_inline_content`'s glob-character heuristic never sees the minified CSS — `cssMinify: false` is no longer needed.
 - **Single JS bundle**: `inlineDynamicImports: true` — everything in one file for CCv2.
 - **Arrow data transfer**: DataFrames sent as Arrow via CCv2, parsed in `utils/parsers.ts`.
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
+
+## Packaging & asset delivery
+
+- Distribution name is **`st-aggrid`**; the importable package is `st_aggrid`.
+  These must stay aligned: Streamlit's Components v2 manifest scanner derives
+  the package name from the distribution name, so renaming either one alone
+  breaks asset discovery.
+- `st_aggrid/pyproject.toml` is the in-wheel component manifest
+  (`asset_dir = "frontend/build"`). Its `version` must match the root
+  `pyproject.toml` on every version bump.
+- The bundle is served as a static asset, not inlined. Filenames are
+  content-hashed (`index-<hash>.js` / `index-<hash>.css`) and each glob in
+  `component.py` must match exactly one file — which is why `yarn build`
+  wipes `build/` first.
+- Component registration is lazy (`get_aggrid_component()`): manifests only
+  exist once a Streamlit Runtime is up, so eager registration would break
+  plain-Python imports.
+- `st_aggrid/frontend/build/` is committed to git on purpose — the project is
+  installed straight from git and nothing builds the frontend at install time.
 
 ## Conventions
 

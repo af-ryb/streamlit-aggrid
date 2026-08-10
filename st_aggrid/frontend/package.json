@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "rm -rf build && tsc && vite build",
     "clean": "rm -rf build"
   },
   "dependencies": {
