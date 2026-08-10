@@ -46,28 +46,45 @@ interface AgGridComponentProps {
   parentElement: HTMLElement
 }
 
-// Track whether modules have been registered to avoid double registration
-let modulesRegistered = false
+// AG-Grid's ModuleRegistry is global and idempotent, but WHICH bundle to
+// register is a per-grid decision driven by `enable_enterprise_modules`. A
+// single "already registered" latch would let whichever grid renders first
+// decide for every grid on the page — a community grid above an enterprise
+// grid would permanently starve the latter of its modules. Track the bundles
+// actually registered instead, so a later grid asking for a bundle we have
+// not seen still gets it.
+type ModuleBundle = "community" | "enterprise" | "enterprise+charts"
+
+const registeredBundles = new Set<ModuleBundle>()
+
+function bundleFor(data: AgGridData): ModuleBundle {
+  const flag = data.enable_enterprise_modules
+  if (flag === "enterprise+AgCharts") return "enterprise+charts"
+  if (flag === true || flag === "enterpriseOnly") return "enterprise"
+  return "community"
+}
 
 function registerModules(data: AgGridData) {
-  if (modulesRegistered) return
-  modulesRegistered = true
+  const bundle = bundleFor(data)
 
-  const enableEnterprise = data.enable_enterprise_modules
-  if (enableEnterprise === "enterprise+AgCharts") {
-    ModuleRegistry.registerModules([
-      AllEnterpriseModule.with(AgChartsEnterpriseModule),
-    ])
-    if (data.license_key) {
-      LicenseManager.setLicenseKey(data.license_key)
+  if (!registeredBundles.has(bundle)) {
+    registeredBundles.add(bundle)
+
+    if (bundle === "enterprise+charts") {
+      ModuleRegistry.registerModules([
+        AllEnterpriseModule.with(AgChartsEnterpriseModule),
+      ])
+    } else if (bundle === "enterprise") {
+      ModuleRegistry.registerModules([AllEnterpriseModule])
+    } else {
+      ModuleRegistry.registerModules([AllCommunityModule])
     }
-  } else if (enableEnterprise === true || enableEnterprise === "enterpriseOnly") {
-    ModuleRegistry.registerModules([AllEnterpriseModule])
-    if (data.license_key) {
-      LicenseManager.setLicenseKey(data.license_key)
-    }
-  } else {
-    ModuleRegistry.registerModules([AllCommunityModule])
+  }
+
+  // Runs even when the bundle was already registered: a license key can
+  // arrive with a later grid, and setting it again is idempotent.
+  if (bundle !== "community" && data.license_key) {
+    LicenseManager.setLicenseKey(data.license_key)
   }
 }
 
@@ -684,6 +701,45 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       }
     }
   }, [data.notes, debug])
+
+  // Streamlit binds single-key shortcuts on the document ("r" reruns the app,
+  // "c" clears the cache). Without an iframe a keystroke on a focused grid
+  // cell bubbles all the way up, so arrowing around the grid and typing "r"
+  // silently reruns. Keep those two keys inside the grid.
+  //
+  // stopPropagation() does not cancel the default action, so nothing that
+  // depends on the browser's own handling breaks. Editable targets are skipped
+  // outright so AG-Grid's inputs (filters, Find, quick-search) and our toolbar
+  // keep full event semantics.
+  useEffect(() => {
+    const container = gridContainerRef.current
+    if (!container) return
+
+    const streamlitShortcuts = new Set(["r", "c"])
+
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target.isContentEditable
+      )
+    }
+
+    const stopStreamlitShortcuts = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (!streamlitShortcuts.has(e.key.toLowerCase())) return
+      if (isEditableTarget(e.target)) return
+      e.stopPropagation()
+    }
+
+    container.addEventListener("keydown", stopStreamlitShortcuts, true)
+    return () => {
+      container.removeEventListener("keydown", stopStreamlitShortcuts, true)
+    }
+  }, [])
 
   // Tear down the displayedColumnsChanged refit listener on unmount (a view
   // switch / key change remounts the component, so this fires per mount).
