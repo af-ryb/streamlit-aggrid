@@ -15,7 +15,7 @@ UNIT_DIR = (Path(__file__).parent / "unit").resolve()
 
 def pytest_collection_modifyitems(items):
     for item in items:
-        path = Path(str(item.fspath)).resolve()
+        path = item.path.resolve()
         if UNIT_DIR in path.parents:
             continue
         item.add_marker(pytest.mark.e2e)

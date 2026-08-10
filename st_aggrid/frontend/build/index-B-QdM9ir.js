@@ -196839,9 +196839,9 @@ function aZt(e) {
 }
 function lZt(e) {
   const t = aZt(e);
-  Zre.has(t) || (Zre.add(t), t === "enterprise+charts" ? _O.registerModules([
+  Zre.has(t) || (t === "enterprise+charts" ? _O.registerModules([
     Wne.with(Zwt)
-  ]) : t === "enterprise" ? _O.registerModules([Wne]) : _O.registerModules([Ade])), t !== "community" && e.license_key && Dz.setLicenseKey(e.license_key);
+  ]) : t === "enterprise" ? _O.registerModules([Wne]) : _O.registerModules([Ade]), Zre.add(t)), t !== "community" && e.license_key && Dz.setLicenseKey(e.license_key);
 }
 function a4(e) {
   const t = {};

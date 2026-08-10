@@ -9,8 +9,14 @@ AG-Grid version: [36.0.0](https://www.ag-grid.com/archive/36.0.0/)
 From git:
 
 ```bash
+pip uninstall -y streamlit-aggrid  # only needed once, when upgrading from < 2.2.0
 pip install git+https://github.com/af-ryb/streamlit-aggrid.git@v2_component
 ```
+
+The distribution was renamed `streamlit-aggrid` → `st-aggrid` in 2.2.0. pip does
+not uninstall the old distribution when installing the new one, and the old
+dist-info's RECORD still claims `st_aggrid/*` — uninstalling it *after* the new
+install would delete files the new install owns. Remove it first.
 
 ## Quick Start
 

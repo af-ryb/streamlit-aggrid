@@ -68,8 +68,6 @@ function registerModules(data: AgGridData) {
   const bundle = bundleFor(data)
 
   if (!registeredBundles.has(bundle)) {
-    registeredBundles.add(bundle)
-
     if (bundle === "enterprise+charts") {
       ModuleRegistry.registerModules([
         AllEnterpriseModule.with(AgChartsEnterpriseModule),
@@ -79,6 +77,11 @@ function registerModules(data: AgGridData) {
     } else {
       ModuleRegistry.registerModules([AllCommunityModule])
     }
+
+    // Only record the bundle once registration actually completed — if
+    // registerModules threw, the ledger must not lie about it, or no later
+    // grid asking for this bundle would ever retry.
+    registeredBundles.add(bundle)
   }
 
   // Runs even when the bundle was already registered: a license key can
@@ -188,7 +191,8 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // toggles — those only update CSS variables, no server rerun.
   const streamlitTheme = useStreamlitTheme(parentElement)
 
-  // Register modules once
+  // Register whichever module bundle this grid needs — a no-op if this
+  // bundle is already in `registeredBundles` (see the ledger above).
   registerModules(data)
 
   // Inject custom CSS once

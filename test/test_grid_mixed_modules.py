@@ -36,7 +36,14 @@ def test_enterprise_grid_gets_its_modules_despite_the_community_grid(page: Page)
     expect(enterprise.locator(".ag-side-bar")).to_be_visible()
 
 
-def test_community_grid_has_no_sidebar(page: Page):
+def test_community_grid_renders_no_sidebar_because_it_asked_for_none(page: Page):
+    """This does not prove the community grid lacks enterprise modules.
+
+    ``ModuleRegistry`` is process-global, so once the enterprise grid on this
+    page registers, enterprise modules are available to every grid, including
+    this one. The sidebar is absent only because this grid's ``gridOptions``
+    never enabled one.
+    """
     community = page.locator(".st-key-community_grid")
     expect(community.locator(".ag-side-bar")).to_have_count(0)
 

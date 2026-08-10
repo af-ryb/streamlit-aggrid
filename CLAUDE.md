@@ -14,7 +14,8 @@ Read-only grid — no cell editing. Focus: display, selection, filtering, sortin
 st_aggrid/                   # Python package
 ├── __init__.py              # Public API exports
 ├── aggrid.py                # Main AgGrid() function + call_grid_api()
-├── component.py             # CCv2 component registration (loads built JS/CSS)
+├── component.py             # CCv2 component registration (declares JS/CSS globs, lazy)
+├── pyproject.toml           # In-wheel component manifest (asset_dir, name, version)
 ├── result.py                # AgGridResult wrapper
 ├── grid_options_builder.py  # GridOptionsBuilder helper
 ├── shared.py                # JsCode, StAggridTheme, AgGridTheme, walk_grid_options
@@ -35,7 +36,7 @@ st_aggrid/                   # Python package
     │   └── types/AgGridTypes.ts
     ├── vite.config.ts
     └── package.json
-test/                        # Playwright e2e tests
+test/                        # test/unit is pure Python; everything else is Playwright e2e
 ```
 
 ## AG-Grid Version
@@ -60,7 +61,7 @@ When updating AG-Grid:
 4. Rebuild frontend: `cd st_aggrid/frontend && corepack yarn install && corepack yarn build`
    (filenames are content-hashed — a rebuild changes them, so `git status` shows
    a delete + an add for `st_aggrid/frontend/build/*`, not a modify)
-5. Run e2e tests: `pytest test/`
+5. Run e2e tests: `pytest -m e2e`
 6. Update version references in `README.md`
 
 ## Build & Dev
@@ -81,8 +82,8 @@ pytest                # everything except the slow 1M-row performance suite
 pytest -m slow        # the performance suite on its own
 
 # Python env (dev)
-uv sync             # creates .venv, installs deps + dev group (editable)
-uv run pytest test/ # run tests inside the uv-managed env
+uv sync        # creates .venv, installs deps + dev group (editable)
+uv run pytest  # run tests inside the uv-managed env
 ```
 
 Package manager: **Yarn 4.1.0 (Berry)** via **corepack** — bare `yarn` is not on PATH, so run `corepack yarn …` (set `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` to skip the prompt). The pinned release is committed at `.yarn/releases/yarn-4.1.0.cjs`.
@@ -104,6 +105,11 @@ Python build: **hatchling** (via `uv build`).
   These must stay aligned: Streamlit's Components v2 manifest scanner derives
   the package name from the distribution name, so renaming either one alone
   breaks asset discovery.
+- The distribution was renamed `streamlit-aggrid` → `st-aggrid` in 2.2.0. `pip
+  install` does not uninstall the old distribution, and its dist-info RECORD
+  still claims `st_aggrid/*` — running `pip uninstall streamlit-aggrid` after
+  installing `st-aggrid` deletes files the new install owns. Existing users
+  must `pip uninstall -y streamlit-aggrid` *before* upgrading (see README).
 - `st_aggrid/pyproject.toml` is the in-wheel component manifest
   (`asset_dir = "frontend/build"`). Its `version` must match the root
   `pyproject.toml` on every version bump.

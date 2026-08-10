@@ -33,6 +33,25 @@ def _callback_wants_result(callback: Callable) -> bool:
     return any(p.kind in positional for p in parameters)
 
 
+def _callback_has_required_keyword_only(callback: Callable) -> bool:
+    """True if ``callback`` declares a keyword-only parameter with no default.
+
+    Such a callback fits neither supported arity: it declares no positional
+    parameter to receive the result, and it cannot be invoked with no
+    arguments either. Rejecting it here beats a TypeError raised from inside
+    a rerun, far from the AgGrid() call that accepted it.
+    """
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is inspect.Parameter.KEYWORD_ONLY
+        and p.default is inspect.Parameter.empty
+        for p in parameters
+    )
+
+
 def _wrap_callback(
     callback: Optional[Callable],
     key: Optional[str],
@@ -48,6 +67,12 @@ def _wrap_callback(
         return lambda: None
 
     if not _callback_wants_result(callback):
+        if _callback_has_required_keyword_only(callback):
+            raise ValueError(
+                "A callback with a required keyword-only parameter cannot be used: "
+                "the component invokes callbacks with no arguments. Declare the grid "
+                "result as a positional parameter instead, e.g. def cb(result)."
+            )
         return callback
 
     if key is None:

@@ -11,7 +11,11 @@ import functools
 
 import pytest
 
-from st_aggrid.aggrid import _callback_wants_result, _wrap_callback
+from st_aggrid.aggrid import (
+    _callback_has_required_keyword_only,
+    _callback_wants_result,
+    _wrap_callback,
+)
 
 
 # --- _callback_wants_result ------------------------------------------------
@@ -102,6 +106,37 @@ def test_result_callback_without_a_key_is_rejected():
 
     with pytest.raises(ValueError, match="key"):
         _wrap_callback(cb, key=None, original_data=None)
+
+
+def test_required_keyword_only_callback_is_rejected():
+    def cb(*, result):
+        pass
+
+    with pytest.raises(ValueError, match="keyword-only"):
+        _wrap_callback(cb, key="g", original_data=None)
+
+
+def test_defaulted_keyword_only_callback_is_passed_through_unchanged():
+    # def cb(*, result=None) is harmless: it can be invoked with no arguments,
+    # so it must keep being treated as a zero-arity callback, not rejected.
+    def cb(*, result=None):
+        pass
+
+    assert _wrap_callback(cb, key="g", original_data=None) is cb
+
+
+def test_required_keyword_only_arg_is_detected():
+    def cb(*, result):
+        pass
+
+    assert _callback_has_required_keyword_only(cb) is True
+
+
+def test_defaulted_keyword_only_arg_is_not_flagged_as_required():
+    def cb(*, result=None):
+        pass
+
+    assert _callback_has_required_keyword_only(cb) is False
 
 
 def test_result_callback_receives_an_aggrid_result(monkeypatch):
