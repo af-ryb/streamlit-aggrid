@@ -1,4 +1,9 @@
-import type { ColDef, GridOptions, IAggFuncParams } from "ag-grid-community"
+import type {
+  ColDef,
+  ColGroupDef,
+  GridOptions,
+  IAggFuncParams,
+} from "ag-grid-community"
 
 /** Name callers reference from `colDef.aggFunc`, and the key their parameters
  * are nested under inside `colDef.context` so they cannot collide with other
@@ -107,6 +112,58 @@ export function stRatioAggFunc(params: IAggFuncParams): StRatioValue | null {
   }
 }
 
+/** The number a value sorts by: the aggregation's `toNumber()` on a group row,
+ * the raw cell value on a leaf. Anything non-finite — including the NaN a
+ * dataframe carries for a missing precomputed ratio — sorts as absent. */
+function sortValue(raw: unknown): number | null {
+  const unwrapped =
+    raw && typeof (raw as StRatioValue).toNumber === "function"
+      ? (raw as StRatioValue).toNumber()
+      : raw
+  return typeof unwrapped === "number" && Number.isFinite(unwrapped)
+    ? unwrapped
+    : null
+}
+
+/**
+ * Orders ratio values numerically and puts empty cells last in **both**
+ * directions.
+ *
+ * AG-Grid negates a comparator's result for a descending sort, so "last in
+ * both directions" cannot be expressed by the return value alone — the null
+ * branch reads `isDescending` and flips to compensate.
+ */
+export function stRatioComparator(
+  a: unknown,
+  b: unknown,
+  _nodeA: unknown,
+  _nodeB: unknown,
+  isDescending: boolean
+): number {
+  const left = sortValue(a)
+  const right = sortValue(b)
+
+  if (left === null && right === null) return 0
+  if (left === null) return isDescending ? -1 : 1
+  if (right === null) return isDescending ? 1 : -1
+
+  return left > right ? 1 : left < right ? -1 : 0
+}
+
+/** Visit every leaf colDef, descending into column groups. A walk that stopped
+ * at the top level would miss every column on a grouped grid — and the
+ * consumer wraps all of its metric columns in groups. */
+function eachColDef(
+  defs: (ColDef | ColGroupDef)[] | null | undefined,
+  visit: (def: ColDef) => void
+): void {
+  for (const def of defs ?? []) {
+    const children = (def as ColGroupDef).children
+    if (children) eachColDef(children, visit)
+    else visit(def as ColDef)
+  }
+}
+
 /**
  * Merge the built-in aggregator into `gridOptions.aggFuncs`.
  *
@@ -130,6 +187,16 @@ export function registerStRatio(
   } else {
     gridOptions.aggFuncs = { ...supplied, [ST_RATIO]: stRatioAggFunc }
   }
+
+  // A ratio column's value is an object, so the default comparator would need
+  // `toNumber` unwrapping *and* would place empty cells first ascending. Both
+  // are handled here rather than by every application. A caller who supplied a
+  // comparator meant it, so theirs is left alone.
+  eachColDef(gridOptions.columnDefs, (def) => {
+    if (def.aggFunc === ST_RATIO && !def.comparator) {
+      def.comparator = stRatioComparator
+    }
+  })
 
   return gridOptions
 }

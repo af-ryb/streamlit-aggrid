@@ -43,6 +43,19 @@ function(params) {
 """)
 
 
+# A deliberately backwards comparator, only on the formatted grid's `cpi`. It
+# exists so a test can prove the fork leaves a caller-supplied comparator
+# alone; the fork's own comparator would sort the other way.
+js_reversed_comparator = JsCode("""
+function(a, b) {
+    const x = (a && typeof a.toNumber === 'function') ? a.toNumber() : a;
+    const y = (b && typeof b.toNumber === 'function') ? b.toNumber() : b;
+    if (x == null || y == null) { return 0; }
+    return x > y ? -1 : (x < y ? 1 : 0);
+}
+""")
+
+
 def ratio_column_defs(formatted: bool) -> list[dict]:
     """One colDef per spec. The ratio is declared, never scripted."""
     columns = []
@@ -58,6 +71,8 @@ def ratio_column_defs(formatted: bool) -> list[dict]:
         }
         if formatted:
             column["valueFormatter"] = js_ratio_value_formatter
+        if formatted and spec.col_id == "cpi":
+            column["comparator"] = js_reversed_comparator
         columns.append(column)
     return columns
 

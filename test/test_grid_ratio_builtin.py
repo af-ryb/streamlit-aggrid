@@ -248,3 +248,80 @@ def test_pivot_grand_total_row_is_split_by_the_pivot_key(page: Page):
     assert float(total[pivot_col("US", "cpi")]) == pytest.approx(8.2727, rel=1e-4)
     assert float(total[pivot_col("DE", "cpi")]) == pytest.approx(0.5789, rel=1e-4)
     assert float(total[pivot_total_col("cpi")]) == pytest.approx(3.4)
+
+
+# --------------------------------------------------------------------------
+# Sorting
+# --------------------------------------------------------------------------
+
+
+def campaign_order(page: Page, grid_index: int) -> list[str]:
+    """Group labels top to bottom, read by row-index. The grand-total row is
+    dropped — it stays put regardless of sort."""
+    rows = read_rows(page, grid_index)
+    ordered = sorted(
+        ((key, cells) for key, cells in rows.items() if key.startswith("body:")),
+        key=lambda item: int(item[0].split(":")[1]),
+    )
+    labels = [cells.get("ag-Grid-AutoColumn-campaign", "") for _, cells in ordered]
+    return [label for label in labels if label in ("A", "B")]
+
+
+def click_header(page: Page, grid_index: int, col_id: str, expect_sort: str) -> None:
+    """Click a header and wait for AG-Grid to report the new direction.
+
+    Waiting on `aria-sort` rather than on a timeout matters here: several of
+    these assertions expect an order that is also the *unsorted* order, so a
+    click that silently failed to register would let the test pass without
+    sorting anything.
+    """
+    grid = page.locator(".ag-root-wrapper").nth(grid_index)
+    header = grid.locator(f'.ag-header-cell[col-id="{col_id}"]')
+    header.click()
+    page.wait_for_function(
+        """([gridIndex, colId, direction]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector(`.ag-header-cell[col-id="${colId}"]`);
+             return cell && cell.getAttribute('aria-sort') === direction;
+           }""",
+        arg=[grid_index, col_id, expect_sort],
+        timeout=10000,
+    )
+
+
+def test_sorting_a_ratio_column_orders_by_its_number(page: Page):
+    """Campaign A is 10.0000 and campaign B is 0.1000. Proves `toNumber()` is
+    reached — an object with no numeric hook would not reorder at all."""
+    assert campaign_order(page, RAW_GRID) == ["A", "B"]
+
+    click_header(page, RAW_GRID, "cpi", "ascending")
+    assert campaign_order(page, RAW_GRID) == ["B", "A"]
+
+    click_header(page, RAW_GRID, "cpi", "descending")
+    assert campaign_order(page, RAW_GRID) == ["A", "B"]
+
+
+def test_nulls_sort_last_in_both_directions(page: Page):
+    """`arpp_blank` is 12.6667 for campaign A and empty for campaign B.
+
+    Ascending is the discriminating direction: AG-Grid's native handling puts
+    the empty row first, giving ["B", "A"]. Descending agrees with native, and
+    is asserted so a regression that drops the comparator entirely still shows
+    up as a diff in exactly one of the two.
+    """
+    click_header(page, RAW_GRID, "arpp_blank", "ascending")
+    assert campaign_order(page, RAW_GRID) == ["A", "B"], "ascending: nulls last"
+
+    click_header(page, RAW_GRID, "arpp_blank", "descending")
+    assert campaign_order(page, RAW_GRID) == ["A", "B"], "descending: nulls last"
+
+
+def test_a_caller_supplied_comparator_is_left_alone(page: Page):
+    """Grid 1 declares its own comparator on `cpi`, which orders backwards.
+    Both directions are the opposite of what the fork's comparator produces,
+    so this cannot pass if the fork overwrote it."""
+    click_header(page, FORMATTED_GRID, "cpi", "ascending")
+    assert campaign_order(page, FORMATTED_GRID) == ["A", "B"]
+
+    click_header(page, FORMATTED_GRID, "cpi", "descending")
+    assert campaign_order(page, FORMATTED_GRID) == ["B", "A"]
