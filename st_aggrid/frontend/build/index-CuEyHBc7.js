@@ -197072,8 +197072,8 @@ const cZt = ({
     }, ie = (ee) => {
       ee.ctrlKey || ee.metaKey || ee.altKey || J.has(ee.key.toLowerCase()) && (Y(ee.target) || ee.stopPropagation());
     };
-    return G.addEventListener("keydown", ie, !0), () => {
-      G.removeEventListener("keydown", ie, !0);
+    return G.addEventListener("keydown", ie), () => {
+      G.removeEventListener("keydown", ie);
     };
   }, []), U.useEffect(() => () => {
     var G, J, Y;

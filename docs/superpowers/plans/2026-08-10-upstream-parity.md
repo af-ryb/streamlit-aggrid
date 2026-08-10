@@ -646,10 +646,8 @@ In the same file, insert this effect immediately **before** the existing unmount
   // cell bubbles all the way up, so arrowing around the grid and typing "r"
   // silently reruns. Keep those two keys inside the grid.
   //
-  // stopPropagation() does not cancel the default action, so nothing that
-  // depends on the browser's own handling breaks. Editable targets are skipped
-  // outright so AG-Grid's inputs (filters, Find, quick-search) and our toolbar
-  // keep full event semantics.
+  // Editable targets are skipped outright so AG-Grid's inputs (filters, Find,
+  // quick-search) and our toolbar keep full event semantics.
   useEffect(() => {
     const container = gridContainerRef.current
     if (!container) return
@@ -674,9 +672,13 @@ In the same file, insert this effect immediately **before** the existing unmount
       e.stopPropagation()
     }
 
-    container.addEventListener("keydown", stopStreamlitShortcuts, true)
+    // Bubble phase, not capture: the event must reach the focused cell so
+    // AG-Grid's own handlers run, and only then be stopped on its way up to
+    // document. A capture-phase stopPropagation() halts the traversal before
+    // the target and would block the grid's handling too.
+    container.addEventListener("keydown", stopStreamlitShortcuts)
     return () => {
-      container.removeEventListener("keydown", stopStreamlitShortcuts, true)
+      container.removeEventListener("keydown", stopStreamlitShortcuts)
     }
   }, [])
 ```
