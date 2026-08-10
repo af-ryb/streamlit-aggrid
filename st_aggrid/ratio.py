@@ -10,6 +10,12 @@ data contributes ``0``, which skews the ratio without raising anything. Names
 are checked against the **data**, not against ``columnDefs`` — a component only
 has to be present in the row data, and requiring a column of its own would
 reject the common case of an aggregation input that is never displayed.
+
+That check needs a column set to check names against, so it only runs when
+``AgGrid`` is called with a DataFrame. A grid fed entirely through
+``grid_options["rowData"]`` (``data=None``) has no such column set, so a
+typo'd ``num``/``den`` entry is not caught here — it reaches the browser and
+silently contributes ``0``, same as a genuinely absent field would.
 """
 
 from __future__ import annotations
@@ -109,6 +115,15 @@ def validate_ratio_columns(
     data_columns: Optional[Iterable[str]] = None,
 ) -> None:
     """Raise ``ValueError`` for a malformed or unresolvable ratio declaration.
+
+    The structural rules ('num'/'den' shape, 'num_signs' length, numeric
+    options) always run. The field-existence check — the one that catches a
+    typo'd component name — only runs when `data_columns` is not None, which
+    in practice means only when `AgGrid` was called with a DataFrame. A grid
+    built entirely from `grid_options["rowData"]` has no column set to check
+    names against, so that path is **not** covered: an unresolvable name
+    reaches the browser and silently contributes 0 to the ratio instead of
+    raising here.
 
     Parameters
     ----------

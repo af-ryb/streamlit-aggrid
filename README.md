@@ -189,12 +189,19 @@ every grouping level, in pivot cells, in pivot row totals and in total rows.
 Field names are read from the **row data**, so a component needs no column of
 its own — but it must be in the DataFrame. A name that is not raises a
 `ValueError` when the grid is built, because a missing component would
-otherwise contribute `0` and skew the ratio silently.
+otherwise contribute `0` and skew the ratio silently. That check only runs
+when `AgGrid` is called with a DataFrame: a grid fed through
+`grid_options["rowData"]` (`data=None`) has no column set to check field names
+against, so a typo'd `num`/`den` entry is not caught — it reaches the browser
+and contributes `0`, exactly the silent failure this check exists to prevent.
 
 Ratio columns sort numerically, with empty cells last in both directions. A
 `comparator` you set yourself is left alone. Supplying your own
 `aggFuncs["stRatio"]` overrides the built-in; run with `debug=True` to see that
 logged.
+
+The aggregator is for row grouping and pivot; it is not aware of `treeData`
+and should not be used with it.
 
 Working examples: `test/grid_ratio_builtin.py` (built-in) and
 `test/grid_ratio_js.py` (the JavaScript approach it replaces), both over the
