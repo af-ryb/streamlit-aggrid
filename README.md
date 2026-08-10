@@ -158,6 +158,48 @@ gb.configure_column("Name", cellRenderer=cell_renderer)
 result = AgGrid(df, grid_options=gb.build(), allow_unsafe_jscode=True, key="my_grid")
 ```
 
+### Ratio aggregation without JavaScript
+
+A ratio cannot be rolled up by rolling up the ratio: a group's value is
+`Σnumerator / Σdenominator`, never the average of its children's ratios. The
+built-in `stRatio` aggregator computes that from a declaration, so a grid that
+needed `allow_unsafe_jscode` only for its ratio columns no longer needs it.
+
+```python
+{
+    "colId": "cpi",
+    "aggFunc": "stRatio",
+    "context": {"stRatio": {"num": ["cost"], "den": ["installs"]}},
+}
+```
+
+| Key | Required | Default | Meaning |
+|---|---|---|---|
+| `num` | yes | — | Field names summed to form the numerator |
+| `den` | yes | — | Field names summed to form the denominator |
+| `num_signs` | no | all `1` | Per-term signs, e.g. `[1, -1]` for `(a − b)/c` |
+| `multiplier` | no | `1.0` | Applied inside the numerator (CPM uses `1000`) |
+| `scale` | no | `1.0` | Applied to the final value (sec→min uses `1/60`) |
+| `fill_null` | no | `None` | Value when `Σden == 0`; `None` renders an empty cell |
+
+The value is `((Σ signᵢ·numᵢ) · multiplier / Σden) · scale`, where each field
+name resolves to the sum of that field over the node's subtree. It is correct at
+every grouping level, in pivot cells, in pivot row totals and in total rows.
+
+Field names are read from the **row data**, so a component needs no column of
+its own — but it must be in the DataFrame. A name that is not raises a
+`ValueError` when the grid is built, because a missing component would
+otherwise contribute `0` and skew the ratio silently.
+
+Ratio columns sort numerically, with empty cells last in both directions. A
+`comparator` you set yourself is left alone. Supplying your own
+`aggFuncs["stRatio"]` overrides the built-in; run with `debug=True` to see that
+logged.
+
+Working examples: `test/grid_ratio_builtin.py` (built-in) and
+`test/grid_ratio_js.py` (the JavaScript approach it replaces), both over the
+same fixture in `test/ratio_fixture.py`.
+
 ### Toolbar
 
 ```python

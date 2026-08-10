@@ -20,6 +20,7 @@ st_aggrid/                   # Python package
 ├── grid_options_builder.py  # GridOptionsBuilder helper
 ├── shared.py                # JsCode, StAggridTheme, AgGridTheme, walk_grid_options
 ├── aggrid_utils.py          # Data/gridOptions parsing
+├── ratio.py                 # Validation for stRatio column declarations
 └── frontend/                # TypeScript/React frontend (Vite)
     ├── src/
     │   ├── index.tsx                 # CCv2 entry point
@@ -29,6 +30,7 @@ st_aggrid/                   # Python package
     │   ├── utils.ts                  # Frontend utilities
     │   ├── utils/parsers.ts          # Data parsing
     │   ├── utils/gridUtils.ts        # Grid helpers
+    │   ├── aggFuncs/stRatio.ts        # Built-in ratio aggregator + comparator
     │   ├── hooks/useAutoCollect.ts   # Auto-collect hook
     │   ├── hooks/useExplicitApiCall.ts
     │   ├── components/GridToolBar.tsx
@@ -98,6 +100,12 @@ Python build: **hatchling** (via `uv build`).
 - **Arrow data transfer**: DataFrames sent as Arrow via CCv2, parsed in `utils/parsers.ts`.
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
+- **Built-in `stRatio` aggregator**: `Σnum/Σden` rollups declared as data in
+  `colDef.context["stRatio"]`, registered from `parseGridOptions` so both the
+  mount and the live-update paths get it. Correct under row grouping and pivot;
+  the value object implements AG-Grid 36's `IAggFuncResult` (`toNumber`, not
+  `valueOf` — `valueOf` leaves a column containing a null unsorted). Python
+  validates the declaration against the DataFrame, never against `columnDefs`.
 
 ## Packaging & asset delivery
 
@@ -132,3 +140,5 @@ Python build: **hatchling** (via `uv build`).
   Everything else is Playwright e2e — a `test_*.py` driving a standalone
   Streamlit app of the same name — and is auto-marked `e2e` by
   `test/conftest.py`.
+- Ratio tests never hand-type an expected number: `test/ratio_fixture.py` owns
+  the data and the arithmetic, and declares the nodes it cannot discriminate.
