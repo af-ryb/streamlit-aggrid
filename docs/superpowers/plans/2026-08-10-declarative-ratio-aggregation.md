@@ -409,17 +409,58 @@ In `st_aggrid/aggrid.py`, add the import beside the existing `st_aggrid` imports
 from st_aggrid.ratio import validate_ratio_columns
 ```
 
-Then, immediately after the `_parse_data_and_grid_options(...)` call (it assigns `data_df, grid_options, _column_types`) and before `custom_css = custom_css or {}`, insert:
+The `_parse_data_and_grid_options(...)` call currently discards its third return value as `_column_types`. Rename that binding to `column_types` — the validation needs it.
+
+Then, immediately after that call and before `custom_css = custom_css or {}`, insert:
 
 ```python
     # A ratio column whose components are not in the data would aggregate to a
     # wrong number with nothing raised, so reject it here rather than let it
-    # reach the browser. Checked against the dataframe: `stRatio` reads row
-    # data, so a component needs no column of its own.
+    # reach the browser. Checked against the data's columns: `stRatio` reads
+    # row data, so a component needs no column of its own.
+    #
+    # Read from `column_types` (the dtypes snapshot) rather than `data_df`.
+    # `_parse_data_and_grid_options` sets `data_df = None` whenever it
+    # JSON-serializes rowData — which the default `use_json_serialization="auto"`
+    # does for any frame carrying a dict cell, even in a column unrelated to
+    # the ratio. Reading `data_df.columns` there would silently skip the check
+    # that is this task's entire point. The dtypes are captured before that
+    # branch, and before `::auto_unique_id::` is injected, so they are both
+    # available and cleaner.
     validate_ratio_columns(
         grid_options,
-        data_df.columns if isinstance(data_df, pd.DataFrame) else None,
+        column_types.index if column_types is not None else None,
     )
+```
+
+Cover it with a regression test — append to `test/unit/test_ratio_validation.py`:
+
+```python
+def test_validation_survives_the_json_rowdata_fallback():
+    """`use_json_serialization="auto"` nulls out the DataFrame for any frame
+    with a dict cell, even in a column the ratio never touches. The check must
+    still fire — that path is exactly where a silently wrong ratio would go
+    unnoticed."""
+    import pandas as pd
+
+    from st_aggrid import AgGrid
+
+    frame = pd.DataFrame(
+        {"campaign": ["A"], "cost": [10], "installs": [2], "tags": [{"a": 1}]}
+    )
+    options = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True},
+            {
+                "colId": "cpi",
+                "aggFunc": "stRatio",
+                "context": {"stRatio": {"num": ["spend"], "den": ["installs"]}},
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="spend"):
+        AgGrid(frame, grid_options=options, key="ratio_validation_json_probe")
 ```
 
 - [ ] **Step 6: Add the wiring test**
