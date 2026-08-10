@@ -359,6 +359,29 @@ included" holds in practice.
 No pivot-specific path is needed and no revision to the design follows. The
 plan therefore opens with the aggregator itself rather than a spike.
 
+## Known issue, undecided
+
+**`stRatio` shows up in the columns tool panel's aggregation picker on every
+grid** *(measured after implementation)*. Registration happens in
+`parseGridOptions`, which every grid in this repo passes through, and AG-Grid
+builds that picker's option list from `gridOptions.aggFuncs`. So any Enterprise
+grid with a `sideBar` columns panel and a value column now offers eight options
+instead of seven — and choosing `stRatio` on a column that carries no
+`context["stRatio"]` blanks its group values, because the aggregator returns
+`null` (verified: the header became `stRatio(X)` and the cell went `3` → empty).
+
+Nothing breaks and no existing grid changes unless a user picks the new entry,
+which is why this did not block the feature. The remedies each have a cost and
+the choice has not been made:
+
+- Register only when some colDef declares `stRatio`. Cheapest, but a column
+  that acquires `aggFunc: "stRatio"` at runtime through `columns_state` would
+  find nothing registered.
+- Have the aggregator fall back to `sum` (or return the AG-Grid default) when
+  no config is present, so a stray selection degrades instead of blanking.
+- Leave it, and let grids that care constrain their columns with
+  `allowedAggFuncs`.
+
 ## Out of scope
 
 `growthRatio`; `funnel_saj`; value formatters; `cellStyle`; a string expression
