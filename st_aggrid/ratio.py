@@ -23,6 +23,19 @@ optionally ``num_signs``, ``multiplier``, ``scale``, ``den_const``) twice —
 once for its ``from`` leg, once for its ``to`` leg — so ``_validate_leg``
 below is the single place those per-leg rules live; ``stRatio``'s own
 top-level config is validated as one leg of the same shape.
+
+Sharing ``_validate_leg`` between the two aggregators changed the wording of
+five pre-existing ``stRatio`` error messages, on purpose: a non-string field
+name, ``multiplier``/``scale``/``den_const``, a non-numeric-list
+``num_signs``, a length-mismatched ``num_signs``, and a non-numeric
+``fill_null`` now all name their location as ``context['stRatio'][...]``
+(previously just ``'key'``). The new text is strictly more specific — it
+also correctly names the *leg's* location for a ``stRatioOfRatios`` error,
+e.g. ``context['stRatioOfRatios']['from']['num_signs']`` — and nothing in
+this codebase parses these strings; the existing tests match on a loose
+substring (e.g. ``match="num_signs"``) precisely so wording is free to
+improve without becoming a second thing every future change has to keep
+in sync.
 """
 
 from __future__ import annotations
@@ -37,14 +50,6 @@ CONTEXT_KEY = "stRatio"
 RATIO_OF_RATIOS_AGG_FUNC = RATIO_OF_RATIOS_CONTEXT_KEY = "stRatioOfRatios"
 
 _NUMERIC = (int, float)
-
-#: What each aggregator's "declares aggFunc but no context" error says the
-#: missing declaration needs to carry — mirrors the shape each aggregator's
-#: `_validate_*_config` expects, purely for a more useful message.
-_DECLARATION_HINT = {
-    AGG_FUNC_NAME: "'num' and 'den'",
-    RATIO_OF_RATIOS_AGG_FUNC: "'from' and 'to'",
-}
 
 
 def _is_number(value: Any) -> bool:
@@ -86,7 +91,7 @@ def _field_names(value: Any, key: str, label: str, context_path: str) -> list[st
 
 
 def _validate_leg(
-    leg: Any, label: str, context_path: str, known: Optional[set]
+    leg: Any, label: str, context_path: str
 ) -> tuple[list[str], list[str]]:
     """Validate one ``{num, den, num_signs?, multiplier?, scale?, den_const?}``
     leg and return its resolved ``(num, den)`` field lists.
@@ -97,9 +102,9 @@ def _validate_leg(
     names where in the declaration this leg lives (``"context['stRatio']"``,
     or ``"context['stRatioOfRatios']['from']"``) purely for error messages.
 
-    Field-existence against ``known`` is deliberately **not** checked here —
-    the caller does that once per column, over the union of every leg's
-    fields, so a field shared between two legs (or between a leg's own
+    Takes no ``known`` set: field-existence is deliberately **not** checked
+    here — the caller does that once per column, over the union of every
+    leg's fields, so a field shared between two legs (or between a leg's own
     ``num`` and ``den``) is reported once, not per occurrence.
     """
     if not isinstance(leg, dict):
@@ -182,7 +187,7 @@ def _validate_stratio_config(config: Any, column: dict, known: Optional[set]) ->
     label = _label(column)
     context_path = f"context['{CONTEXT_KEY}']"
 
-    num, den = _validate_leg(config, label, context_path, known)
+    num, den = _validate_leg(config, label, context_path)
     _validate_fill_null(config, label, context_path)
     _check_known_fields((*num, *den), label, AGG_FUNC_NAME, known)
 
@@ -209,7 +214,7 @@ def _validate_ratio_of_ratios_config(
     fields: list[str] = []
     for leg_key in ("from", "to"):
         leg_path = f"{context_path}['{leg_key}']"
-        num, den = _validate_leg(config.get(leg_key), label, leg_path, known)
+        num, den = _validate_leg(config.get(leg_key), label, leg_path)
         fields.extend(num)
         fields.extend(den)
 
@@ -219,12 +224,17 @@ def _validate_ratio_of_ratios_config(
     )
 
 
-#: Dispatch table: context key -> validator. Since aggregator name and
-#: context key are always the same string (Global Constraints), this table
-#: doubles as the set of `aggFunc` names `validate_ratio_columns` recognizes.
-_VALIDATORS: dict[str, Callable[[Any, dict, Optional[set]], None]] = {
-    AGG_FUNC_NAME: _validate_stratio_config,
-    RATIO_OF_RATIOS_AGG_FUNC: _validate_ratio_of_ratios_config,
+#: Dispatch table: context key -> (validator, "no context" declaration hint).
+#: Since aggregator name and context key are always the same string (Global
+#: Constraints), this table's keys double as the set of `aggFunc` names
+#: `validate_ratio_columns` recognizes. One table, not two dicts keyed by the
+#: same names kept in sync by hand: a validator with no matching hint (or
+#: vice versa) would otherwise turn the "aggFunc without context" path into a
+#: bare `KeyError` instead of the intended `ValueError` — exactly the kind of
+#: gap a new aggregator (`stWeightedAvg`) could fall into silently.
+_AGGREGATORS: dict[str, tuple[Callable[[Any, dict, Optional[set]], None], str]] = {
+    AGG_FUNC_NAME: (_validate_stratio_config, "'num' and 'den'"),
+    RATIO_OF_RATIOS_AGG_FUNC: (_validate_ratio_of_ratios_config, "'from' and 'to'"),
 }
 
 
@@ -236,7 +246,7 @@ def validate_ratio_columns(
 
     The single entry point and the single colDef walk for every built-in
     ratio aggregator's declaration (``stRatio``, ``stRatioOfRatios``). For
-    each column, every context key in `_VALIDATORS` is checked: present ->
+    each column, every context key in `_AGGREGATORS` is checked: present ->
     validated by its dispatched function; absent but named by `aggFunc` ->
     rejected, mirroring the sibling aggregator's own rule.
 
@@ -270,12 +280,12 @@ def validate_ratio_columns(
         context = raw_context if isinstance(raw_context, dict) else {}
         agg_func = column.get("aggFunc")
 
-        for name, validate in _VALIDATORS.items():
+        for name, (validate, hint) in _AGGREGATORS.items():
             config = context.get(name)
             if config is not None:
                 validate(config, column, known)
             elif agg_func == name:
                 raise ValueError(
                     f"{_label(column)}: aggFunc {name!r} requires "
-                    f"context[{name!r}] carrying {_DECLARATION_HINT[name]}."
+                    f"context[{name!r}] carrying {hint}."
                 )

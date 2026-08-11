@@ -223,6 +223,12 @@ def test_growth_group_rows_match_the_fixture_at_both_levels(page: Page):
 
 
 def test_growth_leaf_rows_show_the_per_row_ratio(page: Page):
+    """Not aggregator coverage: a leaf row is a raw data row, so its cell is
+    `ratio_dataframe()`'s precomputed value, never `stRatioOfRatiosAggFunc`'s
+    output — `stRatioOfRatios` only runs on group rows. This checks that the
+    precomputed column and the rendered cell agree with `evaluate_ratio_of_
+    ratios` computed independently here, the same leaf/group agreement check
+    `test_grid_ratio_builtin.py`'s own leaf-row test makes for `stRatio`."""
     rows = read_rows(page, ROWGROUP_GRID)
 
     for row_index, source_index in LEAF_ROW_SOURCE.items():

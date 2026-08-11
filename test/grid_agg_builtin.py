@@ -131,9 +131,14 @@ GROWTH_BLANK_SPEC = RatioOfRatiosSpec(
 #: `growth` column (see `rowgroup_growth_column_defs`). Exists so a test can
 #: prove a caller-supplied `comparator` is left alone; the fork's own
 #: comparator would sort the other way. Copied from `grid_ratio_builtin.py`'s
-#: `js_reversed_comparator` — same shape, same reasoning, redeclared rather
-#: than imported because these apps are run via `streamlit run`, never as an
-#: imported module (see `LEAF_ROW_SOURCE`'s comment in the test suite).
+#: `js_reversed_comparator` — same shape, same reasoning — rather than
+#: imported, because `grid_ratio_builtin.py` is itself an executable
+#: Streamlit app: importing it would run its top-level `AgGrid()` calls and
+#: mount a second, unwanted copy of its grids, and it is frozen (see the plan's
+#: Global Constraints), so it is not a place this module should reach into.
+#: `test/` modules can and do import each other freely otherwise — this
+#: module already imports plenty from `ratio_fixture.py` above — it is
+#: specifically an *app* file that cannot be imported for its side effects.
 js_reversed_comparator = JsCode("""
 function(a, b) {
     const x = (a && typeof a.toNumber === 'function') ? a.toNumber() : a;

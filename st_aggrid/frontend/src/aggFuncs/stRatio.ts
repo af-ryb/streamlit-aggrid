@@ -46,12 +46,24 @@ export interface StRatioConfig extends StRatioLeg {
   fill_null?: number | null
 }
 
+/** The shape guard every leg-shaped config passes through before its fields
+ * are trusted: an object with array `num`/`den`. The single place this check
+ * lives — `readStRatioConfig` below and `readStRatioOfRatiosConfig`
+ * (`stRatioOfRatios.ts`, checking each of its two legs) both call it, so the
+ * shape guard stays in lockstep with `evaluateLeg`'s shared arithmetic
+ * instead of drifting the way a second, independently-written copy would. */
+export function isLeg(value: unknown): value is StRatioLeg {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Array.isArray((value as StRatioLeg).num) &&
+    Array.isArray((value as StRatioLeg).den)
+  )
+}
+
 export function readStRatioConfig(colDef?: ColDef | null): StRatioConfig | null {
   const config = (colDef?.context as Record<string, unknown> | undefined)?.[ST_RATIO]
-  if (!config || typeof config !== "object") return null
-  const candidate = config as StRatioConfig
-  if (!Array.isArray(candidate.num) || !Array.isArray(candidate.den)) return null
-  return candidate
+  return isLeg(config) ? (config as StRatioConfig) : null
 }
 
 /**

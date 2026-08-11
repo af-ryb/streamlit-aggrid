@@ -1,6 +1,6 @@
 import type { ColDef, GridOptions, IAggFuncParams } from "ag-grid-community"
 import { asNumber, foldChildren, makeAggValue, registerAggFunc, StAggValue } from "./foldSums"
-import { evaluateLeg, StRatioLeg } from "./stRatio"
+import { evaluateLeg, isLeg, StRatioLeg } from "./stRatio"
 
 /** Name callers reference from `colDef.aggFunc`, and the key their parameters
  * are nested under inside `colDef.context` — same convention as `ST_RATIO`. */
@@ -19,15 +19,6 @@ export interface StRatioOfRatiosConfig {
   fill_null?: number | null
 }
 
-function isLeg(value: unknown): value is StRatioLeg {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    Array.isArray((value as StRatioLeg).num) &&
-    Array.isArray((value as StRatioLeg).den)
-  )
-}
-
 export function readStRatioOfRatiosConfig(
   colDef?: ColDef | null
 ): StRatioOfRatiosConfig | null {
@@ -36,6 +27,9 @@ export function readStRatioOfRatiosConfig(
   ]
   if (!config || typeof config !== "object") return null
   const candidate = config as StRatioOfRatiosConfig
+  // `isLeg` (imported from `./stRatio`) is the same shape guard
+  // `readStRatioConfig` uses for `stRatio`'s own single leg — shared so the
+  // guard cannot drift from `evaluateLeg`'s shared arithmetic.
   if (!isLeg(candidate.from) || !isLeg(candidate.to)) return null
   return candidate
 }
