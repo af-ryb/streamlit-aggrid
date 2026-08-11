@@ -9,6 +9,7 @@ Shared by every ratio e2e suite so the two never drift apart on what "the
 grand-total row" or "row 4" means.
 """
 
+import pytest
 from playwright.sync_api import Page
 
 _READ_ROWS = """
@@ -50,3 +51,20 @@ def grand_total_row(
         if cells.get(group_col_id) == "Total":
             return cells
     raise AssertionError(f"no grand-total row among {sorted(rows)}")
+
+
+def assert_number(text: str, reference: float | None, where: str) -> None:
+    """Compare an unformatted cell's raw text — a value object's own
+    `toString()`, no valueFormatter — against a reference number. `None`
+    means an empty cell.
+
+    Shared for the same reason `read_rows`/`grand_total_row` are: every
+    unformatted-grid suite in this repo reads cells this way, and a
+    second copy of the tolerance/formatting logic is exactly the kind of
+    thing that drifts silently once only one of the two is still editable.
+    """
+    if reference is None:
+        assert text == "", f"{where}: expected an empty cell, got {text!r}"
+    else:
+        assert text != "", f"{where}: expected {reference}, got an empty cell"
+        assert float(text) == pytest.approx(reference), where

@@ -5,8 +5,10 @@ semantics already have their regression baseline in `grid_ratio_builtin.py`,
 which stays frozen, so a new aggregator (or a new capability on an existing
 one) gets its column here instead of disturbing that baseline. Task 3 adds
 `stRatio`'s `share` column, whose denominator is a window-wide constant
-(`den_const`) rather than a summed field; Tasks 4-6 append more grids and more
-columns on top of the same two scenarios.
+(`den_const`) rather than a summed field, plus a row-group-only `mixed_den`
+column proving `den_const` combines with a real summed `den` field rather
+than replacing it. Tasks 4-6 append more grids and more columns on top of the
+same two scenarios.
 
 Grid 0 row-groups by campaign then country, carrying the raw component
 columns (`aggFunc: "sum"`) alongside every declared aggregation column. Grid 1
@@ -24,9 +26,11 @@ from st_aggrid import AgGrid
 from ratio_fixture import (
     COMPONENT_FIELDS,
     PIVOT_DIM,
+    RATIO_ROWS,
     RatioSpec,
     ROW_DIM,
     SHARE_SPEC,
+    evaluate,
     ratio_dataframe,
 )
 
@@ -73,6 +77,23 @@ def component_column_defs() -> list[dict]:
 #: columnDefs list.
 RATIO_COLUMNS: tuple[RatioSpec, ...] = (SHARE_SPEC,)
 
+#: Exercises `den_const` combined with a non-empty `den` at runtime: `share`'s
+#: `den` is always empty, so nothing else proves both terms land in the same
+#: denominator (`denominator = den_const + Σden`) rather than one silently
+#: replacing the other. Row-group-grid-only, mirroring how
+#: `grid_ratio_builtin.py`'s `overlap_column_def` is scoped to its grid 0 —
+#: this column exists purely to guard that arithmetic, not to model a
+#: real-world metric. Declared here rather than in `ratio_fixture.py`: that
+#: module's blind-spot frozensets (`DEGENERATE_NODES`, `PIVOT_BLIND_CELLS`)
+#: are measured against its own specs, so a new entry there would ripple.
+MIXED_DEN_SPEC = RatioSpec(
+    col_id="mixed_den",
+    header="Cost / (rebate + const)",
+    num=("cost",),
+    den=("rebate",),
+    den_const=200.0,
+)
+
 
 COMMON_OPTIONS = {
     "suppressColumnVirtualisation": True,
@@ -90,6 +111,7 @@ def rowgroup_grid_options() -> dict:
             {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
             {"colId": PIVOT_DIM, "field": PIVOT_DIM, "rowGroup": True, "rowGroupIndex": 1},
             *(ratio_column_def(spec) for spec in RATIO_COLUMNS),
+            ratio_column_def(MIXED_DEN_SPEC),
             *component_column_defs(),
         ],
     }
@@ -113,6 +135,11 @@ def pivot_grid_options() -> dict:
 st.set_page_config(layout="wide")
 
 df = ratio_dataframe()
+# `ratio_dataframe()` only precomputes columns for the specs it knows about
+# (`RATIO_SPECS`, `SHARE_SPEC`, ...); `MIXED_DEN_SPEC` lives here, not in
+# `ratio_fixture.py`, so its per-row value is precomputed the same way, just
+# locally.
+df[MIXED_DEN_SPEC.col_id] = [evaluate(MIXED_DEN_SPEC, [row]) for row in RATIO_ROWS]
 
 st.subheader("Row grouping — share of a window-wide constant")
 AgGrid(

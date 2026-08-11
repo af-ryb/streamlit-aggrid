@@ -3,8 +3,10 @@
 `grid_agg_builtin.py` is the new home for every aggregator this coverage plan
 adds; this suite covers only what Task 3 adds to it — the `share` column,
 whose denominator is `SHARE_SPEC.den_const` (a window-wide constant) rather
-than a summed field. `stRatio`'s base semantics already have their regression
-baseline in `test_grid_ratio_builtin.py`, which stays frozen and green.
+than a summed field, and `mixed_den`, which proves that constant *combines*
+with a real summed `den` field rather than one silently replacing the other.
+`stRatio`'s base semantics already have their regression baseline in
+`test_grid_ratio_builtin.py`, which stays frozen and green.
 
 Row indices for the row-group grid mirror `test_grid_ratio_builtin.py`
 exactly: same fixture, same two-level grouping (campaign then country), same
@@ -18,8 +20,8 @@ import pytest
 from playwright.sync_api import Page
 
 from e2e_utils import StreamlitRunner
-from grid_dom import grand_total_row, read_rows
-from ratio_fixture import RATIO_ROWS, SHARE_SPEC, evaluate, rows_where
+from grid_dom import assert_number, grand_total_row, read_rows
+from ratio_fixture import RATIO_ROWS, RatioSpec, SHARE_SPEC, evaluate, rows_where
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 BUILTIN_FILE = ROOT_DIRECTORY / "test" / "grid_agg_builtin.py"
@@ -46,15 +48,20 @@ GROUP_ROW_DIMS = {
 }
 LEAF_ROW_SOURCE = {2: 0, 3: 1, 5: 2, 6: 3, 9: 4, 10: 5, 12: 6, 13: 7}
 
-
-def assert_number(text: str, reference: float | None, where: str) -> None:
-    """Compare an unformatted cell (raw `toString()`, no valueFormatter)
-    against a reference number."""
-    if reference is None:
-        assert text == "", f"{where}: expected an empty cell, got {text!r}"
-    else:
-        assert text != "", f"{where}: expected {reference}, got an empty cell"
-        assert float(text) == pytest.approx(reference), where
+# Mirrors `grid_agg_builtin.MIXED_DEN_SPEC` exactly — same col_id, same
+# fields, same constant. Apps in this repo run via `streamlit
+# run`/`StreamlitRunner`, never as an imported module: importing one directly
+# executes its top-level `AgGrid()` calls outside a Streamlit run context and
+# raises. So the spec is declared independently here rather than shared by
+# import, the same way `GROUP_ROW_DIMS` above independently encodes the app's
+# grouping structure rather than importing it.
+MIXED_DEN_SPEC = RatioSpec(
+    col_id="mixed_den",
+    header="Cost / (rebate + const)",
+    num=("cost",),
+    den=("rebate",),
+    den_const=200.0,
+)
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -107,6 +114,29 @@ def test_share_grand_total_is_exactly_100(page: Page):
     """
     total = grand_total_row(read_rows(page, ROWGROUP_GRID))
     assert float(total[SHARE_COL]) == 100.0
+
+
+def test_den_const_combines_with_a_summed_den_rather_than_replacing_it(page: Page):
+    """`share`'s `den` is empty, so nothing above proves `denominator =
+    den_const + Σden` actually adds both terms instead of one silently
+    overriding the other. `mixed_den` (`cost / (rebate + 200)`) has both:
+    checked at a folded group row (campaign A, two levels of children folded
+    through `sums`) and at the grand total (every leaf folded), so a `+` that
+    quietly became a `den_const`-only or `den`-only computation would show up
+    at both.
+    """
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    assert_number(
+        rows["body:0"][MIXED_DEN_SPEC.col_id],
+        evaluate(MIXED_DEN_SPEC, rows_where(campaign="A")),
+        "campaign A mixed_den",
+    )
+    assert_number(
+        grand_total_row(rows)[MIXED_DEN_SPEC.col_id],
+        evaluate(MIXED_DEN_SPEC, rows_where()),
+        "grand total mixed_den",
+    )
 
 
 # --------------------------------------------------------------------------
