@@ -196839,8 +196839,16 @@ function fZt(e) {
   return !Array.isArray(i.num) || !Array.isArray(i.den) ? null : i;
 }
 function mZt(e) {
+  let t = 0, i = !1;
+  for (const s of e.values ?? []) {
+    const n = s && typeof s.toNumber == "function" ? s.toNumber() : s;
+    typeof n != "number" || !Number.isFinite(n) || (t += n, i = !0);
+  }
+  return i ? t : null;
+}
+function yZt(e) {
   const t = fZt(e.colDef);
-  if (!t) return null;
+  if (!t) return mZt(e);
   const i = Array.from(/* @__PURE__ */ new Set([...t.num, ...t.den])), s = hZt(
     e,
     i,
@@ -196854,8 +196862,8 @@ function mZt(e) {
   const a = t.multiplier ?? 1, l = t.scale ?? 1, c = t.fill_null ?? null, u = o !== 0 ? r * a / o * l : c;
   return dZt(u, s);
 }
-function yZt(e, t = !1) {
-  return pZt(e, LMe, mZt, t);
+function vZt(e, t = !1) {
+  return pZt(e, LMe, yZt, t);
 }
 function Qre(e, t) {
   let i = wXt.cloneDeep(e.gridOptions);
@@ -196864,14 +196872,14 @@ function Qre(e, t) {
   ), i.columnTypes = Object.assign(
     i.columnTypes || {},
     cZt
-  ), yZt(i, e.debug === !0);
+  ), vZt(i, e.debug === !0);
   const s = new bMe();
   return i.theme = s.parse(
     e.theme,
     t ?? void 0
   ), i;
 }
-function vZt(e) {
+function CZt(e) {
   var n, r, o, a, l;
   const t = e.rowData, i = (n = e.gridOptions) == null ? void 0 : n.rowData, s = (c, u) => {
     if (typeof u == "bigint") return Number(u);
@@ -196912,12 +196920,12 @@ function vZt(e) {
   return [];
 }
 const Jre = /* @__PURE__ */ new Set();
-function CZt(e) {
+function bZt(e) {
   const t = e.enable_enterprise_modules;
   return t === "enterprise+AgCharts" ? "enterprise+charts" : t === !0 || t === "enterpriseOnly" ? "enterprise" : "community";
 }
-function bZt(e) {
-  const t = CZt(e);
+function SZt(e) {
+  const t = bZt(e);
   Jre.has(t) || (t === "enterprise+charts" ? _O.registerModules([
     $ne.with(t1t)
   ]) : t === "enterprise" ? _O.registerModules([$ne]) : _O.registerModules([kde]), Jre.add(t)), t !== "community" && e.license_key && Dz.setLicenseKey(e.license_key);
@@ -196935,7 +196943,7 @@ function ak(e, t) {
   i.length > 1 && e.moveColumns(i, 0);
 }
 let eoe = !1, toe = !1;
-const SZt = ({
+const xZt = ({
   data: e,
   setStateValue: t,
   setTriggerValue: i,
@@ -196947,11 +196955,11 @@ const SZt = ({
   ), h = U.useRef(null), d = U.useRef({}), g = U.useRef(e.notes_editable ?? !1);
   g.current = e.notes_editable ?? !1;
   const p = U.useRef(0), f = U.useRef(void 0), m = U.useRef(null), y = U.useRef(null), v = e.debug || !1, b = eXt(s);
-  bZt(e), !eoe && e.custom_css && (yXt(e.custom_css), eoe = !0), !toe && e.pro_assets && Array.isArray(e.pro_assets) && (e.pro_assets.forEach((G) => {
+  SZt(e), !eoe && e.custom_css && (yXt(e.custom_css), eoe = !0), !toe && e.pro_assets && Array.isArray(e.pro_assets) && (e.pro_assets.forEach((G) => {
     vXt(G == null ? void 0 : G.js, G == null ? void 0 : G.css);
   }), toe = !0);
   const S = U.useMemo(
-    () => vZt(e),
+    () => CZt(e),
     [e.rowData, (H = e.gridOptions) == null ? void 0 : H.rowData]
   ), w = U.useMemo(() => {
     if (S.length > 0 && Object.prototype.hasOwnProperty.call(S[0], "::auto_unique_id::"))
@@ -197274,7 +197282,7 @@ const SZt = ({
     }
   );
 };
-class xZt extends ke.Component {
+class wZt extends ke.Component {
   constructor(t) {
     super(t), this.state = { hasError: !1, error: null };
   }
@@ -197286,7 +197294,7 @@ class xZt extends ke.Component {
     return this.state.hasError ? /* @__PURE__ */ si.jsx("div", { style: { color: "red" }, children: (t = this.state.error) == null ? void 0 : t.message }) : this.props.children;
   }
 }
-const l4 = /* @__PURE__ */ new Map(), lQt = ({
+const l4 = /* @__PURE__ */ new Map(), cQt = ({
   data: e,
   key: t,
   setStateValue: i,
@@ -197302,8 +197310,8 @@ const l4 = /* @__PURE__ */ new Map(), lQt = ({
     a.className = "st-aggrid-scope", n.appendChild(a), o = { root: Cle(a), container: a }, l4.set(t, o);
   }
   return o.root.render(
-    /* @__PURE__ */ si.jsx(xZt, { children: /* @__PURE__ */ si.jsx(
-      SZt,
+    /* @__PURE__ */ si.jsx(wZt, { children: /* @__PURE__ */ si.jsx(
+      xZt,
       {
         data: r,
         setStateValue: i,
@@ -197316,5 +197324,5 @@ const l4 = /* @__PURE__ */ new Map(), lQt = ({
   };
 };
 export {
-  lQt as default
+  cQt as default
 };

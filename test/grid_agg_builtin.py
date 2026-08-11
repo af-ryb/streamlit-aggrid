@@ -132,6 +132,95 @@ def pivot_grid_options() -> dict:
     }
 
 
+#: Task 4: `stRatio` is registered on every grid regardless of whether any
+#: column declares it (see `parseGridOptions`), so AG-Grid's columns tool
+#: panel aggregation picker offers it on any value column. This grid has no
+#: `RATIO_COLUMNS` at all — it exists purely to prove that a column which
+#: ends up with `aggFunc: "stRatio"` and no `context["stRatio"]` degrades to
+#: a plain sum instead of blanking.
+#:
+#: Both `cost` and `installs` declare `aggFunc: "sum"` here, in `columnDefs`
+#: — deliberately, not `"stRatio"`. `validate_ratio_columns` (`ratio.py`)
+#: rejects *any* colDef declaring `aggFunc: "stRatio"` with no
+#: `context["stRatio"]` (pinned by
+#: `test/unit/test_ratio_validation.py::test_agg_func_without_a_context_is_rejected`)
+#: — deliberately, per its own docstring: "every rule here exists to turn a
+#: silent wrong number into a loud error." That guard runs unconditionally on
+#: `columnDefs`, so it is not possible to get such a colDef past `AgGrid()`
+#: at all: every column that ever reaches `stRatioAggFunc` with
+#: `aggFunc === "stRatio"` in the *original* `columnDefs` is therefore
+#: guaranteed to carry a structurally valid declaration too, which means
+#: `readStRatioConfig` can only return `null` for a column whose `aggFunc`
+#: became `"stRatio"` **after** Python validated it — i.e. only through
+#: runtime acquisition. That is also exactly the real bug this task fixes:
+#: the tool-panel aggregation picker is itself a runtime mutation Python
+#: never sees.
+#:
+#: `cost` and `installs` each exercise a different, genuine runtime-mutation
+#: mechanism — both real, both already-documented `AgGrid()` features, both
+#: entirely outside `columnDefs` so `validate_ratio_columns` never inspects
+#: either and `registerStRatio`'s `columnDefs` walk never attaches a
+#: comparator to either:
+#:
+#: - `installs` is switched to `stRatio` via the raw `initial_state` prop
+#:   (`GridState.aggregation.aggregationModel`), applied pre-paint, before
+#:   the grid is created.
+#: - `cost` is switched to `stRatio` via `columns_state` in `"merge"` mode
+#:   (a `ColumnState[]` overlay, `aggFunc?: string | IAggFunc | null`),
+#:   applied post-creation in `onGridReady`.
+#:
+#: Both shapes were confirmed against the installed `ag-grid-community@36.0.0`
+#: type declarations (`gridState.d.ts`, `columnStateUtils.d.ts`) rather than
+#: assumed.
+def fallback_grid_options() -> dict:
+    return {
+        **COMMON_OPTIONS,
+        "groupDisplayType": "multipleColumns",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {"colId": PIVOT_DIM, "field": PIVOT_DIM, "rowGroup": True, "rowGroupIndex": 1},
+            {
+                "colId": "cost",
+                "field": "cost",
+                "headerName": "Cost",
+                "type": "numericColumn",
+                "aggFunc": "sum",
+                "width": 130,
+            },
+            {
+                "colId": "installs",
+                "field": "installs",
+                "headerName": "Installs",
+                "type": "numericColumn",
+                "aggFunc": "sum",
+                "width": 130,
+            },
+        ],
+    }
+
+
+#: `GridState.aggregation.aggregationModel: AggregationColumnState[]`, each
+#: `{colId, aggFunc}` — switches `installs` to `stRatio` pre-paint.
+#:
+#: `partialColumnState: True` is required, not decorative: this
+#: `initial_state` carries only `aggregation`, and `GridState`'s own
+#: docstring says a partial column-state snapshot needs the flag "when
+#: providing a partial initialState with some but not all column state
+#: properties." Measured, not assumed: without it, AG-Grid treats the
+#: partial snapshot as the *complete* column state and drops the
+#: `columnDefs`-driven `rowGroup` — the row-group grid rendered as eight flat
+#: leaf rows plus one total, no grouping at all, until this was added.
+FALLBACK_INITIAL_STATE = {
+    "partialColumnState": True,
+    "aggregation": {"aggregationModel": [{"colId": "installs", "aggFunc": "stRatio"}]},
+}
+
+#: `ColumnState[]` merge overlay — switches `cost` to `stRatio` post-creation,
+#: without disturbing `installs` or the row groups `columnDefs` already set
+#: up (merge mode only touches the columns named in the delta).
+FALLBACK_COLUMNS_STATE = [{"colId": "cost", "aggFunc": "stRatio"}]
+
+
 st.set_page_config(layout="wide")
 
 df = ratio_dataframe()
@@ -157,4 +246,16 @@ AgGrid(
     enable_enterprise_modules=True,
     height=320,
     key="agg_builtin_pivot",
+)
+
+st.subheader("Fallback — stRatio with no declaration degrades to sum")
+AgGrid(
+    df,
+    grid_options=fallback_grid_options(),
+    initial_state=FALLBACK_INITIAL_STATE,
+    columns_state=FALLBACK_COLUMNS_STATE,
+    columns_state_mode="merge",
+    enable_enterprise_modules=True,
+    height=420,
+    key="agg_builtin_fallback",
 )

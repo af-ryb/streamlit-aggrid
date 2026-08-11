@@ -46,6 +46,60 @@ export function readStRatioConfig(colDef?: ColDef | null): StRatioConfig | null 
 }
 
 /**
+ * `stRatio` is registered into `gridOptions.aggFuncs` on every grid (see
+ * `parseGridOptions`), so AG-Grid offers it in the columns tool panel's
+ * aggregation picker for *any* value column — including one with no
+ * `context["stRatio"]` declaration, and one that acquires `aggFunc: "stRatio"`
+ * purely at runtime (grid state restore, the columns panel), which
+ * `readStRatioConfig` never sees because it only runs per-node at aggregation
+ * time, not at parse time. Returning `null` there blanks the column; summing
+ * instead degrades it to a plain `sum` — sane, if not necessarily what the
+ * user meant by picking "stRatio".
+ *
+ * `params.values` already carries each immediate child's own value — a raw
+ * cell on a leaf, that child's own returned total on a group — correctly
+ * scoped to the current pivot key by AG-Grid itself, so summing it is the
+ * same one-level fold every other aggregator here does, just without needing
+ * `foldChildren`: a plain sum is associative, so summing each level's own
+ * `values` reproduces the grand total without re-walking leaves.
+ *
+ * Returns a plain `number`, never an `StAggValue`, for two reasons:
+ *
+ * 1. A `valueFormatter` written for a number keeps working. The concrete
+ *    case this task exists for: a column already declared `aggFunc: "sum"`
+ *    with a formatter written for a raw number (`params.value.toFixed(2)`,
+ *    say) is switched to `stRatio` at runtime, through the columns tool
+ *    panel or grid state — the formatter is never told the value's shape
+ *    changed, and `.toFixed` does not exist on a plain object. An
+ *    `StAggValue` carrying an all-zero `sums` would in any case be no more
+ *    useful than the blank it replaces.
+ * 2. `registerAggFunc` attaches `stAggComparator` by walking `columnDefs` at
+ *    parse time, so a column that acquires `stRatio` only at runtime never
+ *    gets a comparator, and sorts under AG-Grid's own default instead.
+ *    Measured against AG-Grid 36's compiled default comparator
+ *    (`ag-grid-community.js`'s `_defaultComparator`): it already unwraps a
+ *    `toNumber()`-bearing object before comparing, the same way
+ *    `stAggComparator` does, so for a *non-null* result the plain-number
+ *    choice does not, in fact, change sort order here — reason (1) alone
+ *    already requires it, and not relying on that AG-Grid internal is the
+ *    more future-proof habit regardless.
+ */
+function sumFallback(params: IAggFuncParams): number | null {
+  let total = 0
+  let sawValue = false
+  for (const raw of params.values ?? []) {
+    const unwrapped =
+      raw && typeof (raw as StAggValue).toNumber === "function"
+        ? (raw as StAggValue).toNumber()
+        : raw
+    if (typeof unwrapped !== "number" || !Number.isFinite(unwrapped)) continue
+    total += unwrapped
+    sawValue = true
+  }
+  return sawValue ? total : null
+}
+
+/**
  * `(Σ signᵢ·numᵢ · multiplier / (den_const + Σden)) · scale`, where every
  * field name resolves to the sum of that field over the node's subtree.
  *
@@ -55,9 +109,11 @@ export function readStRatioConfig(colDef?: ColDef | null): StRatioConfig | null 
  * Re-walking `allLeafChildren` at every level would be correct but quadratic in
  * depth — and, being blind to pivot keys, wrong in a pivot cell.
  */
-export function stRatioAggFunc(params: IAggFuncParams): StAggValue | null {
+export function stRatioAggFunc(
+  params: IAggFuncParams
+): StAggValue | number | null {
   const config = readStRatioConfig(params.colDef)
-  if (!config) return null
+  if (!config) return sumFallback(params)
 
   // Deduplicated: a name may legitimately appear in both `num` and `den`
   // (`part / (part + rest)` — retention, conversion, share-of-total). `sums`
