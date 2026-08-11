@@ -18,7 +18,11 @@ export type StRatioValue = StAggValue
  * uses of that field. */
 export const ST_RATIO = "stRatio"
 
-export interface StRatioConfig {
+/** One `Σnum/Σden` fraction: `stRatio`'s whole declaration, and the shape of
+ * each of `stRatioOfRatios`'s two legs (`from`/`to`). `evaluateLeg` is the
+ * single place this arithmetic is implemented; both aggregators call it so
+ * they can never drift apart. */
+export interface StRatioLeg {
   num: string[]
   den: string[]
   num_signs?: number[]
@@ -32,8 +36,13 @@ export interface StRatioConfig {
    * another `den` entry would multiply it by the child count and shrink every
    * group's share. `den` may be empty when this alone is the denominator. */
   den_const?: number
+}
+
+export interface StRatioConfig extends StRatioLeg {
   /** Value when the denominator sums to zero. Defaults to null — an empty
-   * cell — which is what the JavaScript this replaces already renders. */
+   * cell — which is what the JavaScript this replaces already renders. Not
+   * part of `StRatioLeg`: a `stRatioOfRatios` leg has no `fill_null` of its
+   * own, only the outer spec does (see `stRatioOfRatios.ts`). */
   fill_null?: number | null
 }
 
@@ -101,8 +110,38 @@ function sumFallback(params: IAggFuncParams): number | null {
 
 /**
  * `(Σ signᵢ·numᵢ · multiplier / (den_const + Σden)) · scale`, where every
- * field name resolves to the sum of that field over the node's subtree.
- *
+ * field name resolves to the sum of that field over `sums` — a node's
+ * already-folded per-field totals (see `foldChildren`). Returns `null` when
+ * the denominator sums to exactly `0` (the Global Constraints' `!== 0` rule,
+ * applied here and nowhere else, so `stRatio` and every leg of
+ * `stRatioOfRatios` share this one gate rather than each carrying its own
+ * copy) — the caller decides what a `null` leg means (`stRatio`'s own
+ * `fill_null`, or `stRatioOfRatios`'s outer division and its `fill_null`).
+ */
+export function evaluateLeg(
+  sums: Record<string, number>,
+  leg: StRatioLeg
+): number | null {
+  const signs = leg.num_signs ?? leg.num.map(() => 1)
+  let numerator = 0
+  for (let i = 0; i < leg.num.length; i++) {
+    numerator += signs[i] * sums[leg.num[i]]
+  }
+
+  // `den_const` is a window-wide constant, not a per-leaf component: it is
+  // added once here rather than folded through `sums`, which would multiply
+  // it by the subtree's child count. See `StRatioLeg.den_const`.
+  let denominator = leg.den_const ?? 0
+  for (const field of leg.den) denominator += sums[field]
+
+  if (denominator === 0) return null
+
+  const multiplier = leg.multiplier ?? 1
+  const scale = leg.scale ?? 1
+  return ((numerator * multiplier) / denominator) * scale
+}
+
+/**
  * Each node is visited once. A leaf group's `aggregatedChildren` are data rows,
  * so their components are read straight off `row.data`; a higher group's
  * children are groups, so their already-computed `sums` are folded instead.
@@ -125,27 +164,11 @@ export function stRatioAggFunc(
     Object.fromEntries(fields.map((f) => [f, asNumber(data[f])]))
   )
 
-  const signs = config.num_signs ?? config.num.map(() => 1)
-  let numerator = 0
-  for (let i = 0; i < config.num.length; i++) {
-    numerator += signs[i] * sums[config.num[i]]
-  }
-
-  // `den_const` is a window-wide constant, not a per-leaf component: it is
-  // added once here rather than folded through `sums`, which would multiply
-  // it by the subtree's child count. See `StRatioConfig.den_const`.
-  let denominator = config.den_const ?? 0
-  for (const field of config.den) denominator += sums[field]
-
-  const multiplier = config.multiplier ?? 1
-  const scale = config.scale ?? 1
-  // `?? null` and not `|| null`: an explicit fill_null of 0 must survive.
-  const fillNull = config.fill_null ?? null
-
-  const value =
-    denominator !== 0
-      ? ((numerator * multiplier) / denominator) * scale
-      : fillNull
+  const ratio = evaluateLeg(sums, config)
+  // `?? null` and not `|| null`: an explicit fill_null of 0 must survive, and
+  // a computed `ratio` of exactly 0 (nonzero denominator, zero numerator) is
+  // a real value, not a signal to fall back to `fill_null`.
+  const value = ratio ?? (config.fill_null ?? null)
 
   return makeAggValue(value, sums)
 }

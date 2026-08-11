@@ -249,3 +249,247 @@ def test_aggrid_rejects_an_unresolvable_ratio_before_rendering():
 
     with pytest.raises(ValueError, match="spend"):
         AgGrid(frame, grid_options=options, key="ratio_validation_probe")
+
+
+# --------------------------------------------------------------------------
+# stRatioOfRatios
+# --------------------------------------------------------------------------
+
+ROR_COLUMNS = ["campaign", "ads_d0", "inst_d0", "ads_d1", "inst_d1"]
+
+VALID_FROM_LEG = {"num": ["ads_d0"], "den": ["inst_d0"]}
+VALID_TO_LEG = {"num": ["ads_d1"], "den": ["inst_d1"]}
+
+
+def ror_grid_options(context, **col_overrides):
+    """One `stRatioOfRatios` column carrying `context`, plus a plain
+    dimension column — the ratio-of-ratios counterpart of `grid_options`
+    above."""
+    column = {"colId": "growth", "field": "growth", "aggFunc": "stRatioOfRatios"}
+    column.update(col_overrides)
+    if context is not None:
+        column["context"] = {"stRatioOfRatios": context}
+    return {"columnDefs": [{"field": "campaign", "rowGroup": True}, column]}
+
+
+VALID_ROR = {"from": VALID_FROM_LEG, "to": VALID_TO_LEG}
+
+
+def test_a_valid_ratio_of_ratios_declaration_passes():
+    validate_ratio_columns(ror_grid_options(VALID_ROR), ROR_COLUMNS)
+
+
+def test_a_leg_may_use_every_optional_key():
+    """`num_signs`/`multiplier`/`scale`/`den_const` are the full `stRatio`
+    leg shape (`_validate_leg`), available on either leg."""
+    validate_ratio_columns(
+        ror_grid_options(
+            {
+                "from": {
+                    "num": ["ads_d0", "inst_d0"],
+                    "den": ["inst_d0"],
+                    "num_signs": [1, -1],
+                    "multiplier": 1000,
+                    "scale": 0.5,
+                    "den_const": 10,
+                },
+                "to": VALID_TO_LEG,
+            }
+        ),
+        ROR_COLUMNS,
+    )
+
+
+def test_ror_fill_null_may_be_none():
+    validate_ratio_columns(ror_grid_options({**VALID_ROR, "fill_null": None}), ROR_COLUMNS)
+
+
+def test_ror_fill_null_must_be_numeric_or_none():
+    with pytest.raises(ValueError, match="fill_null"):
+        validate_ratio_columns(
+            ror_grid_options({**VALID_ROR, "fill_null": "blank"}), ROR_COLUMNS
+        )
+
+
+def test_missing_from_leg_is_rejected():
+    with pytest.raises(ValueError, match="from"):
+        validate_ratio_columns(ror_grid_options({"to": VALID_TO_LEG}), ROR_COLUMNS)
+
+
+def test_missing_to_leg_is_rejected():
+    with pytest.raises(ValueError, match="to"):
+        validate_ratio_columns(ror_grid_options({"from": VALID_FROM_LEG}), ROR_COLUMNS)
+
+
+def test_a_leg_that_is_not_a_dict_is_rejected():
+    with pytest.raises(ValueError, match="from"):
+        validate_ratio_columns(
+            ror_grid_options({"from": ["ads_d0"], "to": VALID_TO_LEG}), ROR_COLUMNS
+        )
+
+
+def test_a_leg_with_no_num_is_rejected():
+    with pytest.raises(ValueError, match="num"):
+        validate_ratio_columns(
+            ror_grid_options({"from": {"den": ["inst_d0"]}, "to": VALID_TO_LEG}),
+            ROR_COLUMNS,
+        )
+
+
+def test_a_leg_with_no_den_is_rejected():
+    with pytest.raises(ValueError, match="den"):
+        validate_ratio_columns(
+            ror_grid_options({"from": {"num": ["ads_d0"]}, "to": VALID_TO_LEG}),
+            ROR_COLUMNS,
+        )
+
+
+def test_a_legs_den_const_alone_may_stand_in_for_an_empty_den():
+    validate_ratio_columns(
+        ror_grid_options(
+            {"from": {"num": ["ads_d0"], "den": [], "den_const": 10}, "to": VALID_TO_LEG}
+        ),
+        ROR_COLUMNS,
+    )
+
+
+def test_a_legs_num_signs_length_must_match_its_num():
+    with pytest.raises(ValueError, match="num_signs"):
+        validate_ratio_columns(
+            ror_grid_options(
+                {
+                    "from": {
+                        "num": ["ads_d0", "inst_d0"],
+                        "den": ["inst_d0"],
+                        "num_signs": [1],
+                    },
+                    "to": VALID_TO_LEG,
+                }
+            ),
+            ROR_COLUMNS,
+        )
+
+
+@pytest.mark.parametrize("key", ["multiplier", "scale", "den_const"])
+def test_a_legs_numeric_options_must_be_numeric(key):
+    with pytest.raises(ValueError, match=key):
+        validate_ratio_columns(
+            ror_grid_options({"from": {**VALID_FROM_LEG, key: "1000"}, "to": VALID_TO_LEG}),
+            ROR_COLUMNS,
+        )
+
+
+def test_unknown_field_in_either_leg_is_rejected():
+    with pytest.raises(ValueError, match="ad_spend"):
+        validate_ratio_columns(
+            ror_grid_options({"from": {"num": ["ad_spend"], "den": ["inst_d0"]}, "to": VALID_TO_LEG}),
+            ROR_COLUMNS,
+        )
+    with pytest.raises(ValueError, match="conversions"):
+        validate_ratio_columns(
+            ror_grid_options({"from": VALID_FROM_LEG, "to": {"num": ["ads_d1"], "den": ["conversions"]}}),
+            ROR_COLUMNS,
+        )
+
+
+def test_a_field_shared_by_both_legs_is_reported_once():
+    """`inst_d0` unknown to `ROR_COLUMNS`-minus-itself, named by both `from`
+    and `to` — the union is deduplicated so it appears once in the message,
+    not twice."""
+    columns = ["campaign", "ads_d0", "ads_d1"]
+    with pytest.raises(ValueError) as excinfo:
+        validate_ratio_columns(
+            ror_grid_options(
+                {
+                    "from": {"num": ["ads_d0"], "den": ["inst_d0"]},
+                    "to": {"num": ["ads_d1"], "den": ["inst_d0"]},
+                }
+            ),
+            columns,
+        )
+    message = str(excinfo.value)
+    assert message.count("inst_d0") == 1
+
+
+def test_ror_field_existence_is_skipped_when_there_is_no_data_to_check_against():
+    validate_ratio_columns(
+        ror_grid_options({"from": {"num": ["spend"], "den": ["inst_d0"]}, "to": VALID_TO_LEG}),
+        None,
+    )
+
+
+def test_agg_func_ratio_of_ratios_without_a_context_is_rejected():
+    with pytest.raises(ValueError, match="context"):
+        validate_ratio_columns(ror_grid_options(None), ROR_COLUMNS)
+
+
+def test_a_ratio_of_ratios_context_on_a_column_group_child_is_validated():
+    """Same descent-into-`children` requirement as `stRatio`'s own
+    grouped-columns test."""
+    options = {
+        "columnDefs": [
+            {
+                "headerName": "Growth",
+                "children": [
+                    {
+                        "colId": "growth",
+                        "aggFunc": "stRatioOfRatios",
+                        "context": {
+                            "stRatioOfRatios": {
+                                "from": {"num": ["ad_spend"], "den": ["inst_d0"]},
+                                "to": VALID_TO_LEG,
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="ad_spend"):
+        validate_ratio_columns(options, ROR_COLUMNS)
+
+
+def test_stratio_and_stratio_of_ratios_are_validated_independently():
+    """A grid with one column of each kind: an invalid `stRatio` column must
+    not be masked by a valid `stRatioOfRatios` column sitting next to it in
+    the same `columnDefs` walk."""
+    options = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True},
+            {
+                "colId": "cpi",
+                "aggFunc": "stRatio",
+                "context": {"stRatio": {"num": ["spend"], "den": ["inst_d0"]}},
+            },
+            {
+                "colId": "growth",
+                "aggFunc": "stRatioOfRatios",
+                "context": {"stRatioOfRatios": VALID_ROR},
+            },
+        ]
+    }
+    with pytest.raises(ValueError, match="spend"):
+        validate_ratio_columns(options, ROR_COLUMNS)
+
+
+def test_dispatch_checks_every_registered_context_key_on_one_column():
+    """One column carrying both `context["stRatio"]` (invalid) and
+    `context["stRatioOfRatios"]` (valid) — a nonsensical declaration nobody
+    would write deliberately, but it proves `validate_ratio_columns`'s
+    per-column loop checks every entry in `_VALIDATORS` rather than
+    returning after the first key it finds."""
+    options = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True},
+            {
+                "colId": "both",
+                "context": {
+                    "stRatio": {"num": ["spend"], "den": ["inst_d0"]},
+                    "stRatioOfRatios": VALID_ROR,
+                },
+            },
+        ]
+    }
+    with pytest.raises(ValueError, match="spend"):
+        validate_ratio_columns(options, ROR_COLUMNS)
+

@@ -21,16 +21,19 @@ Run standalone with:  streamlit run test/grid_agg_builtin.py
 
 import streamlit as st
 
-from st_aggrid import AgGrid
+from st_aggrid import AgGrid, JsCode
 
 from ratio_fixture import (
     COMPONENT_FIELDS,
+    GROWTH_SPECS,
     PIVOT_DIM,
     RATIO_ROWS,
+    RatioOfRatiosSpec,
     RatioSpec,
     ROW_DIM,
     SHARE_SPEC,
     evaluate,
+    evaluate_ratio_of_ratios,
     ratio_dataframe,
 )
 
@@ -59,6 +62,13 @@ def ratio_column_def(spec: RatioSpec) -> dict:
     )
 
 
+def ratio_of_ratios_column_def(spec: RatioOfRatiosSpec) -> dict:
+    """One `stRatioOfRatios` colDef from a `RatioOfRatiosSpec`."""
+    return _agg_column_def(
+        spec.col_id, spec.header, "stRatioOfRatios", {"stRatioOfRatios": spec.to_context()}
+    )
+
+
 def component_column_defs() -> list[dict]:
     return [
         {
@@ -77,6 +87,12 @@ def component_column_defs() -> list[dict]:
 #: columnDefs list.
 RATIO_COLUMNS: tuple[RatioSpec, ...] = (SHARE_SPEC,)
 
+#: `stRatioOfRatios` columns declared on both grids: `growth` (the direction-
+#: discriminating column, see `test_growth_pivot_cell_direction_diverges_from_its_row_total`
+#: in the test suite) and `growth_neg` (pins the `> 0` -> `!== 0` behaviour
+#: change — see `GROWTH_SPECS`'s docstring in `ratio_fixture.py`).
+GROWTH_COLUMNS: tuple[RatioOfRatiosSpec, ...] = GROWTH_SPECS
+
 #: Exercises `den_const` combined with a non-empty `den` at runtime: `share`'s
 #: `den` is always empty, so nothing else proves both terms land in the same
 #: denominator (`denominator = den_const + Σden`) rather than one silently
@@ -93,6 +109,55 @@ MIXED_DEN_SPEC = RatioSpec(
     den=("rebate",),
     den_const=200.0,
 )
+
+#: A `stRatioOfRatios` column whose `to` leg collapses for campaign B: every
+#: B row has `payers == 0` (the same fact `arpp`/`arpp_blank` already exploit
+#: for `stRatio`), so `growth_blank` is a real number for campaign A and
+#: `None` throughout campaign B — a nulls-sort-last fixture `growth`/
+#: `growth_neg` cannot provide on their own, since every leg they use
+#: (`ads_d0`/`inst_d0`/`ads_d1`/`inst_d1`) is positive on every row of this
+#: fixture. Declared here rather than in `ratio_fixture.py`, same reasoning as
+#: `MIXED_DEN_SPEC`: that module's blind-spot frozensets are measured against
+#: its own specs, so a column that exists purely to guard sort behaviour
+#: would ripple there for no benefit.
+GROWTH_BLANK_SPEC = RatioOfRatiosSpec(
+    col_id="growth_blank",
+    header="Growth (blank)",
+    from_leg={"num": ("ads_d0",), "den": ("inst_d0",)},
+    to_leg={"num": ("revenue",), "den": ("payers",)},
+)
+
+#: A deliberately backwards comparator, attached only to the row-group grid's
+#: `growth` column (see `rowgroup_growth_column_defs`). Exists so a test can
+#: prove a caller-supplied `comparator` is left alone; the fork's own
+#: comparator would sort the other way. Copied from `grid_ratio_builtin.py`'s
+#: `js_reversed_comparator` — same shape, same reasoning, redeclared rather
+#: than imported because these apps are run via `streamlit run`, never as an
+#: imported module (see `LEAF_ROW_SOURCE`'s comment in the test suite).
+js_reversed_comparator = JsCode("""
+function(a, b) {
+    const x = (a && typeof a.toNumber === 'function') ? a.toNumber() : a;
+    const y = (b && typeof b.toNumber === 'function') ? b.toNumber() : b;
+    if (x == null || y == null) { return 0; }
+    return x > y ? -1 : (x < y ? 1 : 0);
+}
+""")
+
+
+def rowgroup_growth_column_defs() -> list[dict]:
+    """Growth-family colDefs for the row-group grid only: `growth` carries
+    the reversed comparator (proving a caller-supplied one is left alone),
+    and `growth_blank` (proving nulls sort last) rides along — neither
+    belongs on the pivot grid or the grouped-columns grid, which test other
+    things and would only pick up incidental coupling from these."""
+    columns = []
+    for spec in GROWTH_COLUMNS:
+        column = ratio_of_ratios_column_def(spec)
+        if spec.col_id == "growth":
+            column["comparator"] = js_reversed_comparator
+        columns.append(column)
+    columns.append(ratio_of_ratios_column_def(GROWTH_BLANK_SPEC))
+    return columns
 
 
 COMMON_OPTIONS = {
@@ -112,6 +177,7 @@ def rowgroup_grid_options() -> dict:
             {"colId": PIVOT_DIM, "field": PIVOT_DIM, "rowGroup": True, "rowGroupIndex": 1},
             *(ratio_column_def(spec) for spec in RATIO_COLUMNS),
             ratio_column_def(MIXED_DEN_SPEC),
+            *rowgroup_growth_column_defs(),
             *component_column_defs(),
         ],
     }
@@ -127,6 +193,7 @@ def pivot_grid_options() -> dict:
             {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
             {"colId": PIVOT_DIM, "field": PIVOT_DIM, "pivot": True, "pivotIndex": 0},
             *(ratio_column_def(spec) for spec in RATIO_COLUMNS),
+            *(ratio_of_ratios_column_def(spec) for spec in GROWTH_COLUMNS),
             *component_column_defs(),
         ],
     }
@@ -225,15 +292,19 @@ st.set_page_config(layout="wide")
 
 df = ratio_dataframe()
 # `ratio_dataframe()` only precomputes columns for the specs it knows about
-# (`RATIO_SPECS`, `SHARE_SPEC`, ...); `MIXED_DEN_SPEC` lives here, not in
-# `ratio_fixture.py`, so its per-row value is precomputed the same way, just
-# locally.
+# (`RATIO_SPECS`, `SHARE_SPEC`, `GROWTH_SPECS`, ...); `MIXED_DEN_SPEC` and
+# `GROWTH_BLANK_SPEC` live here, not in `ratio_fixture.py`, so their per-row
+# values are precomputed the same way, just locally.
 df[MIXED_DEN_SPEC.col_id] = [evaluate(MIXED_DEN_SPEC, [row]) for row in RATIO_ROWS]
+df[GROWTH_BLANK_SPEC.col_id] = [
+    evaluate_ratio_of_ratios([row], GROWTH_BLANK_SPEC) for row in RATIO_ROWS
+]
 
 st.subheader("Row grouping — share of a window-wide constant")
 AgGrid(
     df,
     grid_options=rowgroup_grid_options(),
+    allow_unsafe_jscode=True,
     enable_enterprise_modules=True,
     height=420,
     key="agg_builtin_rowgroup",
@@ -258,4 +329,43 @@ AgGrid(
     enable_enterprise_modules=True,
     height=420,
     key="agg_builtin_fallback",
+)
+
+# `registerAggFunc` installs the null-ordering comparator by walking
+# `columnDefs`, and the consumer this feature exists for wraps every metric
+# column in a column group — mirrors `grid_ratio_builtin.py`'s own
+# "grouped-cols" grid, but for `stRatioOfRatios` rather than `stRatio`, so
+# `eachColDef`'s descent into `children` is under test for this aggregator
+# too, not just inspected by inference from the sibling suite. `growth_blank`
+# rides along (nested here too, unlike on the pivot grid) because it is what
+# lets a test prove the comparator that reached this nested column is
+# specifically the nulls-last one — `growth`/`growth_neg` never produce a
+# null in this fixture, so sorting by either would pass under AG-Grid's own
+# default comparator too and prove nothing about the descent.
+st.subheader("Row grouping — stRatioOfRatios columns nested in a column group")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "groupDisplayType": "multipleColumns",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {
+                "headerName": "Growth",
+                # Not `groupId: "growth"`: that collides with the child
+                # column's `colId: "growth"` — AG-Grid disambiguates by
+                # silently renaming the column to `growth_1`, which is not
+                # what any test here expects.
+                "groupId": "growthMetrics",
+                "children": [
+                    *(ratio_of_ratios_column_def(spec) for spec in GROWTH_COLUMNS),
+                    ratio_of_ratios_column_def(GROWTH_BLANK_SPEC),
+                ],
+            },
+            *component_column_defs(),
+        ],
+    },
+    enable_enterprise_modules=True,
+    height=260,
+    key="agg_builtin_grouped_cols",
 )

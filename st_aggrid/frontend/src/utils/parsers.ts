@@ -6,6 +6,7 @@ import { columnFormaters } from "../customColumns"
 import { ThemeParser } from "../ThemeParser"
 import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 import { registerStRatio } from "../aggFuncs/stRatio"
+import { registerStRatioOfRatios } from "../aggFuncs/stRatioOfRatios"
 
 export function parseGridOptions(
   data: AgGridData,
@@ -31,8 +32,12 @@ export function parseGridOptions(
   )
 
   // Built-in aggregators. A caller-supplied `aggFuncs` entry of the same name
-  // wins — see registerStRatio.
+  // wins — see registerStRatio. Called from the one site both the mount path
+  // (initial `gridOptions` memo) and the live-update path (`updateGridOptions`
+  // effect) share, so a runtime config change never leaves either aggregator
+  // unregistered.
   registerStRatio(gridOptions, data.debug === true)
+  registerStRatioOfRatios(gridOptions, data.debug === true)
 
   // Process theming — prefer the live theme read from host CSS variables
   // over any server-side value, which can't see user-level theme toggles.
