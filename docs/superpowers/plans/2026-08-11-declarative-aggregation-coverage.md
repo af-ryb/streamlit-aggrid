@@ -157,12 +157,14 @@ Pure Python. No frontend, no browser. The fixture owns the data *and* the arithm
 | 1 | A/US | 20 | 8 | 20 | 8 | 20 | 1 | 8 |
 | 2 | A/DE | 9 | 10 | 35 | 10 | 9 | `None` | 10 |
 | 3 | A/DE | 1 | 90 | 5 | 90 | 1 | 2 | 90 |
-| 4 | B/US | 6 | 10 | 9 | 10 | −6 | 5 | 0 |
+| 4 | B/US | 6 | 10 | 9 | 10 | −6 | 5 | −100 |
 | 5 | B/US | 4 | 90 | 1 | 90 | −4 | 3 | 100 |
 | 6 | B/DE | 15 | 20 | 30 | 20 | −15 | 4 | 50 |
 | 7 | B/DE | 5 | 80 | 10 | 80 | −5 | 6 | 50 |
 
-`wa_value` row 2 is `None` so it becomes NaN in the DataFrame — a leaf the weighted average must skip. `wa_weight` row 4 is `0` — a leaf it must also skip. `credits_d0` mirrors `ads_d0` with campaign B's sign flipped, which is what makes campaign B's *from*-ARPU negative.
+`wa_value` row 2 is `None` so it becomes NaN in the DataFrame — a leaf the weighted average must skip. `wa_weight` row 4 is `−100` — a leaf it must also skip, because the rule is `weight > 0`, not `weight != 0`.
+
+**Why the weight is negative and not zero.** A zero-weight leaf contributes `v·0 = 0` to the numerator and `0` to the denominator, so including it or skipping it produces the identical number at every level — an implementation that forgets the `weight > 0` gate entirely would still pass. The gate is only observable against a weight that is negative: row 4's `−100` cancels row 5's `+100`, so a missing gate divides by zero and blanks the cell where the correct answer is `3.0`. Every *correct* value in the tables below is unchanged by this choice, because the row is skipped either way. The consumer's JavaScript gates on `inst > 0` for the same reason.
 
 **New evaluators**, beside the existing `evaluate` / `evaluate_legacy`:
 
@@ -196,15 +198,16 @@ Pure Python. No frontend, no browser. The fixture owns the data *and* the arithm
 | `wavg_blank` | `wa_value` / `payers` | `None` | 5.5 | 2.0 | 61/13 = 4.692307… | — | — | — (blank) | 4.692307… |
 | `wavg_zero` | `wa_value` / `payers` | `0.0` | 5.5 | 2.0 | 4.692307… | 0.0 | 0.0 | 0.0 | 4.692307… |
 
-`wavg` proves the skip rules: A/DE ignores the NaN leaf (else `2.0` would not be `2.0`), B/US ignores the zero-weight leaf (else it would be `3.1̄`). `wavg_blank`/`wavg_zero` are the `fill_null` pair — campaign B has zero payers throughout, so the weight sum collapses.
+`wavg` proves the skip rules: A/DE ignores the NaN leaf (counting it with weight 10 would give `1.8`, not `2.0`), and B/US ignores the negative-weight leaf (counting it would sum the weights to `−100 + 100 = 0` and blank the cell instead of reading `3.0`). `wavg_blank`/`wavg_zero` are the `fill_null` pair — campaign B has zero payers throughout, so the weight sum collapses.
 
 `SHARE_SPEC: RatioSpec` — `col_id="share"`, `num=("cost",)`, `den=()`, `den_const=1020.0`, `scale=100.0`. `RatioSpec` gains an optional `den_const` field and `to_context()` emits it when set; `evaluate` adds it to the denominator. Values: A/US 88.235294…, A/DE 9.803922…, A 98.039216…, B/US 0.980392…, B/DE 0.980392…, B 1.960784…, **grand total exactly 100.0** — `Σcost = 1020`, which is the anchor that proves the constant is not being summed across leaves.
 
 **Blind-spot declarations.** Extend `DEGENERATE_NODES` and `PIVOT_BLIND_CELLS` and keep `test/unit/test_ratio_fixture.py`'s two-directional measurement green — it asserts both that the declared nodes really are blind *and* that nothing else is. Worked out from the table above, the new columns add only:
 
-- `DEGENERATE_NODES`: `("wavg_blank", "B")` and `("wavg_zero", "B")` — campaign B collapses to `fill_null` in both countries.
+- `DEGENERATE_NODES`: `("wavg_blank", "B")` and `("wavg_zero", "B")` — campaign B collapses to `fill_null` in both countries. Also `("wavg", "B")`: `avg(B/US = 3.0, B/DE = 5.0) = 4.0`, which is exactly campaign B's own total `800/200`. A coincidence of these particular numbers, not a property of the aggregator — declare it rather than hide it, and note that campaign A still discriminates (`2.08` against an average of `2.4`), so the not-the-average assertion belongs there.
 - `PIVOT_BLIND_CELLS`: `("wavg_blank", "B", "US")`, `("wavg_blank", "B", "DE")`, `("wavg_zero", "B", "US")`, `("wavg_zero", "B", "DE")`.
-- `growth`, `growth_neg`, `wavg` and `share` add **nothing** — every cell differs from its row total and every group differs from the average of its children. Assert that, rather than leaving it implied.
+- `growth`, `growth_neg` and `share` add **nothing** — every cell differs from its row total and every group differs from the average of its children. Assert that, rather than leaving it implied.
+- One further exemption is forced rather than chosen: `wavg_blank`'s **grand total** equals the average of its campaign values, because campaign B is `None` at every level and the existing `evaluate_avg_of` drops `None` children, so `avg(A, None)` collapses to A. Declare it as a named single exemption; do not weaken the "no exemptions at the grand total" rule that the pre-existing columns satisfy.
 
 **Steps:**
 
@@ -390,8 +393,8 @@ Note in the code comment: because weights only accumulate when `w > 0`, `wden` i
 - [ ] **Step 2:** `stWeightedAvg.ts` plus its `registerAggFunc` call in `parsers.ts`.
 - [ ] **Step 3: e2e** — add `wavg`, `wavg_blank` and `wavg_zero` to grids 0, 1 and 3 in `test/grid_agg_builtin.py`. Tests deriving from the fixture, plus these explicit ones:
   - **the NaN skip**: A/DE reads `2.0000`. If the null leaf were counted with weight 10, it would read `1.8000`. Say so in the test's docstring.
-  - **the zero-weight skip**: B/US reads `3.0000`. Counting the zero-weight leaf as a plain average would give `4.0000`.
-  - **not the average of children**: campaign A reads `2.0800`, not `2.4000` (the mean of `2.8` and `2.0`).
+  - **the weight gate**: B/US reads `3.0000`. Row 4 carries `wa_weight = −100` against row 5's `+100`, so an implementation missing the `weight > 0` gate sums the weights to zero and blanks the cell. Campaign B reads `4.0000` and the grand total `3.3600` for the same reason — without the gate they would read `3.0000` and `2.5400`. Say so in the docstring.
+  - **not the average of children**: campaign A reads `2.0800`, not `2.4000` (the mean of `2.8` and `2.0`). Use campaign A, not B — `("wavg", "B")` is a declared degenerate node where the average coincides with the total.
   - `fill_null` both ways: `wavg_blank` at campaign B is an empty cell; `wavg_zero` at campaign B is `0.0000`.
   - the grand total reads `3.3600`.
   - sorting with `wavg_blank`'s empty cells last in both directions.
