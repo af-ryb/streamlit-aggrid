@@ -237,10 +237,11 @@ def pivot_grid_options() -> dict:
 #: `test/unit/test_ratio_validation.py::test_agg_func_without_a_context_is_rejected`)
 #: — deliberately, per its own docstring: "every rule here exists to turn a
 #: silent wrong number into a loud error." That guard runs unconditionally on
-#: `columnDefs`, so it is not possible to get such a colDef past `AgGrid()`
-#: at all: every column that ever reaches `stRatioAggFunc` with
-#: `aggFunc === "stRatio"` in the *original* `columnDefs` is therefore
-#: guaranteed to carry a structurally valid declaration too, which means
+#: `columnDefs`, so such a colDef never reaches the browser this way through
+#: a colDef that Python validated: every column that ever reaches
+#: `stRatioAggFunc` with `aggFunc === "stRatio"` in the *original*
+#: `columnDefs` is therefore guaranteed to carry a structurally valid
+#: declaration too, which means
 #: `readStRatioConfig` can only return `null` for a column whose `aggFunc`
 #: became `"stRatio"` **after** Python validated it — i.e. only through
 #: runtime acquisition. That is also exactly the real bug this task fixes:

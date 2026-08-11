@@ -173,16 +173,21 @@ rather than re-walking `allLeafChildren`, which would be both quadratic in
 tree depth and blind to the current pivot key.
 
 ```python
-from st_aggrid import AGG_FUNC_NAME, RATIO_OF_RATIOS_AGG_FUNC, WEIGHTED_AVG_AGG_FUNC
+from st_aggrid import RATIO_AGG_FUNC, RATIO_OF_RATIOS_AGG_FUNC, WEIGHTED_AVG_AGG_FUNC
 # "stRatio", "stRatioOfRatios", "stWeightedAvg" — re-exported so a caller
 # never has to hard-code the literal. `validate_ratio_columns` is
-# re-exported too (see Validation, below). Both are also importable from
+# re-exported too (see Validation, below). All are also importable from
 # `st_aggrid.ratio` directly — the package root is a convenience for
 # anything that already imports `st_aggrid`. A module that must stay
 # import-time `streamlit`-free (e.g. one run during a data-source discovery
 # walk) cannot import `st_aggrid` at all and has to hard-code the literal
 # regardless — the re-export helps test code and grid-builder modules,
 # which import `st_aggrid` anyway.
+#
+# `stRatio`'s constant is also exported under its original, unprefixed name
+# (`AGG_FUNC_NAME`) for anything already using it — `RATIO_AGG_FUNC` is the
+# same string, preferred for new code because it reads the same way its two
+# siblings above already do.
 ```
 
 Every aggregator here is a **default**, not a reservation: an
@@ -241,6 +246,14 @@ that should scale with the group; the two combine (`denominator = den_const +
 
 The zero rule: when `den_const + Σden` is exactly `0`, the value is
 `fill_null` (default `None`, an empty cell) instead of a division by zero.
+**This is a deliberate behaviour change from the retired hand-written
+JavaScript**, which gated on `> 0` instead of `!= 0`: a group whose
+denominator is negative — a net-negative `den` field, or a negative
+`den_const` — now renders a real, negative ratio, where the old JavaScript
+would have rendered an empty cell instead (only an exact `0` falls back to
+`fill_null` here). The same divergence is documented again, with a concrete
+ARPU example, under `stRatioOfRatios` below, where it applies three times
+over (both legs and the outer division).
 
 **A column that ends up with `aggFunc: "stRatio"` and no
 `context["stRatio"]` degrades to a plain `Σvalues` (a sum), not a blank
@@ -248,10 +261,11 @@ column.** In practice this only happens through a runtime mutation —
 the columns tool panel's aggregation picker, `initial_state`, or
 `columns_state` — because `validate_ratio_columns` rejects `aggFunc:
 "stRatio"` with no matching `context` anywhere in the *original*
-`columnDefs`, so a column can never reach the browser this way from Python
-alone. One consequence worth knowing: the null-ordering comparator described
-below is attached by walking `columnDefs` at parse time, so a column that
-only acquires `stRatio` at runtime never gets it. It sorts under AG-Grid's
+`columnDefs`, so a column never reaches the browser this way through a
+colDef that Python validated. One consequence worth knowing: the
+null-ordering comparator described below is attached by walking
+`columnDefs` at parse time, so a column that only acquires `stRatio` at
+runtime never gets it. It sorts under AG-Grid's
 own default comparator instead, which puts a null-valued cell **first**
 ascending — the opposite of every column declared with `stRatio` from the
 start. This is architecturally inherent — there is no `columnDefs` snapshot
@@ -265,6 +279,15 @@ when `AgGrid` is called with a DataFrame: a grid fed through
 `grid_options["rowData"]` (`data=None`) has no column set to check field names
 against, so a typo'd `num`/`den` entry is not caught — it reaches the browser
 and contributes `0`, exactly the silent failure this check exists to prevent.
+
+That is about a field name that resolves to nothing at all. A resolved
+field's *values* get their own coercion: a `null` or `NaN` in a particular
+row does not exclude that row from the sum — it is coerced to `0` and summed
+like any other value (`asNumber`, `foldSums.ts`). This is the right
+semantic for a sum (an unknown contribution counts as none, not as missing
+data), and it applies to every `num`/`den` field in both `stRatio` and
+`stRatioOfRatios` — contrast `stWeightedAvg` below, which is not
+sum-based and skips a leaf entirely instead (see its own section for why).
 
 A column declared with `stRatio` from the start sorts numerically, with empty
 cells last in both directions. A `comparator` you set yourself is left alone.
@@ -341,6 +364,16 @@ ones: a leaf can't count its weight while dropping its value, or the
 reverse — and the `null` case is called out on its own because it does not
 fail a plain finiteness check (more on that below). The zero rule applies to
 what survives that gate: `Σweightᵢ != 0`, else `fill_null`.
+
+This skip is `stWeightedAvg`-specific, not shared by the other two: `stRatio`
+and `stRatioOfRatios` never skip a leaf for a missing component — a `null`/
+`NaN` `num`/`den` value there is coerced to `0` and stays in the sum (see
+`stRatio`, above). The difference follows from the shape: a sum tolerates a
+missing addend as `0`, but `value` here is not summed, it is one term in a
+per-leaf product (`value · weight`) — treating a missing `value` as `0`
+would silently zero out that leaf's contribution to the numerator while its
+weight still counted in the denominator, dragging the average toward zero
+instead of just excluding the leaf.
 
 Worth knowing if you write your own `valueGetter` over the same data rather
 than relying on `value`/`weight` here: **a `NaN` in a DataFrame arrives in

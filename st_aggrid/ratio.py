@@ -84,7 +84,7 @@ def _iter_column_defs(column_defs: Any) -> Iterator[dict]:
 
 def _label(column: dict) -> str:
     name = column.get("colId") or column.get("field")
-    return f"column {name!r}" if name else "unnamed ratio column"
+    return f"column {name!r}" if name else "unnamed aggregation column"
 
 
 def _field_names(value: Any, key: str, label: str, context_path: str) -> list[str]:
@@ -166,6 +166,26 @@ def _validate_leg(
     return num, den
 
 
+#: What an unresolvable field name actually does to each aggregator's
+#: output, in its own words — `stRatio`/`stRatioOfRatios` sum the named
+#: fields, so a missing one contributes 0 and skews the result; `stWeightedAvg`
+#: instead treats a missing `value`/`weight` as `data[field] is undefined`,
+#: which fails its `!= null` leaf gate and skips *every* leaf, leaving the
+#: surviving weight at 0 and the column blank rather than skewed (see
+#: `stWeightedAvg.ts`). The two failure modes are different enough that a
+#: single shared sentence claiming "skews the ratio" would be false for the
+#: second one.
+_UNKNOWN_FIELD_CONSEQUENCE: dict[str, str] = {
+    AGG_FUNC_NAME: "sums these from the row data; a name that is not there "
+    "contributes 0 and silently skews the ratio.",
+    RATIO_OF_RATIOS_AGG_FUNC: "sums these from the row data; a name that is "
+    "not there contributes 0 and silently skews the ratio.",
+    WEIGHTED_AVG_AGG_FUNC: "reads these from the row data; a name that is "
+    "not there means every leaf fails the value/weight gate and is skipped, "
+    "silently blanking the column instead of skewing it.",
+}
+
+
 def _check_known_fields(
     fields: Sequence[str], label: str, agg_func_name: str, known: Optional[set]
 ) -> None:
@@ -176,10 +196,10 @@ def _check_known_fields(
         return
     unknown = [name for name in fields if name not in known]
     if unknown:
+        consequence = _UNKNOWN_FIELD_CONSEQUENCE[agg_func_name]
         raise ValueError(
             f"{label}: unknown field(s) {unknown} in the ratio declaration. "
-            f"{agg_func_name} sums these from the row data; a name that is "
-            f"not there contributes 0 and silently skews the ratio. "
+            f"{agg_func_name} {consequence} "
             f"Available: {sorted(known)}."
         )
 

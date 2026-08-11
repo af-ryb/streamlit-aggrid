@@ -4,14 +4,8 @@ import {
   foldChildren,
   makeAggValue,
   registerAggFunc,
-  stAggComparator,
   StAggValue,
 } from "./foldSums"
-
-/** Back-compat: existing imports of `stRatioComparator` / `StRatioValue`
- * keep resolving to the shared implementation. */
-export { stAggComparator as stRatioComparator }
-export type StRatioValue = StAggValue
 
 /** Name callers reference from `colDef.aggFunc`, and the key their parameters
  * are nested under inside `colDef.context` so they cannot collide with other

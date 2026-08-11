@@ -1,9 +1,12 @@
-"""Validation rules for the built-in `stRatio` declaration.
+"""Validation rules for the built-in `stRatio`, `stRatioOfRatios` and
+`stWeightedAvg` declarations.
 
-The dangerous failure is a field name that resolves to nothing: the aggregator
-sums `rowNode.data[field]`, a missing key contributes 0, and the ratio comes
-out wrong with nothing raised anywhere. Every rule here exists to turn a silent
-wrong number into a loud error.
+The dangerous failure is a field name that resolves to nothing: every
+aggregator reads `rowNode.data[field]` per leaf, and a name that is not there
+behaves as though that value were absent — wrong with nothing raised
+anywhere, whether that means a skewed ratio (`stRatio`/`stRatioOfRatios`) or
+a blanked column (`stWeightedAvg`; see `ratio.py`'s module docstring). Every
+rule here exists to turn a silent wrong number into a loud error.
 """
 
 import pytest
@@ -111,6 +114,18 @@ def test_den_const_alone_may_stand_in_for_an_empty_den():
     validate_ratio_columns(
         grid_options({"num": ["cost"], "den": [], "den_const": 1020}), COLUMNS
     )
+
+
+def test_den_const_does_not_excuse_an_absent_den_key():
+    """`den` must be present as an explicit (possibly empty) list even when
+    `den_const` alone is meant to be the whole denominator — README's `den`
+    footnote says an *omitted* `den` key raises even with `den_const` set,
+    unlike `test_den_const_alone_may_stand_in_for_an_empty_den` above, which
+    covers `"den": []`, not a missing key."""
+    with pytest.raises(ValueError, match="den"):
+        validate_ratio_columns(
+            grid_options({"num": ["cost"], "den_const": 1020}), COLUMNS
+        )
 
 
 def test_den_const_may_be_combined_with_a_summed_den():
@@ -476,7 +491,7 @@ def test_dispatch_checks_every_registered_context_key_on_one_column():
     """One column carrying both `context["stRatio"]` (invalid) and
     `context["stRatioOfRatios"]` (valid) — a nonsensical declaration nobody
     would write deliberately, but it proves `validate_ratio_columns`'s
-    per-column loop checks every entry in `_VALIDATORS` rather than
+    per-column loop checks every entry in `_AGGREGATORS` rather than
     returning after the first key it finds."""
     options = {
         "columnDefs": [

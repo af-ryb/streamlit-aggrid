@@ -676,20 +676,21 @@ def test_wavg_pivot_grand_total_row_matches_the_fixture(page: Page):
 #
 # The brief's original framing called for one column declaring
 # `aggFunc: "stRatio"` directly in `columnDefs` with no `context` — the
-# "parse-time" path. That construction turns out to be unreachable through
-# the public `AgGrid()` API: `validate_ratio_columns` (`ratio.py`) rejects
-# *any* colDef declaring `aggFunc: "stRatio"` with no `context["stRatio"]`,
+# "parse-time" path. That construction is unreachable through a colDef that
+# Python validated: `validate_ratio_columns` (`ratio.py`) rejects *any*
+# colDef declaring `aggFunc: "stRatio"` with no `context["stRatio"]`,
 # unconditionally, before the grid options ever leave Python — pinned by
 # `test/unit/test_ratio_validation.py::test_agg_func_without_a_context_is_rejected`.
 # That guard runs over every column in the *original* `columnDefs`
-# regardless of DataFrame/rowData mode, so it is a structural guarantee: any
-# column that reaches `stRatioAggFunc` with `aggFunc === "stRatio"` in the
-# colDef Python built is also guaranteed a structurally valid `context`,
-# meaning `readStRatioConfig` cannot return `null` for it. `null` is only
-# reachable for a column whose `aggFunc` became `"stRatio"` *after* Python
-# validated it — runtime acquisition, unconditionally. That is also exactly
-# the real-world bug this task exists to fix: the columns tool panel's
-# aggregation picker is itself a runtime mutation Python never sees.
+# regardless of DataFrame/rowData mode: any column that reaches
+# `stRatioAggFunc` with `aggFunc === "stRatio"` because it was named that
+# way in the colDef Python built is therefore also guaranteed a structurally
+# valid `context`, meaning `readStRatioConfig` cannot return `null` for it.
+# `null` is only reachable for a column whose `aggFunc` became `"stRatio"`
+# *after* Python validated it — runtime acquisition, unconditionally. That
+# is also exactly the real-world bug this task exists to fix: the columns
+# tool panel's aggregation picker is itself a runtime mutation Python never
+# sees.
 #
 # `cost` and `installs` each exercise a different, genuine runtime-mutation
 # route — both existing, documented `AgGrid()` features, both entirely
