@@ -82,15 +82,23 @@ import pandas as pd
 #: ``wa_value``/``wa_weight`` feed :data:`WEIGHTED_SPECS`'s weighted average.
 #: Row 2's ``wa_value`` is ``None`` (NaN once in a DataFrame) — a leaf the
 #: weighted average must skip rather than treat as zero. Row 4's
-#: ``wa_weight`` is ``0`` — a leaf it must also skip, rather than divide by a
-#: zero-weight observation.
+#: ``wa_weight`` is ``-100`` — a leaf the ``weight > 0`` gate must also skip.
+#: ``-100`` rather than ``0`` on purpose: under ``Σ(vᵢwᵢ)/Σwᵢ`` a ``w=0`` leaf
+#: is unobservable regardless of whether it is skipped (it contributes ``0``
+#: either way), so no test could ever catch a missing gate. Row 4's ``-100``
+#: exactly cancels row 5's ``+100`` when a broken implementation sums every
+#: weight regardless of sign, which drives B/US to a division-by-zero blank,
+#: B's campaign total to ``3.0`` instead of the correct ``4.0``, and the
+#: grand total to ``2.54`` instead of ``3.36`` — three levels that only
+#: discriminate a dropped gate because of this row. See
+#: ``test_wavg_gate_excludes_the_negative_weight_row``.
 RATIO_ROWS: list[dict[str, Any]] = [
     # campaign, country, cost, installs, impressions, seconds, sessions, rebate, revenue, payers, ads_d0, inst_d0, ads_d1, inst_d1, credits_d0, wa_value, wa_weight
     dict(campaign="A", country="US", cost=800, installs=2,  impressions=20000, seconds=1200, sessions=10, rebate=100, revenue=100, payers=5, ads_d0=80, inst_d0=2,  ads_d1=70, inst_d1=2,  credits_d0=80,  wa_value=10,   wa_weight=2),
     dict(campaign="A", country="US", cost=100, installs=8,  impressions=5000,  seconds=600,  sessions=20, rebate=10,  revenue=50,  payers=5, ads_d0=20, inst_d0=8,  ads_d1=20, inst_d1=8,  credits_d0=20,  wa_value=1,    wa_weight=8),
     dict(campaign="A", country="DE", cost=90,  installs=10, impressions=3000,  seconds=300,  sessions=5,  rebate=9,   revenue=30,  payers=2, ads_d0=9,  inst_d0=10, ads_d1=35, inst_d1=10, credits_d0=9,   wa_value=None, wa_weight=10),
     dict(campaign="A", country="DE", cost=10,  installs=80, impressions=2000,  seconds=300,  sessions=15, rebate=1,   revenue=10,  payers=3, ads_d0=1,  inst_d0=90, ads_d1=5,  inst_d1=90, credits_d0=1,   wa_value=2,    wa_weight=90),
-    dict(campaign="B", country="US", cost=9,   installs=10, impressions=1000,  seconds=60,   sessions=2,  rebate=1,   revenue=7,   payers=0, ads_d0=6,  inst_d0=10, ads_d1=9,  inst_d1=10, credits_d0=-6,  wa_value=5,    wa_weight=0),
+    dict(campaign="B", country="US", cost=9,   installs=10, impressions=1000,  seconds=60,   sessions=2,  rebate=1,   revenue=7,   payers=0, ads_d0=6,  inst_d0=10, ads_d1=9,  inst_d1=10, credits_d0=-6,  wa_value=5,    wa_weight=-100),
     dict(campaign="B", country="US", cost=1,   installs=90, impressions=500,   seconds=120,  sessions=3,  rebate=0,   revenue=3,   payers=0, ads_d0=4,  inst_d0=90, ads_d1=1,  inst_d1=90, credits_d0=-4,  wa_value=3,    wa_weight=100),
     dict(campaign="B", country="DE", cost=8,   installs=20, impressions=300,   seconds=30,   sessions=1,  rebate=1,   revenue=4,   payers=0, ads_d0=15, inst_d0=20, ads_d1=30, inst_d1=20, credits_d0=-15, wa_value=4,    wa_weight=50),
     dict(campaign="B", country="DE", cost=2,   installs=80, impressions=200,   seconds=60,   sessions=2,  rebate=1,   revenue=6,   payers=0, ads_d0=5,  inst_d0=80, ads_d1=10, inst_d1=80, credits_d0=-5,  wa_value=6,    wa_weight=50),

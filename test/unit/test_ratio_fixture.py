@@ -10,7 +10,7 @@ the two coincide cannot distinguish a correct aggregator from one that averages
 its children, and a suite built on it passes against a broken implementation.
 """
 
-from math import isclose
+from math import isclose, isfinite
 
 import pytest
 
@@ -22,6 +22,8 @@ from ratio_fixture import (
     RATIO_ROWS,
     RATIO_SPECS,
     RATIO_SPECS_BY_ID,
+    RatioOfRatiosSpec,
+    RatioSpec,
     SHARE_SPEC,
     WEIGHTED_SPECS,
     WEIGHTED_SPECS_BY_ID,
@@ -361,12 +363,59 @@ def test_share_context_emits_den_const_and_scale():
     assert "den_const" not in RATIO_SPECS_BY_ID["cpi"].to_context()
 
 
+def test_ratio_spec_context_emits_an_explicit_zero_den_const():
+    """`den_const=0.0` is falsy but not `None`; `to_context()`'s guard is
+    `is not None`, so an explicit zero must still be emitted — unlike
+    `den_const=None` (`RATIO_SPECS_BY_ID["cpi"]`, covered above), which is
+    the default and stays out of the payload entirely."""
+    spec = RatioSpec(col_id="x", header="X", num=("cost",), den=("installs",), den_const=0.0)
+    assert spec.to_context() == {
+        "num": ["cost"],
+        "den": ["installs"],
+        "den_const": 0.0,
+    }
+    assert "den_const" in spec.to_context()
+
+
 def test_ratio_of_ratios_context_emits_from_and_to_legs():
     assert GROWTH_SPECS_BY_ID["growth"].to_context() == {
         "from": {"num": ["ads_d0"], "den": ["inst_d0"]},
         "to": {"num": ["ads_d1"], "den": ["inst_d1"]},
     }
     assert "fill_null" not in GROWTH_SPECS_BY_ID["growth"].to_context()
+
+
+def test_ratio_of_ratios_context_emits_a_legs_non_default_fields():
+    """`GROWTH_SPECS`'s two real specs only exercise legs with plain
+    `num`/`den` — every optional key comes back empty, which would still
+    pass even if `_leg_context` silently dropped `multiplier`/`scale`/
+    `num_signs`/`den_const` instead of forwarding them. A leg carrying a
+    non-default field exercises those branches directly rather than only
+    through `_num_den_context`'s own (indirectly covered) tests."""
+    spec = RatioOfRatiosSpec(
+        col_id="x",
+        header="X",
+        from_leg={
+            "num": ("a", "b"),
+            "den": ("c",),
+            "num_signs": (1, -1),
+            "multiplier": 2.0,
+            "scale": 0.5,
+            "den_const": 10.0,
+        },
+        to_leg={"num": ("d",), "den": ()},
+    )
+    assert spec.to_context() == {
+        "from": {
+            "num": ["a", "b"],
+            "den": ["c"],
+            "num_signs": [1, -1],
+            "multiplier": 2.0,
+            "scale": 0.5,
+            "den_const": 10.0,
+        },
+        "to": {"num": ["d"], "den": []},
+    }
 
 
 def test_weighted_avg_context_emits_value_weight_and_non_default_fields():
@@ -488,18 +537,52 @@ def test_wavg_skips_the_nan_leaf_at_a_de():
     assert correct != pytest.approx(naive_treats_none_as_zero)
 
 
-def test_wavg_skips_the_zero_weight_leaf_at_b_us():
-    """B/US's two leaves are row 4 (`wa_weight=0`) and row 5 (`wa_value=3`,
-    `wa_weight=100`). Skipping row 4 leaves only row 5, so the correct value
-    is exactly row 5's own value, 3.0. A naive *unweighted* average of both
-    leaves' raw values (5 and 3) — the mistake of averaging instead of
-    weighting — would instead give 4.0."""
-    correct = expected_weighted_avg("wavg", campaign="B", country="US")
-    assert correct == pytest.approx(3.0)
+def test_wavg_is_weighted_not_averaged_at_a_us():
+    """A/US's two leaves are row 0 (`wa_value=10`, `wa_weight=2`) and row 1
+    (`wa_value=1`, `wa_weight=8`) — both legitimate, positive-weight
+    observations. The weighted value, 2.8, is nowhere near the naive
+    *unweighted* average of the two raw values, 5.5: an aggregator that
+    averaged the leaves' values instead of weighting them would be caught
+    here, distinctly from the gate coverage below."""
+    correct = expected_weighted_avg("wavg", campaign="A", country="US")
+    assert correct == pytest.approx(2.8)
 
-    naive_unweighted_average = (5 + 3) / 2
-    assert naive_unweighted_average == pytest.approx(4.0)
+    naive_unweighted_average = (10 + 1) / 2
+    assert naive_unweighted_average == pytest.approx(5.5)
     assert correct != pytest.approx(naive_unweighted_average)
+
+
+def test_wavg_gate_excludes_the_negative_weight_row():
+    """B/US's two leaves are row 4 (`wa_value=5`, `wa_weight=-100`) and row 5
+    (`wa_value=3`, `wa_weight=100`). Under `Σ(vᵢwᵢ)/Σwᵢ` a `wᵢ=0` leaf is
+    unobservable whether or not it is skipped — it contributes `0` either
+    way — so `wa_weight=-100` is what actually exercises the `weight > 0`
+    gate: drop the gate and row 4's `-100` exactly cancels row 5's `+100`,
+    zeroing B/US's denominator (a `ZeroDivisionError`/blank cell), pulling
+    campaign B's total down from 4.0 to 3.0, and the grand total down from
+    3.36 to 2.54. Three levels, all wrong in a different way, all because of
+    this one row — the gate is what makes them right."""
+    assert expected_weighted_avg("wavg", campaign="B", country="US") == pytest.approx(3.0)
+    assert expected_weighted_avg("wavg", campaign="B") == pytest.approx(4.0)
+    assert expected_weighted_avg("wavg") == pytest.approx(3.36)
+
+    def without_the_gate(rows):
+        """The bug: sum every weight regardless of sign, keeping only the
+        `value is finite` check. Mirrors `evaluate_weighted_avg` exactly
+        except for the dropped `weight > 0` condition."""
+        total_weighted = 0.0
+        total_weight = 0.0
+        for row in rows:
+            value, weight = row["wa_value"], row["wa_weight"]
+            if value is None or not isfinite(value):
+                continue
+            total_weighted += value * weight
+            total_weight += weight
+        return None if total_weight == 0 else total_weighted / total_weight
+
+    assert without_the_gate(rows_where(campaign="B", country="US")) is None
+    assert without_the_gate(rows_where(campaign="B")) == pytest.approx(3.0)
+    assert without_the_gate(rows_where()) == pytest.approx(2.54)
 
 
 # --------------------------------------------------------------------------
