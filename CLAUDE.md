@@ -103,19 +103,7 @@ Python build: **hatchling** (via `uv build`).
 - **Arrow data transfer**: DataFrames sent as Arrow via CCv2, parsed in `utils/parsers.ts`.
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
-- **Three built-in declarative aggregators** — `stRatio` (`Σnum/Σden`),
-  `stRatioOfRatios` (`to_ratio/from_ratio`, two `stRatio`-shaped legs), and
-  `stWeightedAvg` (`Σ(v·w)/Σw`) — declared as data in `colDef.context[name]`
-  and sharing one folding core, `aggFuncs/foldSums.ts` (fold
-  `aggregatedChildren`, the nulls-last comparator, `registerAggFunc`'s
-  merge/override). All three register from `parseGridOptions` so both the
-  mount and the live-update paths get them, and are correct under row
-  grouping and pivot. The value object implements AG-Grid 36's
-  `IAggFuncResult` (`toNumber`, not `valueOf` — `valueOf` leaves a column
-  containing a null unsorted). Python (`ratio.py`) validates every
-  declaration against the DataFrame, never against `columnDefs`. See the
-  README's "Declarative aggregation without JavaScript" section for the
-  arithmetic, the zero rule and each aggregator's fallback behaviour.
+- **Three built-in declarative aggregators**: `stRatio`, `stRatioOfRatios`, `stWeightedAvg` — declared in `colDef.context[name]`, sharing one folding core (`aggFuncs/foldSums.ts`). Python (`ratio.py`) validates every declaration against the DataFrame, never against `columnDefs`. See the README's "Declarative aggregation without JavaScript" section for the arithmetic, the zero rule and each aggregator's fallback behaviour.
 
 ## Packaging & asset delivery
 

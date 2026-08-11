@@ -214,15 +214,18 @@ they are for row grouping and pivot only.
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `num` | yes | — | Field names summed to form the numerator |
-| `den` | no\* | — | Field names summed to form the denominator |
+| `den` | yes\* | — | Field names summed to form the denominator |
 | `num_signs` | no | all `1` | Per-term signs, e.g. `[1, -1]` for `(a − b)/c` |
 | `multiplier` | no | `1.0` | Applied inside the numerator (CPM uses `1000`) |
 | `scale` | no | `1.0` | Applied to the final value (sec→min uses `1/60`) |
-| `den_const` | no\* | `0` | A window-wide constant added to the denominator once per node — not folded like a `den` field |
+| `den_const` | no | `0` | A window-wide constant added to the denominator once per node — not folded like a `den` field |
 | `fill_null` | no | `None` | Value when the denominator is exactly `0`; `None` renders an empty cell |
 
-\* `den` may be an empty list only when `den_const` is a number, which then
-is the whole denominator by itself. Both empty at once is still an error.
+\* `den` must always be present as a list — an **omitted** `den` key raises a
+`ValueError`, even when `den_const` is set. To use `den_const` alone as the
+whole denominator, pass an explicit empty list: `"den": []`. Both `den: []`
+and no `den_const` at the same time is still an error — there would be
+nothing left to divide by.
 
 The value is `((Σ signᵢ·numᵢ) · multiplier / (den_const + Σden)) · scale`,
 where each `num`/`den` field name resolves to the sum of that field over the
@@ -332,9 +335,11 @@ Unlike the other two, `value` is read straight off each leaf's own row —
 never summed — because there is no numerator/denominator field pair to fold
 here. The value is `(Σ(valueᵢ · weightᵢ) / Σweightᵢ) · scale` over leaves,
 and a leaf is skipped — contributing to *neither* sum — when its `value` is
-non-finite **or** its `weight` is not strictly positive (`weight > 0`). The
-two conditions are one gate, not two independent ones: a leaf can't count its
-weight while dropping its value, or the reverse. The zero rule applies to
+`null`, otherwise non-finite (`NaN`, `±Infinity`), **or** its `weight` is not
+strictly positive (`weight > 0`). Those are one gate, not two independent
+ones: a leaf can't count its weight while dropping its value, or the
+reverse — and the `null` case is called out on its own because it does not
+fail a plain finiteness check (more on that below). The zero rule applies to
 what survives that gate: `Σweightᵢ != 0`, else `fill_null`.
 
 Worth knowing if you write your own `valueGetter` over the same data rather
