@@ -32,6 +32,8 @@ from ratio_fixture import (
     RatioSpec,
     ROW_DIM,
     SHARE_SPEC,
+    WEIGHTED_SPECS,
+    WeightedAvgSpec,
     evaluate,
     evaluate_ratio_of_ratios,
     ratio_dataframe,
@@ -69,6 +71,13 @@ def ratio_of_ratios_column_def(spec: RatioOfRatiosSpec) -> dict:
     )
 
 
+def weighted_avg_column_def(spec: WeightedAvgSpec) -> dict:
+    """One `stWeightedAvg` colDef from a `WeightedAvgSpec`."""
+    return _agg_column_def(
+        spec.col_id, spec.header, "stWeightedAvg", {"stWeightedAvg": spec.to_context()}
+    )
+
+
 def component_column_defs() -> list[dict]:
     return [
         {
@@ -92,6 +101,14 @@ RATIO_COLUMNS: tuple[RatioSpec, ...] = (SHARE_SPEC,)
 #: in the test suite) and `growth_neg` (pins the `> 0` -> `!== 0` behaviour
 #: change — see `GROWTH_SPECS`'s docstring in `ratio_fixture.py`).
 GROWTH_COLUMNS: tuple[RatioOfRatiosSpec, ...] = GROWTH_SPECS
+
+#: `stWeightedAvg` columns declared on the row-group grid, the pivot grid,
+#: and the grouped-columns grid (Task 6): `wavg` (the skip-rule column —
+#: NaN-value and negative-weight leaves, and the not-the-average-of-children
+#: anchor at campaign A) plus `wavg_blank`/`wavg_zero`, the `fill_null`-both-
+#: ways pair sharing `payers` as their weight — see `WEIGHTED_SPECS`'s
+#: docstring in `ratio_fixture.py`.
+WEIGHTED_COLUMNS: tuple[WeightedAvgSpec, ...] = WEIGHTED_SPECS
 
 #: Exercises `den_const` combined with a non-empty `den` at runtime: `share`'s
 #: `den` is always empty, so nothing else proves both terms land in the same
@@ -183,6 +200,7 @@ def rowgroup_grid_options() -> dict:
             *(ratio_column_def(spec) for spec in RATIO_COLUMNS),
             ratio_column_def(MIXED_DEN_SPEC),
             *rowgroup_growth_column_defs(),
+            *(weighted_avg_column_def(spec) for spec in WEIGHTED_COLUMNS),
             *component_column_defs(),
         ],
     }
@@ -199,6 +217,7 @@ def pivot_grid_options() -> dict:
             {"colId": PIVOT_DIM, "field": PIVOT_DIM, "pivot": True, "pivotIndex": 0},
             *(ratio_column_def(spec) for spec in RATIO_COLUMNS),
             *(ratio_of_ratios_column_def(spec) for spec in GROWTH_COLUMNS),
+            *(weighted_avg_column_def(spec) for spec in WEIGHTED_COLUMNS),
             *component_column_defs(),
         ],
     }
@@ -339,15 +358,17 @@ AgGrid(
 # `registerAggFunc` installs the null-ordering comparator by walking
 # `columnDefs`, and the consumer this feature exists for wraps every metric
 # column in a column group — mirrors `grid_ratio_builtin.py`'s own
-# "grouped-cols" grid, but for `stRatioOfRatios` rather than `stRatio`, so
-# `eachColDef`'s descent into `children` is under test for this aggregator
-# too, not just inspected by inference from the sibling suite. `growth_blank`
-# rides along (nested here too, unlike on the pivot grid) because it is what
-# lets a test prove the comparator that reached this nested column is
-# specifically the nulls-last one — `growth`/`growth_neg` never produce a
-# null in this fixture, so sorting by either would pass under AG-Grid's own
-# default comparator too and prove nothing about the descent.
-st.subheader("Row grouping — stRatioOfRatios columns nested in a column group")
+# "grouped-cols" grid, but for `stRatioOfRatios`/`stWeightedAvg` rather than
+# `stRatio`, so `eachColDef`'s descent into `children` is under test for both
+# newer aggregators too, not just inspected by inference from the sibling
+# suite. `growth_blank` rides along (nested here too, unlike on the pivot
+# grid) because it is what lets a test prove the comparator that reached this
+# nested column is specifically the nulls-last one — `growth`/`growth_neg`
+# never produce a null in this fixture, so sorting by either would pass under
+# AG-Grid's own default comparator too and prove nothing about the descent.
+# `wavg_blank` plays the identical role for the `stWeightedAvg` group below:
+# `wavg`/`wavg_zero` never blank on this fixture either.
+st.subheader("Row grouping — stRatioOfRatios and stWeightedAvg columns nested in column groups")
 AgGrid(
     df,
     grid_options={
@@ -365,6 +386,13 @@ AgGrid(
                 "children": [
                     *(ratio_of_ratios_column_def(spec) for spec in GROWTH_COLUMNS),
                     ratio_of_ratios_column_def(GROWTH_BLANK_SPEC),
+                ],
+            },
+            {
+                "headerName": "Weighted Avg",
+                "groupId": "weightedAvgMetrics",
+                "children": [
+                    *(weighted_avg_column_def(spec) for spec in WEIGHTED_COLUMNS),
                 ],
             },
             *component_column_defs(),

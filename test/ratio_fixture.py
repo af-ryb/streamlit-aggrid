@@ -119,13 +119,14 @@ DEGENERATE_NODES: frozenset[tuple[str, str]] = frozenset(
         ("arpp_blank", "B"),  # zero payers throughout
         ("wavg_blank", "B"),  # zero payers throughout: both children are None
         ("wavg_zero", "B"),  # zero payers throughout: both children are 0.0
-        # B/US's zero-weight leaf (row 4) is skipped entirely, so B/US
-        # reduces to row 5's own value (3.0); B/DE is 5.0. Their plain
-        # average (4.0) happens to equal B's properly Σ(vᵢ·wᵢ)/Σwᵢ total
-        # (3·100 + 4·50 + 6·50)/(100+50+50) = 4.0 too — a genuine coincidence
-        # of these particular numbers, verified independently of the
-        # aggregator, not a defect. Declared for the same reason every other
-        # entry here is: measured, not left for a test to trip over silently.
+        # B/US's negative-weight leaf (row 4, wa_weight=-100) is skipped
+        # entirely, so B/US reduces to row 5's own value (3.0); B/DE is 5.0.
+        # Their plain average (4.0) happens to equal B's properly
+        # Σ(vᵢ·wᵢ)/Σwᵢ total (3·100 + 4·50 + 6·50)/(100+50+50) = 4.0 too — a
+        # genuine coincidence of these particular numbers, verified
+        # independently of the aggregator, not a defect. Declared for the
+        # same reason every other entry here is: measured, not left for a
+        # test to trip over silently.
         ("wavg", "B"),
     }
 )
@@ -453,8 +454,9 @@ GROWTH_SPECS_BY_ID: Mapping[str, RatioOfRatiosSpec] = {
 
 #: `wavg` proves the skip rules over `wa_value`/`wa_weight`: A/DE ignores row
 #: 2's NaN value (else its 2.0 would be 1.8, treating the missing value as 0)
-#: and B/US ignores row 4's zero weight, reducing to row 5's own value, 3.0
-#: (an unweighted average of both leaves' raw values would instead give 4.0).
+#: and B/US ignores row 4's negative weight, reducing to row 5's own value,
+#: 3.0 (an unweighted average of both leaves' raw values would instead give
+#: 4.0).
 #: `wavg` is degenerate at campaign B regardless (see `DEGENERATE_NODES`) —
 #: B/US's 3.0 and B/DE's 5.0 happen to average to exactly B's own total, 4.0.
 #:

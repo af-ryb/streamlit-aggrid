@@ -1,16 +1,19 @@
-"""Validation for the built-in ``stRatio`` and ``stRatioOfRatios``
-aggregators' declarations.
+"""Validation for the built-in ``stRatio``, ``stRatioOfRatios`` and
+``stWeightedAvg`` aggregators' declarations.
 
 The arithmetic lives in the frontend (``frontend/src/aggFuncs/stRatio.ts``,
-``frontend/src/aggFuncs/stRatioOfRatios.ts``). Python's only job is to reject
+``frontend/src/aggFuncs/stRatioOfRatios.ts``,
+``frontend/src/aggFuncs/stWeightedAvg.ts``). Python's only job is to reject
 a declaration that would otherwise produce a silently wrong number.
 
-An unresolvable field name is the dangerous case: both aggregators sum
-``rowNode.data[field]`` over a node's subtree, and a name that is not in the
-data contributes ``0``, which skews the ratio without raising anything. Names
-are checked against the **data**, not against ``columnDefs`` — a component only
-has to be present in the row data, and requiring a column of its own would
-reject the common case of an aggregation input that is never displayed.
+An unresolvable field name is the dangerous case: every aggregator reads
+``rowNode.data[field]`` per leaf, and a name that is not in the data behaves
+as though that value were absent — ``0`` for ``stRatio``/``stRatioOfRatios``'s
+summed components, a skipped leaf for ``stWeightedAvg``'s ``value``/``weight``
+— either way skewing the number without raising anything. Names are checked
+against the **data**, not against ``columnDefs`` — a component only has to be
+present in the row data, and requiring a column of its own would reject the
+common case of an aggregation input that is never displayed.
 
 That check needs a column set to check names against, so it only runs when
 ``AgGrid`` is called with a DataFrame. A grid fed entirely through
@@ -36,6 +39,12 @@ this codebase parses these strings; the existing tests match on a loose
 substring (e.g. ``match="num_signs"``) precisely so wording is free to
 improve without becoming a second thing every future change has to keep
 in sync.
+
+``stWeightedAvg`` has no ``num``/``den`` leg shape at all — its declaration is
+a flat ``{value, weight}`` pair (plus optional ``scale``/``fill_null``), so it
+does not go through ``_validate_leg``; ``_validate_weighted_avg_config`` below
+validates that shape directly. It does reuse ``_validate_fill_null`` and
+``_check_known_fields``, the two rules that are shape-independent.
 """
 
 from __future__ import annotations
@@ -48,6 +57,9 @@ CONTEXT_KEY = "stRatio"
 #: Aggregator name and context key are always the same string, as with
 #: `stRatio` above (see the plan's Global Constraints).
 RATIO_OF_RATIOS_AGG_FUNC = RATIO_OF_RATIOS_CONTEXT_KEY = "stRatioOfRatios"
+
+#: Same convention again, for the third and last aggregator this plan adds.
+WEIGHTED_AVG_AGG_FUNC = WEIGHTED_AVG_CONTEXT_KEY = "stWeightedAvg"
 
 _NUMERIC = (int, float)
 
@@ -224,6 +236,47 @@ def _validate_ratio_of_ratios_config(
     )
 
 
+def _validate_weighted_avg_config(
+    config: Any, column: dict, known: Optional[set]
+) -> None:
+    """``context["stWeightedAvg"]`` is ``{value, weight}`` plus optional
+    ``scale``/``fill_null`` — a flat pair, not a ``num``/``den`` leg, so this
+    does not go through ``_validate_leg``. ``value`` is a precomputed per-row
+    ratio and ``weight`` its install (or whatever) weight; the aggregator
+    folds ``Σ(vᵢ·wᵢ)/Σwᵢ`` over leaves, skipping any leaf whose value is
+    non-finite or whose weight is not strictly positive.
+    """
+    label = _label(column)
+    context_path = f"context['{WEIGHTED_AVG_CONTEXT_KEY}']"
+
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"{label}: {context_path} must be a dict, got {type(config).__name__}."
+        )
+
+    fields: list[str] = []
+    for key in ("value", "weight"):
+        name = config.get(key)
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"{label}: {context_path}['{key}'] must be a non-empty string, "
+                f"got {name!r}."
+            )
+        fields.append(name)
+
+    if "scale" in config and config["scale"] is not None and not _is_number(config["scale"]):
+        raise ValueError(
+            f"{label}: {context_path}['scale'] must be a number, got {config['scale']!r}."
+        )
+
+    _validate_fill_null(config, label, context_path)
+    # `value` and `weight` may legitimately name the same field (an odd but
+    # not meaningless declaration); dedupe so such a name is reported once.
+    _check_known_fields(
+        list(dict.fromkeys(fields)), label, WEIGHTED_AVG_AGG_FUNC, known
+    )
+
+
 #: Dispatch table: context key -> (validator, "no context" declaration hint).
 #: Since aggregator name and context key are always the same string (Global
 #: Constraints), this table's keys double as the set of `aggFunc` names
@@ -235,6 +288,7 @@ def _validate_ratio_of_ratios_config(
 _AGGREGATORS: dict[str, tuple[Callable[[Any, dict, Optional[set]], None], str]] = {
     AGG_FUNC_NAME: (_validate_stratio_config, "'num' and 'den'"),
     RATIO_OF_RATIOS_AGG_FUNC: (_validate_ratio_of_ratios_config, "'from' and 'to'"),
+    WEIGHTED_AVG_AGG_FUNC: (_validate_weighted_avg_config, "'value' and 'weight'"),
 }
 
 
@@ -245,10 +299,11 @@ def validate_ratio_columns(
     """Raise ``ValueError`` for a malformed or unresolvable ratio declaration.
 
     The single entry point and the single colDef walk for every built-in
-    ratio aggregator's declaration (``stRatio``, ``stRatioOfRatios``). For
-    each column, every context key in `_AGGREGATORS` is checked: present ->
-    validated by its dispatched function; absent but named by `aggFunc` ->
-    rejected, mirroring the sibling aggregator's own rule.
+    ratio aggregator's declaration (``stRatio``, ``stRatioOfRatios``,
+    ``stWeightedAvg``). For each column, every context key in `_AGGREGATORS`
+    is checked: present -> validated by its dispatched function; absent but
+    named by `aggFunc` -> rejected, mirroring the sibling aggregator's own
+    rule.
 
     The structural rules ('num'/'den' shape, 'num_signs' length, numeric
     options) always run. The field-existence check — the one that catches a

@@ -493,3 +493,167 @@ def test_dispatch_checks_every_registered_context_key_on_one_column():
     with pytest.raises(ValueError, match="spend"):
         validate_ratio_columns(options, ROR_COLUMNS)
 
+
+# --------------------------------------------------------------------------
+# stWeightedAvg
+# --------------------------------------------------------------------------
+
+WAVG_COLUMNS = ["campaign", "wa_value", "wa_weight"]
+
+VALID_WAVG = {"value": "wa_value", "weight": "wa_weight"}
+
+
+def wavg_grid_options(context, **col_overrides):
+    """One `stWeightedAvg` column carrying `context`, plus a plain dimension
+    column — the weighted-average counterpart of `grid_options`/
+    `ror_grid_options` above."""
+    column = {"colId": "wavg", "field": "wavg", "aggFunc": "stWeightedAvg"}
+    column.update(col_overrides)
+    if context is not None:
+        column["context"] = {"stWeightedAvg": context}
+    return {"columnDefs": [{"field": "campaign", "rowGroup": True}, column]}
+
+
+def test_a_valid_weighted_avg_declaration_passes():
+    validate_ratio_columns(wavg_grid_options(VALID_WAVG), WAVG_COLUMNS)
+
+
+def test_weighted_avg_every_optional_key_is_accepted():
+    validate_ratio_columns(
+        wavg_grid_options({**VALID_WAVG, "scale": 100.0, "fill_null": 0.0}),
+        WAVG_COLUMNS,
+    )
+
+
+def test_weighted_avg_fill_null_may_be_none():
+    validate_ratio_columns(
+        wavg_grid_options({**VALID_WAVG, "fill_null": None}), WAVG_COLUMNS
+    )
+
+
+def test_weighted_avg_missing_value_is_rejected():
+    with pytest.raises(ValueError, match="value"):
+        validate_ratio_columns(
+            wavg_grid_options({"weight": "wa_weight"}), WAVG_COLUMNS
+        )
+
+
+def test_weighted_avg_missing_weight_is_rejected():
+    with pytest.raises(ValueError, match="weight"):
+        validate_ratio_columns(
+            wavg_grid_options({"value": "wa_value"}), WAVG_COLUMNS
+        )
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {"value": "", "weight": "wa_weight"},
+        {"value": 1, "weight": "wa_weight"},
+        {"value": "wa_value", "weight": ""},
+        {"value": "wa_value", "weight": 1},
+    ],
+    ids=["empty-value", "non-string-value", "empty-weight", "non-string-weight"],
+)
+def test_weighted_avg_value_and_weight_must_be_non_empty_strings(context):
+    with pytest.raises(ValueError):
+        validate_ratio_columns(wavg_grid_options(context), WAVG_COLUMNS)
+
+
+def test_weighted_avg_config_that_is_not_a_dict_is_rejected():
+    with pytest.raises(ValueError, match="stWeightedAvg"):
+        validate_ratio_columns(
+            wavg_grid_options(["wa_value", "wa_weight"]), WAVG_COLUMNS
+        )
+
+
+def test_weighted_avg_scale_must_be_numeric():
+    with pytest.raises(ValueError, match="scale"):
+        validate_ratio_columns(
+            wavg_grid_options({**VALID_WAVG, "scale": "100"}), WAVG_COLUMNS
+        )
+
+
+def test_weighted_avg_fill_null_must_be_numeric_or_none():
+    with pytest.raises(ValueError, match="fill_null"):
+        validate_ratio_columns(
+            wavg_grid_options({**VALID_WAVG, "fill_null": "blank"}), WAVG_COLUMNS
+        )
+
+
+def test_unknown_value_field_is_rejected():
+    with pytest.raises(ValueError, match="arpu"):
+        validate_ratio_columns(
+            wavg_grid_options({"value": "arpu", "weight": "wa_weight"}), WAVG_COLUMNS
+        )
+
+
+def test_unknown_weight_field_is_rejected():
+    with pytest.raises(ValueError, match="installs"):
+        validate_ratio_columns(
+            wavg_grid_options({"value": "wa_value", "weight": "installs"}), WAVG_COLUMNS
+        )
+
+
+def test_weighted_avg_field_existence_is_skipped_when_there_is_no_data_to_check_against():
+    validate_ratio_columns(
+        wavg_grid_options({"value": "arpu", "weight": "wa_weight"}), None
+    )
+
+
+def test_agg_func_weighted_avg_without_a_context_is_rejected():
+    with pytest.raises(ValueError, match="context"):
+        validate_ratio_columns(wavg_grid_options(None), WAVG_COLUMNS)
+
+
+def test_a_weighted_avg_context_on_a_column_group_child_is_validated():
+    """Same descent-into-`children` requirement as `stRatio`'s and
+    `stRatioOfRatios`'s own grouped-columns tests."""
+    options = {
+        "columnDefs": [
+            {
+                "headerName": "Weighted Avg",
+                "children": [
+                    {
+                        "colId": "wavg",
+                        "aggFunc": "stWeightedAvg",
+                        "context": {
+                            "stWeightedAvg": {"value": "arpu", "weight": "wa_weight"}
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="arpu"):
+        validate_ratio_columns(options, WAVG_COLUMNS)
+
+
+def test_all_three_aggregators_are_validated_independently():
+    """A grid with one column of each kind: an invalid `stWeightedAvg` column
+    must not be masked by valid `stRatio`/`stRatioOfRatios` columns sitting
+    next to it in the same `columnDefs` walk, and vice versa."""
+    columns = ["campaign", "cost", "installs", "ads_d0", "inst_d0", "ads_d1", "inst_d1", "wa_weight"]
+    options = {
+        "columnDefs": [
+            {"field": "campaign", "rowGroup": True},
+            {
+                "colId": "cpi",
+                "aggFunc": "stRatio",
+                "context": {"stRatio": {"num": ["cost"], "den": ["installs"]}},
+            },
+            {
+                "colId": "growth",
+                "aggFunc": "stRatioOfRatios",
+                "context": {"stRatioOfRatios": VALID_ROR},
+            },
+            {
+                "colId": "wavg",
+                "aggFunc": "stWeightedAvg",
+                "context": {"stWeightedAvg": {"value": "arpu", "weight": "wa_weight"}},
+            },
+        ]
+    }
+    with pytest.raises(ValueError, match="arpu"):
+        validate_ratio_columns(options, columns)
+

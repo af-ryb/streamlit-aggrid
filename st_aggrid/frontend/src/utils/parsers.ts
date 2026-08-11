@@ -7,6 +7,7 @@ import { ThemeParser } from "../ThemeParser"
 import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 import { registerStRatio } from "../aggFuncs/stRatio"
 import { registerStRatioOfRatios } from "../aggFuncs/stRatioOfRatios"
+import { registerStWeightedAvg } from "../aggFuncs/stWeightedAvg"
 
 export function parseGridOptions(
   data: AgGridData,
@@ -38,6 +39,7 @@ export function parseGridOptions(
   // unregistered.
   registerStRatio(gridOptions, data.debug === true)
   registerStRatioOfRatios(gridOptions, data.debug === true)
+  registerStWeightedAvg(gridOptions, data.debug === true)
 
   // Process theming — prefer the live theme read from host CSS variables
   // over any server-side value, which can't see user-level theme toggles.

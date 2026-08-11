@@ -1,20 +1,21 @@
-"""`stRatio`'s `den_const`/fallback-to-`sum` behaviour and the
-`stRatioOfRatios` aggregator, exercised through the built-in aggregators.
+"""`stRatio`'s `den_const`/fallback-to-`sum` behaviour, the
+`stRatioOfRatios` aggregator, and the `stWeightedAvg` aggregator, exercised
+through the built-in aggregators.
 
 `grid_agg_builtin.py` is the new home for every aggregator this coverage plan
-adds; this suite covers what Task 3, Task 4 and Task 5 add to it. Task 3's
-`share` column has a denominator that is `SHARE_SPEC.den_const` (a window-wide
-constant) rather than a summed field, and `mixed_den` proves that constant
-*combines* with a real summed `den` field rather than one silently replacing
-the other. Task 4 covers grid index 2 — a grid with no ratio columns at all,
-proving `stRatio` degrades to a plain `sum` instead of blanking a column that
-carries `aggFunc: "stRatio"` with no `context["stRatio"]` declaration,
-acquired at runtime through two different mechanisms (`cost` via
-`columns_state` merge, `installs` via `initial_state` — see the "Fallback"
-section below for why both are runtime-acquired rather than one being
-parse-time-declared, as originally scoped). `stRatio`'s base semantics
-already have their regression baseline in `test_grid_ratio_builtin.py`,
-which stays frozen and green.
+adds; this suite covers what Task 3, Task 4, Task 5 and Task 6 add to it.
+Task 3's `share` column has a denominator that is `SHARE_SPEC.den_const` (a
+window-wide constant) rather than a summed field, and `mixed_den` proves that
+constant *combines* with a real summed `den` field rather than one silently
+replacing the other. Task 4 covers grid index 2 — a grid with no ratio
+columns at all, proving `stRatio` degrades to a plain `sum` instead of
+blanking a column that carries `aggFunc: "stRatio"` with no
+`context["stRatio"]` declaration, acquired at runtime through two different
+mechanisms (`cost` via `columns_state` merge, `installs` via `initial_state`
+— see the "Fallback" section below for why both are runtime-acquired rather
+than one being parse-time-declared, as originally scoped). `stRatio`'s base
+semantics already have their regression baseline in
+`test_grid_ratio_builtin.py`, which stays frozen and green.
 
 Task 5 adds `growth`/`growth_neg` (`stRatioOfRatios`, `GROWTH_SPECS`) to grids
 0 and 1, and a fourth grid (index 3, `agg_builtin_grouped_cols`) nesting them
@@ -23,6 +24,15 @@ in a column group. The single test that carries the feature is
 assertion in this module that cannot pass against an aggregator reading
 `rowNode.allLeafChildren` under pivot mode — the exact defect the retired
 marketing JavaScript has and this aggregator exists to remove.
+
+Task 6 adds `wavg`/`wavg_blank`/`wavg_zero` (`stWeightedAvg`, `WEIGHTED_SPECS`)
+to grids 0, 1 and 3. `wavg` carries two independent skip rules — a NaN value
+(`test_wavg_nan_value_is_skipped_not_treated_as_zero`) and a non-positive
+weight (`test_wavg_gate_excludes_the_negative_weight_row`) — plus the
+not-the-average-of-children anchor at campaign A
+(`test_wavg_group_average_is_not_the_average_of_its_children`); `wavg_blank`/
+`wavg_zero` share the `fill_null`-both-ways pair `arpp`/`arpp_blank` already
+established for `stRatio`.
 
 Row indices for the row-group grid (index 0) and the fallback grid (index 2)
 mirror `test_grid_ratio_builtin.py` exactly: same fixture, same two-level
@@ -45,10 +55,14 @@ from ratio_fixture import (
     RatioOfRatiosSpec,
     RatioSpec,
     SHARE_SPEC,
+    WEIGHTED_SPECS,
     evaluate,
+    evaluate_avg_of,
     evaluate_ratio_of_ratios,
     evaluate_ratio_of_ratios_legacy,
+    evaluate_weighted_avg,
     expected_ratio_of_ratios,
+    expected_weighted_avg,
     rows_where,
 )
 
@@ -62,6 +76,7 @@ GROUPED_COLS_GRID = 3
 
 SHARE_COL = SHARE_SPEC.col_id
 GROWTH_COL_IDS = tuple(spec.col_id for spec in GROWTH_SPECS)
+WAVG_COL_IDS = tuple(spec.col_id for spec in WEIGHTED_SPECS)
 
 # Body row indices of the fully expanded row-group grid — identical to
 # `test_grid_ratio_builtin.py`'s RAW_GRID, same fixture and grouping:
@@ -289,6 +304,164 @@ def test_growth_neg_pins_the_gt_zero_to_ne_zero_delta(page: Page):
 
 
 # --------------------------------------------------------------------------
+# stWeightedAvg (Task 6): wavg / wavg_blank / wavg_zero, row grouping
+# --------------------------------------------------------------------------
+
+
+def test_wavg_group_rows_match_the_fixture_at_both_levels(page: Page):
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    for row_index, dims in GROUP_ROW_DIMS.items():
+        cells = rows[f"body:{row_index}"]
+        for col_id in WAVG_COL_IDS:
+            assert_number(
+                cells[col_id],
+                expected_weighted_avg(col_id, **dims),
+                f"row {row_index} {dims} {col_id}",
+            )
+
+
+def test_wavg_leaf_rows_show_the_per_row_value(page: Page):
+    """Not aggregator coverage: a leaf row is a raw data row, so its cell is
+    `ratio_dataframe()`'s precomputed value, never `stWeightedAvgAggFunc`'s
+    output — `stWeightedAvg` only runs on group rows. This checks that the
+    precomputed column and the rendered cell agree with `evaluate_weighted_avg`
+    computed independently here, the same leaf/group agreement check
+    `test_grid_ratio_builtin.py`'s own leaf-row test makes for `stRatio`."""
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    for row_index, source_index in LEAF_ROW_SOURCE.items():
+        source_row = RATIO_ROWS[source_index]
+        cells = rows[f"body:{row_index}"]
+        for spec in WEIGHTED_SPECS:
+            assert_number(
+                cells[spec.col_id],
+                evaluate_weighted_avg([source_row], spec),
+                f"leaf {row_index} {spec.col_id}",
+            )
+
+
+def test_wavg_grand_total_matches_the_fixture(page: Page):
+    cells = grand_total_row(read_rows(page, ROWGROUP_GRID))
+
+    for col_id in WAVG_COL_IDS:
+        assert_number(cells[col_id], expected_weighted_avg(col_id), f"total {col_id}")
+
+
+def test_wavg_nan_value_is_skipped_not_treated_as_zero(page: Page):
+    """`wavg`'s skip rule, value half: row 2 (A/DE's first leaf) has
+    `wa_value = None` (NaN once in a DataFrame). A/DE must reduce to row 3
+    alone — `2·90/90 = 2.0000` — not treat the missing value as `0`, which
+    would instead count the leaf's weight (10) with a value of 0 and give
+    `(0·10 + 2·90)/(10+90) = 1.8000`.
+    """
+    rows = read_rows(page, ROWGROUP_GRID)
+    a_de = rows["body:4"]["wavg"]
+
+    assert_number(
+        a_de, expected_weighted_avg("wavg", campaign="A", country="DE"), "A/DE wavg"
+    )
+    assert float(a_de) == pytest.approx(2.0)
+
+    # What treating the missing value as 0 instead of skipping the leaf
+    # entirely would produce: the leaf's weight still counted, its value
+    # silently zeroed.
+    value_uncounted = (0 * 10 + 2 * 90) / (10 + 90)
+    assert value_uncounted == pytest.approx(1.8)
+    assert float(a_de) != pytest.approx(value_uncounted)
+
+
+def test_wavg_gate_excludes_the_negative_weight_row(page: Page):
+    """`wavg`'s skip rule, weight half — the `weight > 0` gate. Row 4 (B/US's
+    first leaf) carries `wa_weight = -100`, deliberately chosen to *cancel*
+    row 5's `+100` rather than being `0`: a `0`-weight leaf contributes `0` to
+    both accumulators whether or not it is skipped, so no test built on a
+    zero could ever discriminate a missing gate (see the `WEIGHTED_SPECS`
+    doc comment and `DEGENERATE_NODES` in `ratio_fixture.py`). `-100` makes a
+    missing gate observable at three levels:
+
+    - B/US reduces to row 5 alone: `3·100/100 = 3.0000`. Summing weights
+      regardless of sign gets `-100 + 100 = 0` and *blanks* the cell instead
+      — division by zero, not merely a wrong number.
+    - Campaign B (rows 5-7, row 4 skipped) reads `4.0000`. Without the gate,
+      row 4's `wa_value=5` at weight `-100` survives: `(5·-100 + 3·100 +
+      4·50 + 6·50)/(-100+100+50+50) = 300/100 = 3.0000`.
+    - The grand total reads `3.3600`. Without the gate:
+      `(208 + 300)/(100 + 100) = 508/200 = 2.5400` (the `208`/`100` from
+      campaign A is unaffected — its own skip rule only ever discards row 2's
+      NaN value, never a weight).
+    """
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    b_us = rows["body:8"]["wavg"]
+    b_total = rows["body:7"]["wavg"]
+    total = grand_total_row(rows)["wavg"]
+
+    assert_number(
+        b_us, expected_weighted_avg("wavg", campaign="B", country="US"), "B/US wavg"
+    )
+    assert_number(b_total, expected_weighted_avg("wavg", campaign="B"), "campaign B wavg")
+    assert_number(total, expected_weighted_avg("wavg"), "grand total wavg")
+
+    assert float(b_us) == pytest.approx(3.0)
+    assert float(b_total) == pytest.approx(4.0)
+    assert float(total) == pytest.approx(3.36)
+
+    # What each would read with the weight sign left ungated instead.
+    weight_ungated_b_total = (5 * -100 + 3 * 100 + 4 * 50 + 6 * 50) / (-100 + 100 + 50 + 50)
+    weight_ungated_total = (208 + 300) / (100 + 100)
+    assert weight_ungated_b_total == pytest.approx(3.0)
+    assert weight_ungated_total == pytest.approx(2.54)
+    assert float(b_total) != pytest.approx(weight_ungated_b_total)
+    assert float(total) != pytest.approx(weight_ungated_total)
+
+
+def test_wavg_group_average_is_not_the_average_of_its_children(page: Page):
+    """Campaign A's total (`2.0800`) is not the mean of its two countries'
+    values (`2.8000` and `2.0000`, which average to `2.4000`) — proof the
+    aggregator re-derives `Σ(vᵢ·wᵢ)/Σwᵢ` at the parent rather than averaging
+    already-computed child ratios. Campaign B cannot make this point: it is a
+    declared degenerate node (`DEGENERATE_NODES` in `ratio_fixture.py`) where
+    the two coincide by construction.
+    """
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    campaign_a = rows["body:0"]["wavg"]
+    a_us = rows["body:1"]["wavg"]
+    a_de = rows["body:4"]["wavg"]
+
+    assert_number(campaign_a, expected_weighted_avg("wavg", campaign="A"), "campaign A wavg")
+
+    avg_of_children = evaluate_avg_of(
+        [
+            expected_weighted_avg("wavg", campaign="A", country="US"),
+            expected_weighted_avg("wavg", campaign="A", country="DE"),
+        ]
+    )
+
+    assert float(campaign_a) == pytest.approx(2.08)
+    assert float(a_us) == pytest.approx(2.8)
+    assert float(a_de) == pytest.approx(2.0)
+    assert avg_of_children == pytest.approx(2.4)
+    assert float(campaign_a) != pytest.approx(avg_of_children)
+
+
+def test_wavg_fill_null_both_ways(page: Page):
+    """`wavg_blank`/`wavg_zero` weight by `payers`, zero throughout campaign
+    B (the same fact `arpp`/`arpp_blank` already exploit for `stRatio`), so
+    the surviving weight collapses to `0` at every level within campaign B —
+    the campaign total and both pivot cells — and each column falls back to
+    its own `fill_null`: an empty cell for `wavg_blank`, `0.0000` for
+    `wavg_zero`.
+    """
+    rows = read_rows(page, ROWGROUP_GRID)
+
+    for row_index in (7, 8, 11):  # campaign B, B/US, B/DE
+        assert rows[f"body:{row_index}"]["wavg_blank"] == ""
+        assert float(rows[f"body:{row_index}"]["wavg_zero"]) == pytest.approx(0.0)
+
+
+# --------------------------------------------------------------------------
 # Pivot
 # --------------------------------------------------------------------------
 
@@ -436,6 +609,62 @@ def test_growth_pivot_cell_direction_diverges_from_its_row_total(page: Page):
     # Σads_d1/Σads_d0 = 130/110.
     assert cell == pytest.approx(0.9)
     assert row_total == pytest.approx(130 / 110)
+
+
+# --------------------------------------------------------------------------
+# stWeightedAvg (Task 6): wavg / wavg_blank / wavg_zero, pivot
+# --------------------------------------------------------------------------
+
+
+def test_wavg_pivot_cells_match_the_fixture(page: Page):
+    """Every pivot cell re-derives `Σ(vᵢ·wᵢ)/Σwᵢ` at its own (campaign,
+    country) node. `wavg` is not one of `ratio_fixture.PIVOT_BLIND_CELLS`'
+    entries for campaign B — B/US is `3.0000`, B/DE is `5.0000`, and
+    campaign B's row total is `4.0000`, all three different — so this also
+    proves the pivot key reaches `stWeightedAvg`, not just
+    `stRatio`/`stRatioOfRatios`.
+    """
+    rows = read_rows(page, PIVOT_GRID)
+
+    for row_index, campaign in ((0, "A"), (1, "B")):
+        cells = rows[f"body:{row_index}"]
+        for country in ("US", "DE"):
+            for col_id in WAVG_COL_IDS:
+                assert_number(
+                    cells[pivot_col(country, col_id)],
+                    expected_weighted_avg(col_id, campaign=campaign, country=country),
+                    f"{campaign}/{country} {col_id}",
+                )
+
+
+def test_wavg_pivot_row_totals_match_the_fixture(page: Page):
+    rows = read_rows(page, PIVOT_GRID)
+
+    for row_index, campaign in ((0, "A"), (1, "B")):
+        for col_id in WAVG_COL_IDS:
+            assert_number(
+                rows[f"body:{row_index}"][pivot_total_col(col_id)],
+                expected_weighted_avg(col_id, campaign=campaign),
+                f"{campaign} row total {col_id}",
+            )
+
+
+def test_wavg_pivot_grand_total_row_matches_the_fixture(page: Page):
+    total = grand_total_row(read_rows(page, PIVOT_GRID))
+
+    for country in ("US", "DE"):
+        for col_id in WAVG_COL_IDS:
+            assert_number(
+                total[pivot_col(country, col_id)],
+                expected_weighted_avg(col_id, country=country),
+                f"total/{country} {col_id}",
+            )
+    for col_id in WAVG_COL_IDS:
+        assert_number(
+            total[pivot_total_col(col_id)],
+            expected_weighted_avg(col_id),
+            f"grand total {col_id}",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -588,6 +817,21 @@ def test_growth_caller_supplied_comparator_is_left_alone(page: Page):
     assert campaign_order(page, ROWGROUP_GRID) == ["A", "B"]
 
 
+def test_wavg_blank_nulls_sort_last_in_both_directions(page: Page):
+    """`wavg_blank` is a real number for campaign A and blank for campaign B
+    (its weight, `payers`, is `0` throughout B) — the same nulls-last role
+    `arpp_blank` plays for `stRatio` and `growth_blank` plays for
+    `stRatioOfRatios`. `wavg`/`wavg_zero` never blank on this fixture, so
+    `wavg_blank` is the only `stWeightedAvg` column here that can demonstrate
+    this.
+    """
+    click_header(page, ROWGROUP_GRID, "wavg_blank", "ascending")
+    assert campaign_order(page, ROWGROUP_GRID) == ["A", "B"], "ascending: nulls last"
+
+    click_header(page, ROWGROUP_GRID, "wavg_blank", "descending")
+    assert campaign_order(page, ROWGROUP_GRID) == ["A", "B"], "descending: nulls last"
+
+
 # --------------------------------------------------------------------------
 # stRatioOfRatios (Task 5): columns nested in a column group
 # --------------------------------------------------------------------------
@@ -626,3 +870,39 @@ def test_growth_columns_still_aggregate_when_nested_in_a_column_group(page: Page
         evaluate_ratio_of_ratios(rows_where(campaign="A"), GROWTH_BLANK_SPEC),
         "grouped-cols campaign A growth_blank",
     )
+
+
+# --------------------------------------------------------------------------
+# stWeightedAvg (Task 6): columns nested in a column group
+# --------------------------------------------------------------------------
+
+
+def test_the_comparator_reaches_wavg_columns_nested_in_a_column_group(page: Page):
+    """Same descent-into-`children` proof as
+    `test_the_comparator_reaches_growth_columns_nested_in_a_column_group`,
+    for the `stWeightedAvg` group (`weightedAvgMetrics`) instead: `wavg`/
+    `wavg_zero` never null in this fixture, so `wavg_blank` is the only
+    column here that can discriminate a comparator that failed to reach a
+    nested `stWeightedAvg` column — `eachColDef`'s descent is a shared
+    utility, but this is what proves it actually ran for this aggregator's
+    own `registerAggFunc` call, not just `stRatioOfRatios`'s.
+    """
+    click_header(page, GROUPED_COLS_GRID, "wavg_blank", "ascending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "ascending: nulls last"
+
+    click_header(page, GROUPED_COLS_GRID, "wavg_blank", "descending")
+    assert campaign_order(page, GROUPED_COLS_GRID) == ["A", "B"], "descending: nulls last"
+
+
+def test_wavg_columns_still_aggregate_when_nested_in_a_column_group(page: Page):
+    """Nesting must not disturb the aggregation itself — spot-checked at
+    campaign A, the grid's only row-group level here."""
+    rows = read_rows(page, GROUPED_COLS_GRID)
+    campaign_a = rows["body:0"]
+
+    for col_id in WAVG_COL_IDS:
+        assert_number(
+            campaign_a[col_id],
+            expected_weighted_avg(col_id, campaign="A"),
+            f"grouped-cols campaign A {col_id}",
+        )
