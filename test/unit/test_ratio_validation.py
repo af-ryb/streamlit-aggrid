@@ -105,6 +105,36 @@ def test_num_and_den_must_be_non_empty_lists_of_names(context):
         validate_ratio_columns(grid_options(context), COLUMNS)
 
 
+def test_den_const_alone_may_stand_in_for_an_empty_den():
+    """`share = cost / 1020`: `den` is empty and the whole denominator is the
+    constant."""
+    validate_ratio_columns(
+        grid_options({"num": ["cost"], "den": [], "den_const": 1020}), COLUMNS
+    )
+
+
+def test_den_const_may_be_combined_with_a_summed_den():
+    validate_ratio_columns(
+        grid_options({"num": ["cost"], "den": ["installs"], "den_const": 100}), COLUMNS
+    )
+
+
+def test_den_const_must_be_numeric():
+    with pytest.raises(ValueError, match="den_const"):
+        validate_ratio_columns(
+            grid_options({"num": ["cost"], "den": [], "den_const": "1020"}), COLUMNS
+        )
+
+
+def test_den_const_rejects_bool_like_multiplier_and_scale():
+    """`bool` is an `int` subclass; a `True` constant is a mistake, not a 1 —
+    the same rule `_is_number` already applies to `multiplier`/`scale`."""
+    with pytest.raises(ValueError, match="den_const"):
+        validate_ratio_columns(
+            grid_options({"num": ["cost"], "den": [], "den_const": True}), COLUMNS
+        )
+
+
 def test_num_signs_length_must_match_num():
     with pytest.raises(ValueError, match="num_signs"):
         validate_ratio_columns(

@@ -196849,7 +196849,7 @@ function mZt(e) {
   let r = 0;
   for (let h = 0; h < t.num.length; h++)
     r += n[h] * s[t.num[h]];
-  let o = 0;
+  let o = t.den_const ?? 0;
   for (const h of t.den) o += s[h];
   const a = t.multiplier ?? 1, l = t.scale ?? 1, c = t.fill_null ?? null, u = o !== 0 ? r * a / o * l : c;
   return dZt(u, s);

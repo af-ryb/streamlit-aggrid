@@ -76,7 +76,27 @@ def _validate_config(config: Any, column: dict, known: Optional[set]) -> None:
         )
 
     num = _field_names(config.get("num"), "num", label)
-    den = _field_names(config.get("den"), "den", label)
+
+    for key in ("multiplier", "scale", "den_const"):
+        if key in config and config[key] is not None and not _is_number(config[key]):
+            raise ValueError(f"{label}: '{key}' must be a number, got {config[key]!r}.")
+
+    # `den` may be an empty list only when `den_const` is a valid number: the
+    # constant is then the whole denominator (SHARE_SPEC's `share`). Both
+    # empty — no summed field and no constant — is still an error, so this
+    # only widens `_field_names`' non-empty rule, never replaces it. The
+    # numeric check above runs first so a malformed `den_const` (a string, a
+    # bool) is reported by name instead of surfacing as a misleading "'den'
+    # must be a non-empty list" error.
+    den_value = config.get("den")
+    if (
+        _is_number(config.get("den_const"))
+        and isinstance(den_value, (list, tuple))
+        and not den_value
+    ):
+        den: list[str] = []
+    else:
+        den = _field_names(den_value, "den", label)
 
     signs = config.get("num_signs")
     if signs is not None:
@@ -87,10 +107,6 @@ def _validate_config(config: Any, column: dict, known: Optional[set]) -> None:
                 f"{label}: 'num_signs' has {len(signs)} entries but 'num' has "
                 f"{len(num)}; they must line up term for term."
             )
-
-    for key in ("multiplier", "scale"):
-        if key in config and config[key] is not None and not _is_number(config[key]):
-            raise ValueError(f"{label}: '{key}' must be a number, got {config[key]!r}.")
 
     if "fill_null" in config:
         fill_null = config["fill_null"]

@@ -24,6 +24,14 @@ export interface StRatioConfig {
   num_signs?: number[]
   multiplier?: number
   scale?: number
+  /** Added to the denominator once per node, not folded through
+   * `foldChildren` like a `den` entry. A `den` field is a component summed
+   * over the subtree, so its contribution naturally scales with however many
+   * leaves a group has; a window-wide constant (e.g. a total computed once in
+   * Python and repeated on every row) must not scale that way — folding it as
+   * another `den` entry would multiply it by the child count and shrink every
+   * group's share. `den` may be empty when this alone is the denominator. */
+  den_const?: number
   /** Value when the denominator sums to zero. Defaults to null — an empty
    * cell — which is what the JavaScript this replaces already renders. */
   fill_null?: number | null
@@ -38,8 +46,8 @@ export function readStRatioConfig(colDef?: ColDef | null): StRatioConfig | null 
 }
 
 /**
- * `(Σ signᵢ·numᵢ · multiplier / Σden) · scale`, where every field name resolves
- * to the sum of that field over the node's subtree.
+ * `(Σ signᵢ·numᵢ · multiplier / (den_const + Σden)) · scale`, where every
+ * field name resolves to the sum of that field over the node's subtree.
  *
  * Each node is visited once. A leaf group's `aggregatedChildren` are data rows,
  * so their components are read straight off `row.data`; a higher group's
@@ -67,7 +75,10 @@ export function stRatioAggFunc(params: IAggFuncParams): StAggValue | null {
     numerator += signs[i] * sums[config.num[i]]
   }
 
-  let denominator = 0
+  // `den_const` is a window-wide constant, not a per-leaf component: it is
+  // added once here rather than folded through `sums`, which would multiply
+  // it by the subtree's child count. See `StRatioConfig.den_const`.
+  let denominator = config.den_const ?? 0
   for (const field of config.den) denominator += sums[field]
 
   const multiplier = config.multiplier ?? 1
