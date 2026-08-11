@@ -1,6 +1,7 @@
-"""What lands in a CSV export (and, by the same code path, a clipboard copy)
-for both `useValueFormatterForExport` settings, across all three built-in
-aggregators — `grid_agg_export.py`'s probe.
+"""What lands in a CSV export for both `useValueFormatterForExport`
+settings, across all three built-in aggregators — `grid_agg_export.py`'s
+probe. This suite covers `getDataAsCsv()` only; see the module-level note
+below on why clipboard copy is documented but not asserted here.
 
 The measured mechanism, traced in the installed `ag-grid-community@36.0.0`
 package rather than assumed (see the task report for the full trace):
@@ -10,11 +11,27 @@ and for a group cell ``rowCellValue.value`` is the raw `IAggFuncResult`
 object straight out of `rowNode.aggData` — no unwrapping. `putInQuotes`
 then does ``typeof value.toString === "function" ? value.toString() : ...``.
 So when `useValueFormatterForExport=False` suppresses `valueFormatted`,
-AG-Grid calls the value object's **`toString()`**, never `toNumber()` — and
-`ag-grid-enterprise@36.0.0`'s `ClipboardService.buildExportParams` calls
-``csvCreator.getDataAsCsv(exportParams, true)`` internally, so a clipboard
-copy (Ctrl+C) goes through the exact same `putInQuotes`/`toString()` path;
-this fork installs no `processCellForClipboard`, so nothing intercepts it.
+AG-Grid calls the value object's **`toString()`**, never `toNumber()`.
+
+Clipboard copy (Ctrl+C — this is a read-only grid, so there is no paste) is
+*not* the same code path measured above, only a related one: this fork
+installs no `processCellForClipboard`, and `ag-grid-enterprise@36.0.0`'s
+`ClipboardService.buildExportParams` does end by calling
+``csvCreator.getDataAsCsv(exportParams, true)``, so clipboard reaches the
+same `getValueForDisplay`/`useValueFormatterForExport` value resolution.
+But the `exportParams` it passes set `suppressQuotes: true` (so
+`putInQuotes` returns the value unmodified rather than calling
+`.toString()` explicitly — stringification then happens implicitly via
+`+=` string concatenation), a tab `columnSeparator` instead of a comma, and
+a `processRowGroupCallback` plain CSV export never installs — a materially
+different serialization path than the one traced above, even though the
+same raw `IAggFuncResult` is exactly what a group cell's `value` still is.
+The resulting cell text is very likely identical either way (`StAggValue`
+defines no `valueOf`, so `ToPrimitive` falls through to `toString()`
+regardless of which route triggers it), but that is reasoning about the
+mechanism, not a measurement — this suite has no clipboard assertion, and
+none of the claims in this file's docstring or in `README.md` extend past
+`getDataAsCsv()`.
 
 `foldSums.ts`'s `makeAggValue` defines ``toString: () => (value == null ? ""
 : String(value))`` — so the raw CSV cell is JavaScript's own

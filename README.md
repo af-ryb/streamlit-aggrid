@@ -214,13 +214,11 @@ A group row's aggregated cell — for `stRatio`, `stRatioOfRatios` and
 carrying `toNumber()` and `toString()`. A leaf row's cell is a plain number
 straight off the DataFrame. This fork installs no `defaultCsvExportParams`
 and no `processCellForClipboard`; the toolbar's download button calls
-`exportDataAsCsv()` with no parameters. So what lands in a CSV — or a
-clipboard copy (Ctrl+C; this is a read-only grid, so there is no paste),
-which goes through the exact same code path in AG-Grid 36
-(`ClipboardService.buildExportParams` calls `csvCreator.getDataAsCsv()`
-internally) — depends entirely on each column's own
+`exportDataAsCsv()` with no parameters. So what lands in a CSV depends
+entirely on each column's own
 [`useValueFormatterForExport`](https://www.ag-grid.com/javascript-data-grid/column-properties-export/)
-(an AG-Grid colDef property, default `true`):
+(an AG-Grid colDef property, default `true`) — measured below and pinned by
+`test/test_grid_agg_export.py`.
 
 | `useValueFormatterForExport` | Group cell (measured) | Leaf cell (measured) | `fill_null` cell |
 |---|---|---|---|
@@ -254,9 +252,29 @@ post-process the raw string after export.
 
 A `fill_null` blank cell renders as an empty CSV field either way — the
 setting only changes a *present* value's text, never whether `None` renders
-blank. All three aggregators behave identically for export and clipboard;
-none of them special-case `useValueFormatterForExport`, `getDataAsCsv()`, or
-clipboard copy.
+blank. All three aggregators behave identically for CSV export — none of
+them special-case `useValueFormatterForExport` or `getDataAsCsv()` — which
+is what `test/test_grid_agg_export.py` actually measures and pins.
+
+**Clipboard copy (Ctrl+C; this is a read-only grid, so there is no paste)
+reaches the same value-resolution logic, but this fork has not measured its
+output directly.** `ag-grid-enterprise@36.0.0`'s
+`ClipboardService.buildExportParams` ends by calling
+`csvCreator.getDataAsCsv(exportParams, true)`, so a clipboard copy runs
+through the same `getValueForDisplay`/`useValueFormatterForExport`
+value-resolution code the table above describes — for a group cell, the
+same raw `IAggFuncResult`. But the `exportParams` it passes differ from a
+plain CSV export in ways that change the serialization, not just the
+value: `suppressQuotes: true` (so `putInQuotes` returns the value
+unmodified instead of explicitly calling `.toString()` — stringification
+then happens implicitly, through `+=` string concatenation), a tab
+`columnSeparator` instead of a comma, and a `processRowGroupCallback` CSV
+export never installs. The resulting cell *text* is likely identical
+regardless — `StAggValue` defines no `valueOf`, so JS's `ToPrimitive`
+coercion falls through to `toString()` either way — but that is reasoning
+about the mechanism, not a measurement of clipboard output, and this repo
+has neither a `test/test_grid_agg_export.py` assertion nor any other test
+covering it.
 
 Working example: `test/grid_agg_export.py`, over the same fixture, with
 `test/test_grid_agg_export.py` pinning the exact CSV text for both settings.
