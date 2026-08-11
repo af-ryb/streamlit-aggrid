@@ -207,6 +207,60 @@ Working examples: `test/grid_ratio_builtin.py` (built-in) and
 `test/grid_ratio_js.py` (the JavaScript approach it replaces), both over the
 same fixture in `test/ratio_fixture.py`.
 
+### Export and clipboard
+
+A group row's aggregated cell — for `stRatio`, `stRatioOfRatios` and
+`stWeightedAvg` alike — is not a plain number but an `IAggFuncResult` object
+carrying `toNumber()` and `toString()`. A leaf row's cell is a plain number
+straight off the DataFrame. This fork installs no `defaultCsvExportParams`
+and no `processCellForClipboard`; the toolbar's download button calls
+`exportDataAsCsv()` with no parameters. So what lands in a CSV — or a
+clipboard copy (Ctrl+C; this is a read-only grid, so there is no paste),
+which goes through the exact same code path in AG-Grid 36
+(`ClipboardService.buildExportParams` calls `csvCreator.getDataAsCsv()`
+internally) — depends entirely on each column's own
+[`useValueFormatterForExport`](https://www.ag-grid.com/javascript-data-grid/column-properties-export/)
+(an AG-Grid colDef property, default `true`):
+
+| `useValueFormatterForExport` | Group cell (measured) | Leaf cell (measured) | `fill_null` cell |
+|---|---|---|---|
+| `true` (default), **with** a `valueFormatter` | The formatter's own return value — it receives the raw `IAggFuncResult` as `params.value` and must call `.toNumber()` itself before formatting | The same formatter, receiving the raw number as `params.value` | Whatever the formatter renders for `null` |
+| `true`, **no** `valueFormatter` configured | Same as `false` below — nothing suppresses `toString()` if there was never anything to format | Same as `false` below | `""` (empty field) |
+| `false` | `toString()` — full JavaScript float precision, e.g. `"1.1818181818181819"` | The raw number's own JS string form, e.g. `"400"` | `""` (empty field) |
+
+Traced in the installed `ag-grid-community@36.0.0` package, not assumed:
+`CsvCreator` writes each cell as
+`this.putInQuotes(rowCellValue.valueFormatted ?? rowCellValue.value)`, and for
+a group cell `rowCellValue.value` is the raw `IAggFuncResult` straight out of
+`rowNode.aggData` — never unwrapped. `putInQuotes` then does
+`typeof value.toString === "function" ? value.toString() : ...`. So the raw
+(`useValueFormatterForExport=false`) path calls the value's **`toString()`**,
+never `toNumber()` — and every built-in aggregator's `toString()`
+(`foldSums.ts`) is `String(value)`, JavaScript's own default number-to-string,
+full precision.
+
+**Migrating off a hand-written JavaScript aggregator: this is a precision
+change, not just a format change.** The retired JavaScript's value object had
+`toString → value.toFixed(4)` — four decimals, always. The built-in
+aggregators' `toString()` is `String(value)` — as many digits as the float
+needs. A dashboard that exports with `useValueFormatterForExport=False` on
+purpose (to get compute-ready raw values, e.g. for a `getDataAsCsv()` round
+trip into Google Sheets) will see `"1.1818"` become `"1.1818181818181819"`
+after switching to a built-in aggregator, with no code change on its own
+side. Two ways to keep the old four-decimal text: leave
+`useValueFormatterForExport` at its default (`true`) and attach a
+`valueFormatter` that unwraps `toNumber()` and calls `.toFixed(4)`, or
+post-process the raw string after export.
+
+A `fill_null` blank cell renders as an empty CSV field either way — the
+setting only changes a *present* value's text, never whether `None` renders
+blank. All three aggregators behave identically for export and clipboard;
+none of them special-case `useValueFormatterForExport`, `getDataAsCsv()`, or
+clipboard copy.
+
+Working example: `test/grid_agg_export.py`, over the same fixture, with
+`test/test_grid_agg_export.py` pinning the exact CSV text for both settings.
+
 ### Toolbar
 
 ```python
