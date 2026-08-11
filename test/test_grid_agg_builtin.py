@@ -29,7 +29,7 @@ import pytest
 from playwright.sync_api import Page
 
 from e2e_utils import StreamlitRunner
-from grid_dom import assert_number, grand_total_row, read_rows
+from grid_dom import assert_number, campaign_order, click_header, grand_total_row, read_rows
 from ratio_fixture import RATIO_ROWS, RatioSpec, SHARE_SPEC, evaluate, rows_where
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
@@ -294,50 +294,6 @@ def test_fallback_installs_acquired_at_runtime_sums_rather_than_blanks(page: Pag
     assert_number(rows["body:0"]["installs"], 100.0, "campaign A installs")
     assert_number(rows["body:7"]["installs"], 200.0, "campaign B installs")
     assert float(grand_total_row(rows)["installs"]) == pytest.approx(300.0)
-
-
-def click_header(page: Page, grid_index: int, col_id: str, expect_sort: str) -> None:
-    """Click a header and wait for AG-Grid to report the new direction.
-
-    Redeclared locally rather than imported from
-    `test_grid_ratio_builtin.py` (frozen, and this module already
-    independently redeclares `MIXED_DEN_SPEC` for the same reason): waiting
-    on `aria-sort` rather than a timeout matters here because several of
-    these assertions expect an order that is also the *unsorted* order, so a
-    click that silently failed to register would let the test pass without
-    sorting anything.
-    """
-    grid = page.locator(".ag-root-wrapper").nth(grid_index)
-    header = grid.locator(f'.ag-header-cell[col-id="{col_id}"]')
-    header.click()
-    page.wait_for_function(
-        """([gridIndex, colId, direction]) => {
-             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
-             const cell = grid.querySelector(`.ag-header-cell[col-id="${colId}"]`);
-             return cell && cell.getAttribute('aria-sort') === direction;
-           }""",
-        arg=[grid_index, col_id, expect_sort],
-        timeout=10000,
-    )
-
-
-def campaign_order(page: Page, grid_index: int) -> list[str]:
-    """Group labels top to bottom, read by row-index. The grand-total row is
-    dropped — it stays put regardless of sort.
-
-    Matched by first character rather than equality: this module's
-    `COMMON_OPTIONS`, unlike `test_grid_ratio_builtin.py`'s, does not set
-    `autoGroupColumnDef.cellRendererParams.suppressCount`, so AG-Grid renders
-    each campaign group's row count into the label too (`"A(4)"`, `"B(4)"`)
-    rather than the plain `"A"`/`"B"` the frozen suite sees.
-    """
-    rows = read_rows(page, grid_index)
-    ordered = sorted(
-        ((key, cells) for key, cells in rows.items() if key.startswith("body:")),
-        key=lambda item: int(item[0].split(":")[1]),
-    )
-    labels = [cells.get("ag-Grid-AutoColumn-campaign", "") for _, cells in ordered]
-    return [label[:1] for label in labels if label[:1] in ("A", "B")]
 
 
 def test_fallback_cost_sorts_numerically_with_no_comparator(page: Page):

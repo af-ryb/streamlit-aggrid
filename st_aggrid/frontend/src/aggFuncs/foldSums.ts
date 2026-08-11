@@ -155,10 +155,14 @@ export function registerAggFunc(
     gridOptions.aggFuncs = { ...supplied, [name]: fn }
   }
 
-  // An aggregated column's value is an object, so the default comparator would
-  // need `toNumber` unwrapping *and* would place empty cells first ascending.
-  // Both are handled here rather than by every application. A caller who
-  // supplied a comparator meant it, so theirs is left alone.
+  // AG-Grid 36's own default comparator already unwraps a `toNumber()`-bearing
+  // object before comparing (measured against the compiled
+  // ag-grid-community.js's `_defaultComparator`), so that part is not why this
+  // exists. It exists for null ordering: AG-Grid's default puts a null-valued
+  // cell *first* ascending unconditionally, and this project wants nulls last
+  // in both directions (see `stAggComparator`) — attached here rather than by
+  // every application. A caller who supplied a comparator meant it, so theirs
+  // is left alone.
   eachColDef(gridOptions.columnDefs, (def) => {
     if (def.aggFunc === name && !def.comparator) {
       def.comparator = stAggComparator

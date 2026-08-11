@@ -68,3 +68,45 @@ def assert_number(text: str, reference: float | None, where: str) -> None:
     else:
         assert text != "", f"{where}: expected {reference}, got an empty cell"
         assert float(text) == pytest.approx(reference), where
+
+
+def click_header(page: Page, grid_index: int, col_id: str, expect_sort: str) -> None:
+    """Click a header and wait for AG-Grid to report the new direction.
+
+    Waiting on `aria-sort` rather than on a timeout matters here: several of
+    these assertions expect an order that is also the *unsorted* order, so a
+    click that silently failed to register would let the test pass without
+    sorting anything.
+    """
+    grid = page.locator(".ag-root-wrapper").nth(grid_index)
+    header = grid.locator(f'.ag-header-cell[col-id="{col_id}"]')
+    header.click()
+    page.wait_for_function(
+        """([gridIndex, colId, direction]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector(`.ag-header-cell[col-id="${colId}"]`);
+             return cell && cell.getAttribute('aria-sort') === direction;
+           }""",
+        arg=[grid_index, col_id, expect_sort],
+        timeout=10000,
+    )
+
+
+def campaign_order(page: Page, grid_index: int) -> list[str]:
+    """Group labels top to bottom, read by row-index. The grand-total row is
+    dropped — it stays put regardless of sort.
+
+    Matched by first character rather than equality: AG-Grid renders a
+    group's row count into its label when `autoGroupColumnDef` does not set
+    `cellRendererParams.suppressCount` (`"A(4)"`, `"B(4)"`) and renders the
+    plain `"A"`/`"B"` when it does — `label[:1]` reads the same either way,
+    so one function serves both a suite that suppresses the count and one
+    that doesn't.
+    """
+    rows = read_rows(page, grid_index)
+    ordered = sorted(
+        ((key, cells) for key, cells in rows.items() if key.startswith("body:")),
+        key=lambda item: int(item[0].split(":")[1]),
+    )
+    labels = [cells.get("ag-Grid-AutoColumn-campaign", "") for _, cells in ordered]
+    return [label[:1] for label in labels if label[:1] in ("A", "B")]
