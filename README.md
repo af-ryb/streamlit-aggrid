@@ -70,6 +70,8 @@ The `update_on` list accepts AG-Grid event names. Use a tuple `(event_name, debo
 
 Any AG-Grid API method that returns serializable data can be used in `collect`. The result key is derived from the method name: `getSelectedRows` -> `result.selected_rows`, `getFilterModel` -> `result.filter_model`, or via `result.get("selectedRows")`.
 
+**`gridReady` and `firstDataRendered` do not work as zero-interaction `update_on` triggers** — measured, not assumed. The listener-attaching effect behind `collect`/`update_on` only runs once the `gridApi` state is set, and that state is itself set from inside `AgGridComponent`'s own `onGridReady` callback — so by the time a `gridReady` listener registered through `update_on` is actually attached, the grid's internal `gridReady` event has already fired once and will never fire again. `firstDataRendered` loses the same race for the same reason whenever there is no asynchronous data load to delay it. Put a real user-driven event in `update_on` (`sortChanged`, `selectionChanged`, ...) if you need the grid to auto-collect on load.
+
 ### Explicit API Calls
 
 For one-off actions (export, getting state on demand) use `call_grid_api`. It writes a request to `session_state`; the grid executes it on the next rerun. Use `@st.fragment` to avoid full page rerun:
@@ -158,12 +160,48 @@ gb.configure_column("Name", cellRenderer=cell_renderer)
 result = AgGrid(df, grid_options=gb.build(), allow_unsafe_jscode=True, key="my_grid")
 ```
 
-### Ratio aggregation without JavaScript
+### Declarative aggregation without JavaScript
 
 A ratio cannot be rolled up by rolling up the ratio: a group's value is
-`Σnumerator / Σdenominator`, never the average of its children's ratios. The
-built-in `stRatio` aggregator computes that from a declaration, so a grid that
-needed `allow_unsafe_jscode` only for its ratio columns no longer needs it.
+`Σnumerator / Σdenominator`, never the average of its children's ratios — and
+a growth rate or an install-weighted average have the same problem in their
+own shape. Three built-in aggregators compute these from a declaration in
+`colDef.context` instead of hand-written `JsCode`, and share one folding
+core. Each is correct at every grouping level, in pivot cells, in pivot row
+totals and in total rows: they fold `params.aggregatedChildren` bottom-up
+rather than re-walking `allLeafChildren`, which would be both quadratic in
+tree depth and blind to the current pivot key.
+
+```python
+from st_aggrid import AGG_FUNC_NAME, RATIO_OF_RATIOS_AGG_FUNC, WEIGHTED_AVG_AGG_FUNC
+# "stRatio", "stRatioOfRatios", "stWeightedAvg" — re-exported so a caller
+# never has to hard-code the literal. `validate_ratio_columns` is
+# re-exported too (see Validation, below). Both are also importable from
+# `st_aggrid.ratio` directly — the package root is a convenience for
+# anything that already imports `st_aggrid`. A module that must stay
+# import-time `streamlit`-free (e.g. one run during a data-source discovery
+# walk) cannot import `st_aggrid` at all and has to hard-code the literal
+# regardless — the re-export helps test code and grid-builder modules,
+# which import `st_aggrid` anyway.
+```
+
+Every aggregator here is a **default**, not a reservation: an
+`aggFuncs["stRatio"]`, `aggFuncs["stRatioOfRatios"]` or
+`aggFuncs["stWeightedAvg"]` entry in your own `grid_options` overrides the
+matching built-in (run with `debug=True` to see the override logged). All
+three are registered on every grid regardless of whether any column declares
+one, so all three appear in the columns tool panel's aggregation picker on
+any Enterprise grid with a `sideBar` — including next to a column that
+carries no matching `context[...]` at all. What happens then is **not** the
+same across the three, deliberately: `stRatio` falls back to summing the
+column (see below); `stRatioOfRatios` and `stWeightedAvg` return an empty
+cell instead, because there is no sum analogue for a ratio of ratios or a
+weighted average.
+
+None of the three are aware of `treeData` and should not be used with it —
+they are for row grouping and pivot only.
+
+#### `stRatio` — Σnum / Σden
 
 ```python
 {
@@ -176,15 +214,45 @@ needed `allow_unsafe_jscode` only for its ratio columns no longer needs it.
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `num` | yes | — | Field names summed to form the numerator |
-| `den` | yes | — | Field names summed to form the denominator |
+| `den` | no\* | — | Field names summed to form the denominator |
 | `num_signs` | no | all `1` | Per-term signs, e.g. `[1, -1]` for `(a − b)/c` |
 | `multiplier` | no | `1.0` | Applied inside the numerator (CPM uses `1000`) |
 | `scale` | no | `1.0` | Applied to the final value (sec→min uses `1/60`) |
-| `fill_null` | no | `None` | Value when `Σden == 0`; `None` renders an empty cell |
+| `den_const` | no\* | `0` | A window-wide constant added to the denominator once per node — not folded like a `den` field |
+| `fill_null` | no | `None` | Value when the denominator is exactly `0`; `None` renders an empty cell |
 
-The value is `((Σ signᵢ·numᵢ) · multiplier / Σden) · scale`, where each field
-name resolves to the sum of that field over the node's subtree. It is correct at
-every grouping level, in pivot cells, in pivot row totals and in total rows.
+\* `den` may be an empty list only when `den_const` is a number, which then
+is the whole denominator by itself. Both empty at once is still an error.
+
+The value is `((Σ signᵢ·numᵢ) · multiplier / (den_const + Σden)) · scale`,
+where each `num`/`den` field name resolves to the sum of that field over the
+node's subtree, and `den_const` is added exactly once per node no matter how
+many leaves it has. That last point is what `den_const` is *for*: a `den`
+field naturally scales with subtree size, but a share of a window-wide total
+— a number computed once, in Python, and repeated on every row — must not:
+folding it through the same per-leaf sum a `den` field gets would multiply it
+by the child count and shrink every group's share. Use `den_const` for that
+shape (a `share` column dividing by a grand total) and `den` for anything
+that should scale with the group; the two combine (`denominator = den_const +
+Σden`) rather than one replacing the other, so a column can use both at once.
+
+The zero rule: when `den_const + Σden` is exactly `0`, the value is
+`fill_null` (default `None`, an empty cell) instead of a division by zero.
+
+**A column that ends up with `aggFunc: "stRatio"` and no
+`context["stRatio"]` degrades to a plain `Σvalues` (a sum), not a blank
+column.** In practice this only happens through a runtime mutation —
+the columns tool panel's aggregation picker, `initial_state`, or
+`columns_state` — because `validate_ratio_columns` rejects `aggFunc:
+"stRatio"` with no matching `context` anywhere in the *original*
+`columnDefs`, so a column can never reach the browser this way from Python
+alone. One consequence worth knowing: the null-ordering comparator described
+below is attached by walking `columnDefs` at parse time, so a column that
+only acquires `stRatio` at runtime never gets it. It sorts under AG-Grid's
+own default comparator instead, which puts a null-valued cell **first**
+ascending — the opposite of every column declared with `stRatio` from the
+start. This is architecturally inherent — there is no `columnDefs` snapshot
+left to walk once the mutation happens live — not a bug to be fixed here.
 
 Field names are read from the **row data**, so a component needs no column of
 its own — but it must be in the DataFrame. A name that is not raises a
@@ -195,17 +263,110 @@ when `AgGrid` is called with a DataFrame: a grid fed through
 against, so a typo'd `num`/`den` entry is not caught — it reaches the browser
 and contributes `0`, exactly the silent failure this check exists to prevent.
 
-Ratio columns sort numerically, with empty cells last in both directions. A
-`comparator` you set yourself is left alone. Supplying your own
-`aggFuncs["stRatio"]` overrides the built-in; run with `debug=True` to see that
-logged.
+A column declared with `stRatio` from the start sorts numerically, with empty
+cells last in both directions. A `comparator` you set yourself is left alone.
 
-The aggregator is for row grouping and pivot; it is not aware of `treeData`
-and should not be used with it.
+#### `stRatioOfRatios` — a ratio of two `stRatio` legs
 
-Working examples: `test/grid_ratio_builtin.py` (built-in) and
-`test/grid_ratio_js.py` (the JavaScript approach it replaces), both over the
-same fixture in `test/ratio_fixture.py`.
+```python
+{
+    "colId": "growth",
+    "aggFunc": "stRatioOfRatios",
+    "context": {
+        "stRatioOfRatios": {
+            "from": {"num": ["ads_d0"], "den": ["inst_d0"]},
+            "to": {"num": ["ads_d1"], "den": ["inst_d1"]},
+        }
+    },
+}
+```
+
+Its `from` and `to` keys each carry the same shape as `stRatio`'s own
+declaration above (`num`, `den`, and optionally `num_signs`, `multiplier`,
+`scale`, `den_const`) — a `growth` column comparing the same ratio across two
+time windows is the running example. An outer `fill_null` (default `None`)
+is the only key that lives outside both legs; a leg has no `fill_null` of its
+own.
+
+The value is `to_ratio / from_ratio`, where each leg is computed with
+`stRatio`'s own arithmetic, and both legs are re-derived independently at
+*every* node from that node's own folded sums — never combined from a
+child's already-computed outer ratio. That is what makes a pivot cell, a
+pivot row total and the grand total each correct on their own, instead of a
+pivot cell silently inheriting whatever its row (or the whole grid) computed:
+`(A/B)/(C/D) = A·D/(B·C)` is a product of sums in both numerator and
+denominator, which no single `stRatio` fraction can express — hence two legs
+and an outer division here, not one.
+
+The zero rule applies three times: both legs' own denominators, and the
+outer division by `from_ratio`. Any one of the three landing on exactly `0`
+falls back to `fill_null`. **This is a deliberate behaviour change from the
+JavaScript this replaces**, which gated all three on `> 0` instead of `!= 0`:
+a group whose *from*-period ARPU is negative — network credits, a refund —
+now renders a real, negative growth ratio, where a `> 0`-gated aggregator
+would have rendered an empty cell instead.
+
+Same DataFrame-only field-existence validation as `stRatio`, run once over
+the deduplicated union of both legs' `num`/`den` fields, so a field named in
+both legs (or by both a leg's own `num` and `den`) is reported once, not once
+per occurrence.
+
+#### `stWeightedAvg` — an install-weighted average
+
+```python
+{
+    "colId": "arpu_wavg",
+    "aggFunc": "stWeightedAvg",
+    "context": {"stWeightedAvg": {"value": "arpu", "weight": "installs"}},
+}
+```
+
+| Key | Required | Default | Meaning |
+|---|---|---|---|
+| `value` | yes | — | Field carrying a precomputed per-row ratio (this leaf's own ARPU, CPI, ...) |
+| `weight` | yes | — | Field carrying that row's weight (installs, sessions, ...) |
+| `scale` | no | `1.0` | Applied to the final value |
+| `fill_null` | no | `None` | Value when the surviving weight sums to exactly `0`; `None` renders an empty cell |
+
+Unlike the other two, `value` is read straight off each leaf's own row —
+never summed — because there is no numerator/denominator field pair to fold
+here. The value is `(Σ(valueᵢ · weightᵢ) / Σweightᵢ) · scale` over leaves,
+and a leaf is skipped — contributing to *neither* sum — when its `value` is
+non-finite **or** its `weight` is not strictly positive (`weight > 0`). The
+two conditions are one gate, not two independent ones: a leaf can't count its
+weight while dropping its value, or the reverse. The zero rule applies to
+what survives that gate: `Σweightᵢ != 0`, else `fill_null`.
+
+Worth knowing if you write your own `valueGetter` over the same data rather
+than relying on `value`/`weight` here: **a `NaN` in a DataFrame arrives in
+the browser as `null`**, not `NaN` — the Arrow→JSON round-trip has no `NaN`
+literal, so a missing value serializes to `null`. `Number(null)` is `0`,
+which *is* finite, so a naive `Number.isFinite(value)` check alone would
+count that row as a real zero instead of a missing one. `stWeightedAvg`
+guards against this explicitly; code written independently over the same
+columns should guard the same way.
+
+Same DataFrame-only validation as the other two, checking `value` and
+`weight` — a flat pair, not a `num`/`den` leg shape, so it does not share
+`stRatio`'s leg validator.
+
+#### Validation
+
+`validate_ratio_columns` (re-exported, above) is the one entry point and the
+one `columnDefs` walk for every aggregator's declaration; `AgGrid()` calls it
+automatically. The structural rules — shape, numeric options, `num_signs`
+length — always run. The field-existence check that catches a typo'd
+component name only runs when `AgGrid` is called with a DataFrame, for the
+same reason on every aggregator: a grid built entirely from
+`grid_options["rowData"]` (`data=None`) has no column set to check names
+against, so an unresolvable name reaches the browser uncaught there instead,
+silently contributing `0`.
+
+Working examples: `test/grid_ratio_builtin.py` (`stRatio`'s frozen baseline,
+against the JavaScript approach it replaces in `test/grid_ratio_js.py`) and
+`test/grid_agg_builtin.py` (`den_const`, the `sum` fallback, and both
+`stRatioOfRatios` and `stWeightedAvg`), all over the same fixture in
+`test/ratio_fixture.py`.
 
 ### Export and clipboard
 
