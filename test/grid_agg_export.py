@@ -56,6 +56,8 @@ specific piece of rendered output (see `grid_mixed_modules.py`,
 
 `update_on=["sortChanged"]`, not `["gridReady"]`: measured (not assumed) that
 `gridReady` does not work as a zero-interaction auto-collect trigger here.
+`validate_update_on` now rejects it outright, so this is no longer a choice —
+the reasoning below is kept because it is why that rejection exists.
 `useAutoCollect`'s listener-attaching effect depends on the `gridApi` state
 set inside `AgGridComponent`'s own `onGridReady` callback, so by the time
 that effect runs and calls `gridApi.addEventListener("gridReady", ...)`, the

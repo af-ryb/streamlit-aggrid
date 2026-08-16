@@ -70,7 +70,9 @@ The `update_on` list accepts AG-Grid event names. Use a tuple `(event_name, debo
 
 Any AG-Grid API method that returns serializable data can be used in `collect`. The result key is derived from the method name: `getSelectedRows` -> `result.selected_rows`, `getFilterModel` -> `result.filter_model`, or via `result.get("selectedRows")`.
 
-**`gridReady` and `firstDataRendered` do not work as zero-interaction `update_on` triggers** — measured, not assumed. The listener-attaching effect behind `collect`/`update_on` only runs once the `gridApi` state is set, and that state is itself set from inside `AgGridComponent`'s own `onGridReady` callback — so by the time a `gridReady` listener registered through `update_on` is actually attached, the grid's internal `gridReady` event has already fired once and will never fire again. `firstDataRendered` loses the same race for the same reason whenever there is no asynchronous data load to delay it. Put a real user-driven event in `update_on` (`sortChanged`, `selectionChanged`, ...) if you need the grid to auto-collect on load.
+**`gridReady` and `firstDataRendered` are rejected in `update_on`** — passing either raises `ValueError`. They cannot work as zero-interaction triggers, and used to fail silently: the listener-attaching effect behind `collect`/`update_on` only runs once the `gridApi` state is set, and that state is itself set from inside `AgGridComponent`'s own `onGridReady` callback — so by the time a `gridReady` listener registered through `update_on` is actually attached, the grid's internal `gridReady` event has already fired once and will never fire again. `firstDataRendered` loses the same race for the same reason whenever there is no asynchronous data load to delay it. Put a real user-driven event in `update_on` (`sortChanged`, `selectionChanged`, ...), or use `call_grid_api` for a one-off read.
+
+Only these two names are rejected. `update_on` is otherwise unchecked — AG-Grid's event set moves with every release and this package keeps no copy of it, so a misspelled event name is still a silent no-op.
 
 ### Explicit API Calls
 
