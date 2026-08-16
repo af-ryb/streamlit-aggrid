@@ -38,6 +38,88 @@ def read_rows(page: Page, grid_index: int) -> dict[str, dict[str, str]]:
     return page.evaluate(_READ_ROWS, grid_index)
 
 
+_READ_CELL_BOXES = """
+(gridIndex) => {
+  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+  // v36 renamed the row containers (`.ag-sticky-top` ->
+  // `.ag-grid-sticky-top-rows-container`); both spellings are matched so this
+  // probe keeps working either side of an AG-Grid bump.
+  const sectionOf = (row) =>
+      row.closest('.ag-grid-sticky-top-rows-container, .ag-sticky-top') ? 'sticky-top'
+    : row.closest('.ag-grid-sticky-bottom-rows-container, .ag-sticky-bottom') ? 'sticky-bottom'
+    : row.closest('.ag-floating-top') ? 'top'
+    : row.closest('.ag-floating-bottom') ? 'bottom'
+    : 'body';
+  const levelOf = (row) => {
+    const match = /(?:^| )ag-row-level-(\\d+)(?: |$)/.exec(row.className);
+    return match ? Number(match[1]) : null;
+  };
+  const out = [];
+  for (const row of grid.querySelectorAll('.ag-row')) {
+    const section = sectionOf(row);
+    const rowIndex = row.getAttribute('row-index');
+    const rowId = row.getAttribute('row-id');
+    const rowLevel = levelOf(row);
+    for (const cell of row.querySelectorAll('.ag-cell')) {
+      const box = cell.getBoundingClientRect();
+      out.push({
+        section: section,
+        rowIndex: rowIndex,
+        rowId: rowId,
+        rowLevel: rowLevel,
+        colId: cell.getAttribute('col-id'),
+        text: cell.textContent.trim(),
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+        cellBackground: getComputedStyle(cell).backgroundColor,
+        rowBackground: getComputedStyle(row).backgroundColor,
+      });
+    }
+  }
+  return out;
+}
+"""
+
+
+def read_cell_boxes(page: Page, grid_index: int) -> list[dict]:
+    """Every rendered cell of one grid with its on-screen rectangle.
+
+    Where `read_rows` answers "what does this cell say", this answers "where is
+    it drawn" — the only way to see a cell painted on top of another one, which
+    `read_rows` hides by keying on col-id and keeping the last writer.
+    """
+    return page.evaluate(_READ_CELL_BOXES, grid_index)
+
+
+def stacked_cells(boxes: list[dict], tolerance: float = 1.0) -> list[tuple[dict, dict]]:
+    """Pairs of cells that occupy the same screen space within one rendered row.
+
+    Rendered cells of a row must tile, never stack: AG-Grid positions them
+    absolutely from the column model, so two cells sharing a rectangle means
+    the column model and the painted DOM disagree. Compared per
+    ``(section, row-index)`` because a sticky or pinned row legitimately covers
+    a body row — that is the feature, not the defect.
+
+    ``tolerance`` absorbs sub-pixel layout rounding; only a real span of shared
+    pixels counts.
+    """
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for box in boxes:
+        grouped.setdefault((box["section"], box["rowIndex"]), []).append(box)
+
+    stacked = []
+    for row_boxes in grouped.values():
+        for i, a in enumerate(row_boxes):
+            for b in row_boxes[i + 1 :]:
+                horizontal = min(a["right"], b["right"]) - max(a["left"], b["left"])
+                vertical = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
+                if horizontal > tolerance and vertical > tolerance:
+                    stacked.append((a, b))
+    return stacked
+
+
 def grand_total_row(
     rows: dict[str, dict[str, str]], group_col_id: str = "ag-Grid-AutoColumn-campaign"
 ) -> dict[str, str]:

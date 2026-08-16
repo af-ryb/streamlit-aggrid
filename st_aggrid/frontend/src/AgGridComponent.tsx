@@ -182,6 +182,13 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // multipleColumns auto-group columns in row-group order (registered in
   // onGridReady). Held in a ref so the unmount effect can tear it down.
   const rowGroupOrderCleanupRef = useRef<(() => void) | null>(null)
+  // Set by the config-update effect to ask for one more row redraw once the
+  // column layout has settled; consumed by the debounced
+  // `displayedColumnsChanged` listener registered in onGridReady. A ref, not
+  // state, so setting it never triggers a React render.
+  const redrawPendingRef = useRef(false)
+  // Cleanup for that listener, torn down on unmount alongside the others.
+  const redrawSettleCleanupRef = useRef<(() => void) | null>(null)
 
   const debug = data.debug || false
 
@@ -604,6 +611,20 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       // rows to guarantee the DOM reflects the new configuration.
       gridApiRef.current.redrawRows()
 
+      // ...and arm a second redraw for once the columns have settled. From
+      // AG-Grid 36 a changed column set keeps moving after this effect returns,
+      // so with the grid scrolled horizontally the redraw above paints rows
+      // against a layout still in flight, leaving two live columns at the same
+      // offset with their cells drawn on top of one another (measured on a
+      // pivot grid gaining a value column; see test/test_grid_cohort_pivot.py).
+      //
+      // The trigger has to be a later `displayedColumnsChanged`, not a delay
+      // measured from here: a redraw deferred from this point by a microtask, a
+      // frame, or a timeout of any length was measured to still land too early,
+      // while one fired after the last such event repaints correctly. Scroll
+      // position is preserved.
+      redrawPendingRef.current = true
+
       // Re-open the tool panel the config update collapsed. Guarded on a
       // non-null snapshot (a panel the user had closed stays closed) and on the
       // panel not already being open again (avoids a redundant re-open/flash).
@@ -757,6 +778,8 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       findCleanupRef.current = null
       rowGroupOrderCleanupRef.current?.()
       rowGroupOrderCleanupRef.current = null
+      redrawSettleCleanupRef.current?.()
+      redrawSettleCleanupRef.current = null
     }
   }, [])
 
@@ -811,6 +834,38 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           event.api.removeEventListener(
             "columnRowGroupChanged",
             onColumnRowGroupChanged
+          )
+        }
+      }
+
+      // Repaint rows once a config update's column layout has settled. Armed by
+      // the config-update effect (`redrawPendingRef`) and fired from
+      // `displayedColumnsChanged`, because that is the signal that the columns
+      // moved — see the comment at the arming site for why no delay measured
+      // from the effect is late enough. Debounced so a burst of column changes
+      // costs one redraw, and a no-op unless a config update armed it, so
+      // ordinary user column moves don't pay for it.
+      const debouncedSettledRedraw = debounce(
+        () => {
+          if (!redrawPendingRef.current) return
+          const api = gridApiRef.current
+          if (!api || api.isDestroyed()) return
+          redrawPendingRef.current = false
+          api.redrawRows()
+          if (debug) {
+            console.log("[AgGridComponent] Redrew rows after columns settled")
+          }
+        },
+        50,
+        { leading: false, trailing: true, maxWait: 300 }
+      )
+      event.api.addEventListener("displayedColumnsChanged", debouncedSettledRedraw)
+      redrawSettleCleanupRef.current = () => {
+        debouncedSettledRedraw.cancel()
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener(
+            "displayedColumnsChanged",
+            debouncedSettledRedraw
           )
         }
       }
