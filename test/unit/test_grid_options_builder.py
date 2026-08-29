@@ -3,6 +3,11 @@
 import pandas as pd
 
 from st_aggrid.grid_options_builder import GridOptionsBuilder
+from st_aggrid.color_scale import COLOR_SCALE_CONTEXT_KEY
+
+
+def _col(options, field):
+    return {c["field"]: c for c in options["columnDefs"]}[field]
 
 
 def test_from_dataframe_creates_one_col_def_per_column():
@@ -75,3 +80,85 @@ def test_build_turns_col_defs_into_a_list():
     df = pd.DataFrame({"a": [1]})
     options = GridOptionsBuilder.from_dataframe(df).build()
     assert isinstance(options["columnDefs"], list)
+
+
+def test_configure_color_scale_writes_grid_level_defaults():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(scheme="positive")
+    options = gb.build()
+    assert options["context"][COLOR_SCALE_CONTEXT_KEY] == {"scheme": "positive"}
+
+
+def test_configure_color_scale_omits_unset_keys():
+    # An unset key must be absent, not None: the scheme's own default has to
+    # survive, and a written null would override it.
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(scheme="neutral")
+    declaration = gb.build()["context"][COLOR_SCALE_CONTEXT_KEY]
+    assert "mode" not in declaration and "skip_non_positive" not in declaration
+
+
+def test_configure_color_scale_writes_the_keys_it_is_given():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(scheme="neutral", mode="minmax", skip_non_positive=False)
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "scheme": "neutral",
+        "mode": "minmax",
+        "skip_non_positive": False,
+    }
+
+
+def test_configure_color_scale_preserves_an_existing_grid_context():
+    gb = GridOptionsBuilder()
+    gb.configure_grid_options(context={"myAppState": 1})
+    gb.configure_color_scale(scheme="positive")
+    context = gb.build()["context"]
+    assert context["myAppState"] == 1
+    assert context[COLOR_SCALE_CONTEXT_KEY] == {"scheme": "positive"}
+
+
+def test_configure_column_writes_the_column_declaration():
+    gb = GridOptionsBuilder()
+    gb.configure_column("cpi", color_scale=True)
+    assert _col(gb.build(), "cpi")["context"] == {COLOR_SCALE_CONTEXT_KEY: True}
+
+
+def test_configure_column_accepts_false_and_a_dict():
+    gb = GridOptionsBuilder()
+    gb.configure_column("installs", color_scale=False)
+    gb.configure_column("arppu", color_scale={"scheme": "diverging"})
+    options = gb.build()
+    assert _col(options, "installs")["context"][COLOR_SCALE_CONTEXT_KEY] is False
+    assert _col(options, "arppu")["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "scheme": "diverging"
+    }
+
+
+def test_color_scale_does_not_clobber_a_ratio_declaration_from_an_earlier_call():
+    # The exact collision this merge exists for: the consumer's metric columns
+    # carry both declarations, and a replaced `context` would delete the
+    # aggregation the column depends on.
+    gb = GridOptionsBuilder()
+    gb.configure_column("cpi", context={"stRatio": {"num": ["cost"], "den": ["installs"]}})
+    gb.configure_column("cpi", color_scale=True)
+    context = _col(gb.build(), "cpi")["context"]
+    assert context["stRatio"] == {"num": ["cost"], "den": ["installs"]}
+    assert context[COLOR_SCALE_CONTEXT_KEY] is True
+
+
+def test_color_scale_does_not_clobber_a_context_passed_in_the_same_call():
+    gb = GridOptionsBuilder()
+    gb.configure_column(
+        "cpi",
+        color_scale=True,
+        context={"stRatio": {"num": ["cost"], "den": ["installs"]}},
+    )
+    context = _col(gb.build(), "cpi")["context"]
+    assert context["stRatio"] == {"num": ["cost"], "den": ["installs"]}
+    assert context[COLOR_SCALE_CONTEXT_KEY] is True
+
+
+def test_configure_column_without_color_scale_writes_no_context():
+    gb = GridOptionsBuilder()
+    gb.configure_column("cpi", width=120)
+    assert "context" not in _col(gb.build(), "cpi")

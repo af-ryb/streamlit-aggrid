@@ -1,6 +1,7 @@
 import logging
 from collections import defaultdict
 
+from st_aggrid.color_scale import COLOR_SCALE_CONTEXT_KEY
 from st_aggrid.shared import _get_all_column_props, _get_all_grid_options
 
 logger = logging.getLogger(__name__)
@@ -122,13 +123,21 @@ class GridOptionsBuilder:
             if k in column_names:
                 self._grid_options["columnDefs"][k].update(props)
 
-    def configure_column(self, field, header_name=None, **other_column_properties):
+    def configure_column(
+        self, field, header_name=None, color_scale=None, **other_column_properties
+    ):
         """Configures an individual column
         check https://www.ag-grid.com/javascript-grid-column-properties/ for more information.
 
         Args:
             field (String): field name, usually equals the column header.
             header_name (String, optional): [description]. Defaults to None.
+            color_scale (bool | dict, optional): opt this column into a
+                built-in colour scale. ``True`` inherits every setting from
+                the grid-level defaults set by `configure_color_scale`; a dict
+                overrides them key by key (``scheme``, ``mode``,
+                ``skip_non_positive``); ``False`` switches the column off
+                explicitly. ``None`` (the default) writes nothing.
         """
         if not self._grid_options.get("columnDefs", None):
             self._grid_options["columnDefs"] = defaultdict(dict)
@@ -141,7 +150,49 @@ class GridOptionsBuilder:
         if other_column_properties:
             col_def = {**col_def, **other_column_properties}
 
+        if color_scale is not None:
+            # Merged, never assigned: a metric column commonly carries a
+            # `stRatio` declaration in this same dict — from an earlier
+            # `configure_column` call or from a `context=` in this one — and
+            # replacing it would delete the aggregation the column depends on.
+            existing = self._grid_options["columnDefs"].get(field) or {}
+            col_def["context"] = {
+                **(existing.get("context") or {}),
+                **(col_def.get("context") or {}),
+                COLOR_SCALE_CONTEXT_KEY: color_scale,
+            }
+
         self._grid_options["columnDefs"][field].update(col_def)
+
+    def configure_color_scale(
+        self, scheme: str, mode: str = None, skip_non_positive: bool = None
+    ):
+        """Grid-level defaults for the built-in colour scales.
+
+        This activates nothing on its own — a column is painted only when it
+        carries its own `color_scale=` opt-in. What it does is let that opt-in
+        be a bare `True` instead of repeating the scheme on every one of a
+        dashboard's metric columns.
+
+        Args:
+            scheme (str): "neutral", "positive" or "diverging".
+            mode (str, optional): "minmax" or "zscore". Defaults to the
+                scheme's own default when omitted.
+            skip_non_positive (bool, optional): leave zero and negative values
+                unpainted and out of the population. Defaults to the scheme's
+                own default when omitted.
+        """
+        declaration = {"scheme": scheme}
+        # An unset key is omitted rather than written as None: the scheme's own
+        # default has to survive, and a null would override it.
+        if mode is not None:
+            declaration["mode"] = mode
+        if skip_non_positive is not None:
+            declaration["skip_non_positive"] = skip_non_positive
+
+        context = dict(self._grid_options.get("context") or {})
+        context[COLOR_SCALE_CONTEXT_KEY] = declaration
+        self._grid_options["context"] = context
 
     def configure_side_bar(
         self,
