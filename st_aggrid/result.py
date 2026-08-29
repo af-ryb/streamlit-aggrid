@@ -31,6 +31,12 @@ class AgGridResult:
         return getattr(self._component_result, "api_response", None)
 
     @property
+    def _notes(self) -> Optional[Dict]:
+        if self._component_result is None:
+            return None
+        return getattr(self._component_result, "notes", None)
+
+    @property
     def data(self) -> Optional[pd.DataFrame]:
         """Original data (read-only grid, data doesn't change)."""
         return self._original_data
@@ -99,6 +105,17 @@ class AgGridResult:
     def api_response(self) -> Optional[Dict]:
         """Response from an explicit API call (one-shot trigger)."""
         return self._api_response
+
+    @property
+    def notes(self) -> Optional[Dict]:
+        """Cell-note edits posted back from an editable-notes grid (AG-Grid 35.3).
+
+        Sticky ``{"token": int, "notes": {rowId: {colId: note}}}`` payload that
+        survives reruns. ``None`` until a note is edited, and only populated when
+        ``notes_editable=True``. Compare ``token`` against the last seen value to
+        tell a fresh write-back from a stale one.
+        """
+        return self._notes
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get any auto-collected value by its key name."""

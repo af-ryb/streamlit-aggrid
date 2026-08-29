@@ -9,16 +9,19 @@ export default defineConfig({
   },
   build: {
     outDir: "build",
-    cssMinify: false, // CRITICAL: Streamlit CCv2 inline CSS detection requires newlines
-    chunkSizeWarningLimit: 5000, // AG-Grid is large (~3-5MB bundled)
+    chunkSizeWarningLimit: 5000, // AG-Grid is large (~7MB bundled)
     lib: {
       entry: "src/index.tsx",
       formats: ["es"],
-      fileName: "index",
+      // Content-hashed so the browser cache invalidates on a real change.
+      // st_aggrid/component.py globs these as index-*.js / index-*.css, and a
+      // glob must match exactly one file — the `build` script wipes outDir
+      // first so stale hashes can't accumulate.
+      fileName: "index-[hash]",
     },
     rollupOptions: {
       output: {
-        assetFileNames: "[name][extname]", // predictable names: style.css
+        assetFileNames: "index-[hash][extname]",
         inlineDynamicImports: true, // single JS bundle
       },
     },

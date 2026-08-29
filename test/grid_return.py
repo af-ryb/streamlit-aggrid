@@ -176,7 +176,10 @@ def make_grid3():
         data_file,
         go,
         collect=["getSelectedRows", "getFilterModel"],
-        update_on=["gridReady", "rowGroupOpened", "sortChanged", "selectionChanged"],
+        # No "gridReady" here: it is emitted once at grid creation, before the
+        # auto-collect listeners exist, so it never fired — a dead entry that
+        # read as a live one. `validate_update_on` now rejects it outright.
+        update_on=["rowGroupOpened", "sortChanged", "selectionChanged"],
         key="grouped_data_grid",
         enable_enterprise_modules=True,
     )

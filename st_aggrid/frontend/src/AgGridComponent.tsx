@@ -15,6 +15,7 @@ import { AllEnterpriseModule, LicenseManager } from "ag-grid-enterprise"
 import isEqual from "lodash/isEqual"
 import omit from "lodash/omit"
 import debounce from "lodash/debounce"
+import cloneDeep from "lodash/cloneDeep"
 
 import { useAutoCollect } from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
@@ -45,28 +46,89 @@ interface AgGridComponentProps {
   parentElement: HTMLElement
 }
 
-// Track whether modules have been registered to avoid double registration
-let modulesRegistered = false
+// AG-Grid's ModuleRegistry is global and idempotent, but WHICH bundle to
+// register is a per-grid decision driven by `enable_enterprise_modules`. A
+// single "already registered" latch would let whichever grid renders first
+// decide for every grid on the page — a community grid above an enterprise
+// grid would permanently starve the latter of its modules. Track the bundles
+// actually registered instead, so a later grid asking for a bundle we have
+// not seen still gets it.
+type ModuleBundle = "community" | "enterprise" | "enterprise+charts"
+
+const registeredBundles = new Set<ModuleBundle>()
+
+function bundleFor(data: AgGridData): ModuleBundle {
+  const flag = data.enable_enterprise_modules
+  if (flag === "enterprise+AgCharts") return "enterprise+charts"
+  if (flag === true || flag === "enterpriseOnly") return "enterprise"
+  return "community"
+}
 
 function registerModules(data: AgGridData) {
-  if (modulesRegistered) return
-  modulesRegistered = true
+  const bundle = bundleFor(data)
 
-  const enableEnterprise = data.enable_enterprise_modules
-  if (enableEnterprise === "enterprise+AgCharts") {
-    ModuleRegistry.registerModules([
-      AllEnterpriseModule.with(AgChartsEnterpriseModule),
-    ])
-    if (data.license_key) {
-      LicenseManager.setLicenseKey(data.license_key)
+  if (!registeredBundles.has(bundle)) {
+    if (bundle === "enterprise+charts") {
+      ModuleRegistry.registerModules([
+        AllEnterpriseModule.with(AgChartsEnterpriseModule),
+      ])
+    } else if (bundle === "enterprise") {
+      ModuleRegistry.registerModules([AllEnterpriseModule])
+    } else {
+      ModuleRegistry.registerModules([AllCommunityModule])
     }
-  } else if (enableEnterprise === true || enableEnterprise === "enterpriseOnly") {
-    ModuleRegistry.registerModules([AllEnterpriseModule])
-    if (data.license_key) {
-      LicenseManager.setLicenseKey(data.license_key)
+
+    // Only record the bundle once registration actually completed — if
+    // registerModules threw, the ledger must not lie about it, or no later
+    // grid asking for this bundle would ever retry.
+    registeredBundles.add(bundle)
+  }
+
+  // Runs even when the bundle was already registered: a license key can
+  // arrive with a later grid, and setting it again is idempotent.
+  if (bundle !== "community" && data.license_key) {
+    LicenseManager.setLicenseKey(data.license_key)
+  }
+}
+
+// Build a {field: key} map of a group row's dimension ancestry (this node and
+// its parents). Used by the group-dimension notes probe (debug_group_notes) and,
+// later, the notes_groups matcher. See REQUIREMENT-group-dimension-notes.md.
+function groupDimensionAncestry(node: any): Record<string, any> {
+  const map: Record<string, any> = {}
+  let n: any = node
+  while (n) {
+    if (n.field != null && n.key != null && !(n.field in map)) {
+      map[n.field] = n.key
     }
-  } else {
-    ModuleRegistry.registerModules([AllCommunityModule])
+    n = n.parent
+  }
+  return map
+}
+
+// In `groupDisplayType: 'multipleColumns'`, AG-Grid generates one auto-group
+// column per row-group dimension, with colId `ag-Grid-AutoColumn-<colId>`. From
+// v36, a newly-created dimension's auto-group column is inserted at the START of
+// the column order rather than at its row-group-index slot, so after a
+// row-dimension change (e.g. swapping which field is row_2) the swapped column
+// jumps to the leftmost group position. `setRowGroupColumns` re-orders the
+// grouping (and the Row Groups panel) but not the *display* order of these
+// generated columns, and the data-update path applies column state with
+// `applyOrder: false` (to preserve the user's manual moves). Move the
+// auto-group columns, in row-group order, to the front so the displayed group
+// columns track the configured order. No-op for single-group-column display
+// (the colId is then just `ag-Grid-AutoColumn`, no per-dimension siblings) or
+// when the generated columns aren't present yet.
+function reorderAutoGroupColumns(
+  api: GridApi,
+  rowGroupColIds: string[]
+): void {
+  if (rowGroupColIds.length < 2) return
+  const autoIds = rowGroupColIds
+    .map((id) => `ag-Grid-AutoColumn-${id}`)
+    .filter((aid) => api.getColumn(aid) != null)
+  if (autoIds.length > 1) {
+    api.moveColumns(autoIds, 0)
   }
 }
 
@@ -88,10 +150,45 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const gridContainerRef = useRef<HTMLDivElement>(null)
   const prevDataRef = useRef<AgGridData | undefined>(undefined)
+
+  // Live Find (AG-Grid 35.3) match counter for the toolbar's Find widget. Driven
+  // by the `findChanged` event (see onGridReady) — reading findGetTotalMatches()
+  // synchronously after setting findSearchValue returns a stale count.
+  const [findState, setFindState] = useState<{ matches: number; active: number }>(
+    { matches: 0, active: 0 }
+  )
+  const findCleanupRef = useRef<(() => void) | null>(null)
+
+  // Cell Notes (AG-Grid 35.3 Enterprise) store. Held in a ref (not state) so the
+  // getNote/setNote closures read the live map at call time and never go stale,
+  // and so mutating it on edit doesn't trigger a React re-render. Seeded from
+  // data.notes by the effect below.
+  const notesStoreRef = useRef<Record<string, Record<string, any>>>({})
+  // Editability read through a ref so the (stable) notesDataSource always sees the
+  // current value without being rebuilt when notes_editable toggles.
+  const notesEditableRef = useRef<boolean>(data.notes_editable ?? false)
+  notesEditableRef.current = data.notes_editable ?? false
+  // Monotonic token so the host can tell a fresh write-back from a stale one.
+  const notesTokenRef = useRef<number>(0)
+  // Last seeded data.notes (by content) — guards re-seeding on every rerun (the
+  // host re-sends a structurally-equal but referentially-new object each pass),
+  // which would otherwise clobber unacknowledged local edits.
+  const lastNotesRef = useRef<unknown>(undefined)
   // Cleanup for the displayedColumnsChanged refit listener registered in
   // onGridReady (see the gated `sizeColumnsToFit` re-fit below). Held in a ref
   // so the unmount effect can tear it down without re-running onGridReady.
   const refitCleanupRef = useRef<(() => void) | null>(null)
+  // Cleanup for the columnRowGroupChanged listener that keeps the
+  // multipleColumns auto-group columns in row-group order (registered in
+  // onGridReady). Held in a ref so the unmount effect can tear it down.
+  const rowGroupOrderCleanupRef = useRef<(() => void) | null>(null)
+  // Set by the config-update effect to ask for one more row redraw once the
+  // column layout has settled; consumed by the debounced
+  // `displayedColumnsChanged` listener registered in onGridReady. A ref, not
+  // state, so setting it never triggers a React render.
+  const redrawPendingRef = useRef(false)
+  // Cleanup for that listener, torn down on unmount alongside the others.
+  const redrawSettleCleanupRef = useRef<(() => void) | null>(null)
 
   const debug = data.debug || false
 
@@ -101,7 +198,8 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // toggles — those only update CSS variables, no server rerun.
   const streamlitTheme = useStreamlitTheme(parentElement)
 
-  // Register modules once
+  // Register whichever module bundle this grid needs — a no-op if this
+  // bundle is already in `registeredBundles` (see the ledger above).
   registerModules(data)
 
   // Inject custom CSS once
@@ -144,6 +242,153 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     return undefined
   }, [rowData])
 
+  // Cell Notes datasource (35.3). Built only when host notes are present; stable
+  // across renders (rebuilds only when notes presence flips) so AG-Grid doesn't
+  // re-init notes on every theme/config change. The closures read the live
+  // notesStoreRef / notesEditableRef, so edits and editability changes are seen
+  // without rebuilding. Skipped if the user supplied their own notesDataSource via
+  // grid_options (see the merge into the gridOptions memo below).
+  const notesPresent = data.notes != null
+  const debugGroupNotes = data.debug_group_notes === true
+  const notesGroups = Array.isArray(data.notes_groups) ? data.notes_groups : null
+  const notesDataSource = useMemo(() => {
+    // Diagnostic probe (REQUIREMENT-group-dimension-notes.md): a full-width notes
+    // datasource that, for every group row, logs its {field: key} dimension
+    // ancestry and renders a note showing it. Confirms the full-width group-row
+    // notes path works on a real grid and reveals the exact keys to use in a
+    // future `notes_groups` matcher. Read-only; no write-back.
+    if (debugGroupNotes) {
+      return {
+        supportsFullWidthRows: true,
+        getNote: (p: any) => {
+          const node = p?.rowNode
+          if (!node || !node.group) return undefined
+          // Only mark the group-displaying cell (or the full-width group row),
+          // not every aggregated value cell on the row.
+          const onGroupCell =
+            p?.location === "fullWidthRow" ||
+            p?.column?.getColId?.() === "ag-Grid-AutoColumn" ||
+            p?.column?.getColDef?.()?.showRowGroup
+          if (!onGroupCell) return undefined
+          const ancestry = groupDimensionAncestry(node)
+          console.log("[AgGridComponent] group-notes probe", {
+            location: p?.location,
+            colId: p?.column?.getColId?.(),
+            field: node.field,
+            key: node.key,
+            ancestry,
+          })
+          return { text: JSON.stringify(ancestry), readOnly: true }
+        },
+        setNote: () => {},
+      }
+    }
+    // Group-dimension Notes (notes_groups): a note is a predicate over a group
+    // row's dimension ancestry, not a cell coordinate. A rule matches when its
+    // `match` is a subset of the row's ancestry; it is drawn on the boundary row
+    // (where the match first completes) and the most-specific rule wins on a
+    // shared row. Read-only; no write-back. See REQUIREMENT-group-dimension-notes.md.
+    if (notesGroups && notesGroups.length > 0) {
+      const valEq = (av: any, mv: any): boolean => {
+        const a = String(av)
+        const m = String(mv)
+        // Date dims stringify as "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" — compare a
+        // YYYY-MM-DD match value against the key's first 10 chars; else compare exactly.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(m)) return a.slice(0, 10) === m
+        return a === m
+      }
+      const matchesAll = (
+        m: Record<string, any>,
+        a: Record<string, any>
+      ): boolean => {
+        for (const k in m) {
+          if (!(k in a) || !valEq(a[k], m[k])) return false
+        }
+        return true
+      }
+      return {
+        supportsFullWidthRows: true,
+        getNote: (p: any) => {
+          const node = p?.rowNode
+          if (!node || !node.group) return undefined
+          // Pin to the cell that renders this node's group value, so the note is
+          // not duplicated across the per-dimension auto columns (multipleColumns).
+          const colDef = p?.column?.getColDef?.()
+          const showsThis =
+            !!colDef &&
+            (colDef.showRowGroup === true || colDef.showRowGroup === node.field)
+          const onGroupCell =
+            p?.location === "fullWidthRow" ||
+            p?.column?.getColId?.() === "ag-Grid-AutoColumn" ||
+            showsThis
+          if (!onGroupCell) return undefined
+          const anc = groupDimensionAncestry(node)
+          const ancParent = node.parent
+            ? groupDimensionAncestry(node.parent)
+            : {}
+          let best: any = null
+          let bestFields = -1
+          for (const rule of notesGroups) {
+            const m = (rule && rule.match) || {}
+            if (!matchesAll(m, anc) || matchesAll(m, ancParent)) continue
+            const nf = Object.keys(m).length
+            if (nf > bestFields) {
+              best = rule
+              bestFields = nf
+            }
+          }
+          if (!best) return undefined
+          const note = best.note
+          return typeof note === "object" && note !== null
+            ? { ...note, readOnly: true }
+            : { text: String(note), readOnly: true }
+        },
+        setNote: () => {},
+      }
+    }
+    if (!notesPresent) return undefined
+    return {
+      getNote: ({ rowNode, column }: any) => {
+        const colId = column?.getColId?.()
+        if (rowNode?.id == null || colId == null) return undefined
+        const stored = notesStoreRef.current?.[rowNode.id]?.[colId]
+        if (stored == null) return undefined
+        const editable = notesEditableRef.current
+        // Accept either a plain string note or a full Note object from the host.
+        const base =
+          typeof stored === "object" && stored !== null
+            ? { ...stored }
+            : { text: String(stored) }
+        return { ...base, readOnly: editable ? base.readOnly === true : true }
+      },
+      setNote: ({ rowNode, column, note }: any) => {
+        if (!notesEditableRef.current) return
+        const colId = column?.getColId?.()
+        if (rowNode?.id == null || colId == null) return
+        const store = notesStoreRef.current
+        if (note === undefined) {
+          if (store[rowNode.id]) {
+            delete store[rowNode.id][colId]
+            if (Object.keys(store[rowNode.id]).length === 0) {
+              delete store[rowNode.id]
+            }
+          }
+        } else {
+          ;(store[rowNode.id] ??= {})[colId] = note
+        }
+        // Sticky write-back so the host can collect note edits across reruns
+        // (mirrors the csv_export sticky contract). setTriggerValue would be lost
+        // on the multi-rerun passes a multi-grid page makes.
+        notesTokenRef.current += 1
+        setStateValue("notes", {
+          token: notesTokenRef.current,
+          notes: cloneDeep(store),
+        })
+      },
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesPresent, debugGroupNotes, notesGroups, setStateValue])
+
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
     const go = parseGridOptions(data, streamlitTheme)
@@ -156,9 +401,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       go.getRowId = autoGetRowId
     }
 
+    // Inject the data-driven notes datasource unless the user supplied their own
+    // via grid_options (the JsCode escape hatch wins).
+    if (notesDataSource && !("notesDataSource" in go)) {
+      ;(go as any).notesDataSource = notesDataSource
+    }
+
     return go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId])
+  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId, notesDataSource])
 
   // Saved column layout applied at grid *creation* (pre-paint) via the
   // `initialState` prop, so restored columns never flash in then hide. AG-Grid
@@ -275,6 +526,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         // way to add/remove row groups on a live grid in pivot mode.
         const rowGroupCols = extractRowGroupColumns(data.gridOptions?.columnDefs)
         gridApiRef.current.setRowGroupColumns(rowGroupCols)
+        reorderAutoGroupColumns(gridApiRef.current, rowGroupCols)
 
         if (debug) {
           console.log(
@@ -359,6 +611,20 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       // rows to guarantee the DOM reflects the new configuration.
       gridApiRef.current.redrawRows()
 
+      // ...and arm a second redraw for once the columns have settled. From
+      // AG-Grid 36 a changed column set keeps moving after this effect returns,
+      // so with the grid scrolled horizontally the redraw above paints rows
+      // against a layout still in flight, leaving two live columns at the same
+      // offset with their cells drawn on top of one another (measured on a
+      // pivot grid gaining a value column; see test/test_grid_cohort_pivot.py).
+      //
+      // The trigger has to be a later `displayedColumnsChanged`, not a delay
+      // measured from here: a redraw deferred from this point by a microtask, a
+      // frame, or a timeout of any length was measured to still land too early,
+      // while one fired after the last such event repaints correctly. Scroll
+      // position is preserved.
+      redrawPendingRef.current = true
+
       // Re-open the tool panel the config update collapsed. Guarded on a
       // non-null snapshot (a panel the user had closed stays closed) and on the
       // panel not already being open again (avoids a redundant re-open/flash).
@@ -418,6 +684,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         const rowGroupCols = extractRowGroupColumnsFromState(data.columns_state)
         if (!mergeMode || rowGroupCols.length > 0) {
           gridApiRef.current.setRowGroupColumns(rowGroupCols)
+          reorderAutoGroupColumns(gridApiRef.current, rowGroupCols)
         }
       }
     }
@@ -436,12 +703,83 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }, [streamlitTheme, data.theme, gridApi, debug])
 
+  // Seed the notes store from host-provided notes and re-render notes on already
+  // painted cells. Guarded on a CONTENT change (isEqual) — the host re-sends a
+  // referentially-new but equal object every rerun, so a plain reference check
+  // would re-seed on each pass and clobber unacknowledged local edits. Kept out
+  // of the big `[data]` effect so it never triggers updateGridOptions/redrawRows.
+  useEffect(() => {
+    if (isEqual(lastNotesRef.current, data.notes)) return
+    lastNotesRef.current = data.notes
+    notesStoreRef.current = data.notes ? cloneDeep(data.notes) : {}
+    if (
+      data.notes != null &&
+      gridApiRef.current &&
+      !gridApiRef.current.isDestroyed()
+    ) {
+      try {
+        gridApiRef.current.refreshNotes()
+      } catch (err) {
+        if (debug) {
+          console.warn("[AgGridComponent] refreshNotes failed:", err)
+        }
+      }
+    }
+  }, [data.notes, debug])
+
+  // Streamlit binds single-key shortcuts on the document ("r" reruns the app,
+  // "c" clears the cache). Without an iframe a keystroke on a focused grid
+  // cell bubbles all the way up, so arrowing around the grid and typing "r"
+  // silently reruns. Keep those two keys inside the grid.
+  //
+  // Editable targets are skipped outright so AG-Grid's inputs (filters, Find,
+  // quick-search) and our toolbar keep full event semantics.
+  useEffect(() => {
+    const container = gridContainerRef.current
+    if (!container) return
+
+    const streamlitShortcuts = new Set(["r", "c"])
+
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target.isContentEditable
+      )
+    }
+
+    const stopStreamlitShortcuts = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (!streamlitShortcuts.has(e.key.toLowerCase())) return
+      if (isEditableTarget(e.target)) return
+      e.stopPropagation()
+    }
+
+    // Bubble phase, not capture: the event must reach the focused cell so
+    // AG-Grid's own handlers run, and only then be stopped on its way up to
+    // document. A capture-phase stopPropagation() halts the traversal before
+    // the target and would block the grid's handling too.
+    container.addEventListener("keydown", stopStreamlitShortcuts)
+    return () => {
+      container.removeEventListener("keydown", stopStreamlitShortcuts)
+    }
+  }, [])
+
   // Tear down the displayedColumnsChanged refit listener on unmount (a view
   // switch / key change remounts the component, so this fires per mount).
   useEffect(() => {
     return () => {
       refitCleanupRef.current?.()
       refitCleanupRef.current = null
+      findCleanupRef.current?.()
+      findCleanupRef.current = null
+      rowGroupOrderCleanupRef.current?.()
+      rowGroupOrderCleanupRef.current = null
+      redrawSettleCleanupRef.current?.()
+      redrawSettleCleanupRef.current = null
     }
   }, [])
 
@@ -452,6 +790,84 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
       if (debug) {
         console.log("[AgGridComponent] Grid ready", event)
+      }
+
+      // Keep the toolbar Find widget's match counter in sync. `findChanged`
+      // carries the settled totals (totalMatches + the active FindMatch whose
+      // numOverall is the 1-based position), so we never read a stale count.
+      // Harmless when Find is unused / community mode — the event simply never
+      // fires (FindModule isn't registered). Torn down in the unmount effect.
+      const onFindChanged = (e: any) => {
+        setFindState({
+          matches: e?.totalMatches ?? 0,
+          active: e?.activeMatch?.numOverall ?? 0,
+        })
+      }
+      event.api.addEventListener("findChanged", onFindChanged)
+      findCleanupRef.current = () => {
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener("findChanged", onFindChanged)
+        }
+      }
+
+      // Keep the multipleColumns auto-group columns in row-group order whenever
+      // the row grouping changes by ANY means — including an interactive
+      // reorder in the Row Groups panel, which never goes through the
+      // setRowGroupColumns calls in the data-update effects (so the explicit
+      // reorder there can't catch it). v36 regroups correctly but leaves the
+      // generated auto-group columns in their old display order; re-assert it
+      // here. `moveColumns` fires `columnMoved`/`displayedColumnsChanged`, not
+      // `columnRowGroupChanged`, so this can't loop. No-op for single-group
+      // display or when the order already matches.
+      const onColumnRowGroupChanged = () => {
+        const api = gridApiRef.current
+        if (!api || api.isDestroyed()) return
+        const order = api.getRowGroupColumns().map((c) => c.getColId())
+        reorderAutoGroupColumns(api, order)
+      }
+      event.api.addEventListener(
+        "columnRowGroupChanged",
+        onColumnRowGroupChanged
+      )
+      rowGroupOrderCleanupRef.current = () => {
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener(
+            "columnRowGroupChanged",
+            onColumnRowGroupChanged
+          )
+        }
+      }
+
+      // Repaint rows once a config update's column layout has settled. Armed by
+      // the config-update effect (`redrawPendingRef`) and fired from
+      // `displayedColumnsChanged`, because that is the signal that the columns
+      // moved — see the comment at the arming site for why no delay measured
+      // from the effect is late enough. Debounced so a burst of column changes
+      // costs one redraw, and a no-op unless a config update armed it, so
+      // ordinary user column moves don't pay for it.
+      const debouncedSettledRedraw = debounce(
+        () => {
+          if (!redrawPendingRef.current) return
+          const api = gridApiRef.current
+          if (!api || api.isDestroyed()) return
+          redrawPendingRef.current = false
+          api.redrawRows()
+          if (debug) {
+            console.log("[AgGridComponent] Redrew rows after columns settled")
+          }
+        },
+        50,
+        { leading: false, trailing: true, maxWait: 300 }
+      )
+      event.api.addEventListener("displayedColumnsChanged", debouncedSettledRedraw)
+      redrawSettleCleanupRef.current = () => {
+        debouncedSettledRedraw.cancel()
+        if (!event.api.isDestroyed()) {
+          event.api.removeEventListener(
+            "displayedColumnsChanged",
+            debouncedSettledRedraw
+          )
+        }
       }
 
       // Re-fit columns to grid width whenever the displayed column set changes
@@ -503,6 +919,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         const rg = extractRowGroupColumnsFromState(data.columns_state)
         if (rg.length > 0) {
           event.api.setRowGroupColumns(rg)
+          reorderAutoGroupColumns(event.api, rg)
         }
 
         // Merge mode applies its partial overlay post-creation (not via
@@ -562,10 +979,18 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         enabled={data.show_toolbar ?? false}
         showSearch={data.show_search ?? true}
         showDownloadButton={data.show_download_button ?? true}
+        showFind={data.show_find ?? false}
         onQuickSearchChange={(value) => {
           gridApiRef.current?.setGridOption("quickFilterText", value)
           gridApiRef.current?.hideOverlay()
         }}
+        onFindChange={(value) => {
+          gridApiRef.current?.setGridOption("findSearchValue", value)
+        }}
+        onFindNext={() => gridApiRef.current?.findNext()}
+        onFindPrev={() => gridApiRef.current?.findPrevious()}
+        findMatches={findState.matches}
+        findActive={findState.active}
         onDownloadClick={() => {
           gridApiRef.current?.exportDataAsCsv()
         }}

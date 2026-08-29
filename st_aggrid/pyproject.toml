@@ -1,0 +1,17 @@
+# Minimal manifest shipped inside the wheel so Streamlit's Components v2
+# manifest scanner can locate this component's assets at runtime.
+#
+# The scanner (streamlit/components/v2/manifest_scanner.py) looks for a
+# pyproject.toml belonging to the distribution and resolves `asset_dir`
+# relative to the package root it finds. Keeping a copy inside the package
+# makes discovery work for both editable installs (found via the import spec)
+# and wheels installed from git (found by walking the distribution's file list).
+#
+# `version` must be kept in sync with the root pyproject.toml.
+[project]
+name = "st-aggrid"
+version = "2.3.0"
+
+[[tool.streamlit.component.components]]
+name = "aggrid"
+asset_dir = "frontend/build"
