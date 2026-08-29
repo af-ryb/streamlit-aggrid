@@ -41,7 +41,15 @@ warn() { printf '    \033[33mwarn\033[0m %s\n' "$*"; }
 # from a feature branch before this script is itself merged. The checks about
 # *what you would ship* — the declared versions, the lockfile, the bundle, the
 # typecheck, the tests — stay fatal, because those are the point of a dry run.
-place_gate() { if [ "$DRY_RUN" -eq 1 ]; then warn "$*"; else die "$*"; fi; }
+PLACE_WARNED=0
+place_gate() {
+    if [ "$DRY_RUN" -eq 1 ]; then PLACE_WARNED=1; warn "$*"; else die "$*"; fi
+}
+
+# Only claim a step passed when nothing in it warned. Printing "in sync with
+# origin" directly under a warning that says otherwise is how a gate script
+# stops being believed.
+ok_unless_warned() { [ "$PLACE_WARNED" -eq 1 ] || ok "$*"; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok() { printf '    \033[32mok\033[0m  %s\n' "$*"; }
 
@@ -100,12 +108,13 @@ fi
 if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
     place_gate "$TAG already exists on origin. A published tag must never move — ship the next patch version instead."
 fi
-ok "$TAG is free"
+ok_unless_warned "$TAG is free"
 
 # ---------------------------------------------------------------------------
 # 2. We are on an up-to-date, clean release branch
 # ---------------------------------------------------------------------------
 
+PLACE_WARNED=0
 step "Working tree is $RELEASE_BRANCH, clean and current"
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -119,7 +128,7 @@ remote_head="$(git rev-parse "origin/$RELEASE_BRANCH")"
 if [ "$local_head" != "$remote_head" ]; then
     place_gate "HEAD ($(git rev-parse --short HEAD)) differs from origin/$RELEASE_BRANCH ($(git rev-parse --short "origin/$RELEASE_BRANCH")); pull or push first"
 fi
-ok "$RELEASE_BRANCH at $(git rev-parse --short HEAD), in sync with origin"
+ok_unless_warned "$RELEASE_BRANCH at $(git rev-parse --short HEAD), in sync with origin"
 
 # ---------------------------------------------------------------------------
 # 3. Both pyproject.toml files declare exactly the version being tagged
