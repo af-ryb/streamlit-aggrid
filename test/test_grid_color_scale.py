@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page
 
-from color_scale_fixture import column_values, expected_rgba
+from color_scale_fixture import column_values, expected_rgba, half_up, is_scheme_color
 from e2e_utils import StreamlitRunner
 from grid_dom import cell_backgrounds
 
@@ -33,9 +33,11 @@ METRIC_A = column_values("metric_a")
 
 def _alpha_channel(alpha: float) -> int:
     """The 8-bit channel a browser actually stores for a solid `rgba()`
-    colour's alpha, rounded the project's `half_up` way (`int(x*255 + 0.5)`,
-    matching `color_scale_fixture.half_up` and `schemes.ts`'s `halfUp`)."""
-    return int(alpha * 255 + 0.5)
+    colour's alpha. Rounded with the fixture's own `half_up` — the project's
+    convention that the fixture owns the arithmetic, matching `schemes.ts`'s
+    `halfUp` (JavaScript's `Math.round` semantics, not Python's
+    half-to-even `round`)."""
+    return half_up(alpha * 255)
 
 
 def assert_painted(
@@ -57,10 +59,25 @@ def assert_painted(
     would fail on cells that are painted exactly correctly, so both sides are
     snapped to the same 1/255 grid before comparing. RGB, which the browser
     never quantises, is still compared exactly.
+
+    Requires a non-`None` expected colour; use `assert_unpainted` to assert
+    the opposite.
     """
     assert actual is not None and expected is not None, where
     assert actual[:3] == expected[:3], where
     assert _alpha_channel(actual[3]) == _alpha_channel(expected[3]), where
+
+
+def assert_unpainted(
+    actual: tuple[int, int, int, float] | None, scheme: str, where: str
+) -> None:
+    """Assert a cell carries no colour this scheme could have painted.
+
+    Checked against the scheme's palette rather than against a transparent
+    background, so the assertion does not depend on what the active theme
+    paints underneath.
+    """
+    assert not is_scheme_color(actual, scheme), f"{where}: expected unpainted, got {actual!r}"
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -78,8 +95,19 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
         "() => document.querySelectorAll('.ag-root-wrapper').length >= 3",
         timeout=60000,
     )
-    # The grand total on the grouped grid is the last thing to render.
-    page.wait_for_selector('[row-index="7"]', timeout=60000)
+    # The grouped grid (index 1) is the last of the three to settle: 2 region
+    # group rows + 6 leaf rows + the `grandTotalRow` — which, unscrolled, AG-Grid
+    # renders as an ordinary last body row rather than in `.ag-floating-bottom`
+    # — is 9 `.ag-row` elements. Scoped to grid 1 specifically: a page-wide
+    # selector such as `[row-index="7"]` would also match the pivot grid's own
+    # row-index 7 and would not prove grid 1 in particular had finished.
+    page.wait_for_function(
+        """() => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[1];
+             return !!grid && grid.querySelectorAll('.ag-row').length >= 9;
+           }""",
+        timeout=60000,
+    )
 
 
 def test_positive_minmax_paints_the_flat_ramp(page: Page):

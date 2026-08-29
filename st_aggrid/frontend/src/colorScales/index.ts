@@ -17,6 +17,13 @@ import {
 } from "./schemes"
 import { clearStats, extractValue, statsFor } from "./population"
 
+// Re-exported so `AgGridComponent.tsx` can invalidate the statistics cache
+// ahead of a `redrawRows()` that is not preceded by `modelUpdated` — see
+// `attachColorScaleInvalidation` below for the event-driven case, and the
+// call sites in `AgGridComponent.tsx` for the config-only-rerun case this
+// covers instead.
+export { clearStats }
+
 /** The key a declaration lives under inside `context`, at both levels.
  * Matches `st_aggrid/color_scale.py`'s COLOR_SCALE_CONTEXT_KEY. */
 export const ST_COLOR_SCALE = "stColorScale"
@@ -103,12 +110,40 @@ export function stColorScaleCellStyle(
 }
 
 /**
+ * Where a caller-supplied `cellStyle` that would shadow the built-in comes
+ * from, or `null` if none applies.
+ *
+ * AG-Grid resolves a cell's `cellStyle` from the colDef itself, over any
+ * `columnTypes` entry named by `def.type`, over `defaultColDef` — so a caller
+ * who never touched this column's own colDef can still supply its `cellStyle`
+ * through either of the other two, most commonly a `defaultColDef.cellStyle`
+ * set for grid-wide alignment or font. All three are checked, in that same
+ * precedence order, so the reported source is the one that will actually
+ * render.
+ */
+function callerCellStyleSource(def: ColDef, gridOptions: GridOptions): string | null {
+  if (def.cellStyle) return "the column's own cellStyle"
+
+  const types = def.type == null ? [] : Array.isArray(def.type) ? def.type : [def.type]
+  for (const t of types) {
+    if (gridOptions.columnTypes?.[t]?.cellStyle) return `columnTypes["${t}"].cellStyle`
+  }
+
+  if (gridOptions.defaultColDef?.cellStyle) return "defaultColDef.cellStyle"
+
+  return null
+}
+
+/**
  * Attach `stColorScaleCellStyle` to every column carrying a declaration.
  *
  * A caller-supplied `cellStyle` wins and the built-in is not attached, logged
  * under `debug` — the same rule, for the same reason, that `registerAggFunc`
  * applies to a caller-supplied aggregator: a built-in is a default, not a
  * reservation, and a silently shadowed one would be baffling to track down.
+ * "Caller-supplied" is checked through `callerCellStyleSource`, not just
+ * `def.cellStyle`: `defaultColDef` and `columnTypes` can each supply one too,
+ * and writing `def.cellStyle` unconditionally would silently displace either.
  *
  * The attached function does not close over the declaration; it re-reads it
  * per call from `params.colDef.context` and `params.context`. Phase 2's
@@ -123,17 +158,17 @@ export function registerColorScales(
   debug: boolean = false
 ): GridOptions {
   eachColDef(gridOptions.columnDefs, (def) => {
-    const declaration = (def.context as Record<string, unknown> | undefined)?.[
-      ST_COLOR_SCALE
-    ]
-    if (declaration === undefined || declaration === null || declaration === false) {
-      return
-    }
-    if (def.cellStyle) {
+    // Same predicate `paintedColumnIds` and `stColorScaleCellStyle` use: a
+    // declaration that resolves to no valid scheme paints nothing, so it must
+    // not occupy the cellStyle slot either.
+    if (readColorScaleConfig(def, gridOptions.context) === null) return
+
+    const source = callerCellStyleSource(def, gridOptions)
+    if (source) {
       if (debug) {
         console.log(
           `[st_aggrid] cellStyle on "${def.colId ?? def.field}" was supplied ` +
-            `by the caller and overrides the built-in colour scale.`
+            `by ${source} and overrides the built-in colour scale.`
         )
       }
       return

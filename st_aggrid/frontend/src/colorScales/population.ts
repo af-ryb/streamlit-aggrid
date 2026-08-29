@@ -54,8 +54,14 @@ export function clearStats(api: GridApi): void {
  * `valueGetter` and pivot result columns the way the grid itself does, so a
  * column whose `colId` differs from its `field` is not silently blank.
  *
- * `skipNonPositive` is not part of the cache key. It is fixed per column by
- * the resolved declaration, so `colId` already implies it.
+ * `skipNonPositive` *is* part of the cache key, even though it's fixed by
+ * the resolved declaration for a given `colId` at any one instant: the
+ * declaration is re-read per call (see `index.ts`'s `stColorScaleCellStyle`),
+ * so within one grid's life the same `colId` can resolve to either skip rule
+ * across a config-only rerun — a Streamlit rerun that flips
+ * `skip_non_positive` on an existing column never changes `colId`. Keying on
+ * `colId` alone would let the old rule's population survive under the new
+ * one until some unrelated model change happened to clear the cache.
  */
 export function statsFor(
   api: GridApi,
@@ -71,7 +77,7 @@ export function statsFor(
 
   // `has`, not truthiness: `null` — "this column has no population at this
   // level" — is a stable answer for the generation and is memoised too.
-  const key = `${column.getColId()}:${level}`
+  const key = `${column.getColId()}:${level}:${skipNonPositive}`
   if (byKey.has(key)) return byKey.get(key) ?? null
 
   const values: number[] = []

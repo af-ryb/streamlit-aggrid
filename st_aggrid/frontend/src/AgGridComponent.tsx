@@ -35,7 +35,7 @@ import {
 
 import { parseGridOptions, parseData } from "./utils/parsers"
 import type { AgGridData } from "./types/AgGridTypes"
-import { attachColorScaleInvalidation } from "./colorScales"
+import { attachColorScaleInvalidation, clearStats } from "./colorScales"
 
 import "@fontsource/source-sans-pro"
 import "./AgGrid.css"
@@ -614,6 +614,13 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       // already-painted cells, so property changes such as cellStyle /
       // cellClass / cellRenderer won't clear stale inline styles. Redraw
       // rows to guarantee the DOM reflects the new configuration.
+      //
+      // `redrawRows` re-evaluates `cellStyle` but does not raise
+      // `modelUpdated`, so `attachColorScaleInvalidation`'s listener never
+      // sees this change: a config-only rerun (e.g. flipping a column's
+      // `skip_non_positive`) would otherwise repaint from a population
+      // computed under the old declaration. Clear it explicitly first.
+      clearStats(gridApiRef.current)
       gridApiRef.current.redrawRows()
 
       // ...and arm a second redraw for once the columns have settled. From
@@ -863,6 +870,10 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           const api = gridApiRef.current
           if (!api || api.isDestroyed()) return
           redrawPendingRef.current = false
+          // Same reason as the first redraw in the config-update effect:
+          // `redrawRows` re-evaluates `cellStyle` without raising
+          // `modelUpdated`, so the invalidation listener never sees it.
+          clearStats(api)
           api.redrawRows()
           if (debug) {
             console.log("[AgGridComponent] Redrew rows after columns settled")
