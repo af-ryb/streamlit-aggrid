@@ -918,10 +918,13 @@ def test_neutral_zscore_leaves_the_dead_zone_unpainted():
 
 
 def test_diverging_zscore_splits_red_below_and_green_above():
-    # u = 1.46385/3 = 0.48795; 240 - 15u = 232.681 -> 233
-    assert expected_rgba("diverging", METRIC_A, 100) == (233, 18, 15, 0.366)
+    # |z| = 1.4638501094227996, so alpha = 0.2 + log10(|z|) = 0.3654966,
+    # which half_up's to 0.365 — it lands 0.0034 *below* the 365.5 boundary,
+    # near enough that it must be computed rather than estimated.
+    # u = |z|/3 = 0.48795; 240 - 15u = 232.681 -> 233
+    assert expected_rgba("diverging", METRIC_A, 100) == (233, 18, 15, 0.365)
     # 190 - 15u = 182.681 -> 183
-    assert expected_rgba("diverging", METRIC_A, 600) == (35, 183, 40, 0.366)
+    assert expected_rgba("diverging", METRIC_A, 600) == (35, 183, 40, 0.365)
 
 
 def test_diverging_minmax_reaches_full_saturation_at_both_ends():
@@ -1262,7 +1265,7 @@ def is_scheme_color(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `uv run pytest test/unit/test_color_scale_fixture.py -v`
-Expected: PASS (16 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1484,8 +1487,8 @@ assert.equal(colorFor(SCHEMES.neutral, zscore(-0.87831006565368)), "rgba(51, 120
 assert.equal(colorFor(SCHEMES.neutral, minmax(0)), "rgba(51, 120, 200, 0.08)")
 assert.equal(colorFor(SCHEMES.neutral, minmax(1)), "rgba(51, 120, 200, 0.55)")
 
-assert.equal(colorFor(SCHEMES.diverging, zscore(Z)), "rgba(233, 18, 15, 0.366)")
-assert.equal(colorFor(SCHEMES.diverging, zscore(-Z)), "rgba(35, 183, 40, 0.366)")
+assert.equal(colorFor(SCHEMES.diverging, zscore(Z)), "rgba(233, 18, 15, 0.365)")
+assert.equal(colorFor(SCHEMES.diverging, zscore(-Z)), "rgba(35, 183, 40, 0.365)")
 assert.equal(colorFor(SCHEMES.diverging, minmax(0)), "rgba(225, 18, 15, 0.7)")
 assert.equal(colorFor(SCHEMES.diverging, minmax(1)), "rgba(35, 175, 40, 0.7)")
 assert.equal(colorFor(SCHEMES.diverging, minmax(0.4)), "rgba(237, 18, 15, 0.22)")
