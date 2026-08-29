@@ -14,9 +14,15 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page
 
-from color_scale_fixture import column_values, expected_rgba, half_up, is_scheme_color
+from color_scale_fixture import (
+    column_values,
+    expected_rgba,
+    half_up,
+    is_scheme_color,
+    region_totals,
+)
 from e2e_utils import StreamlitRunner
-from grid_dom import cell_backgrounds
+from grid_dom import cell_backgrounds, read_rows
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 APP_FILE = ROOT_DIRECTORY / "test" / "grid_color_scale.py"
@@ -118,3 +124,76 @@ def test_positive_minmax_paints_the_flat_ramp(page: Page):
         assert_painted(
             painted[key]["pos_minmax"], expected_rgba("positive", METRIC_A, value), key
         )
+
+
+METRIC_B = column_values("metric_b")
+METRIC_C = column_values("metric_c")
+
+
+@pytest.mark.parametrize(
+    "col_id,scheme,mode",
+    [
+        ("neu_zscore", "neutral", None),
+        ("div_zscore", "diverging", None),
+        ("neu_minmax", "neutral", "minmax"),
+        ("pos_zscore", "positive", "zscore"),
+        ("div_minmax", "diverging", "minmax"),
+    ],
+)
+def test_each_scheme_and_mode_matches_the_reference(page: Page, col_id, scheme, mode):
+    painted = cell_backgrounds(page, FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        expected = expected_rgba(scheme, METRIC_A, value, mode=mode)
+        actual = painted[key][col_id]
+        if expected is None:
+            assert_unpainted(actual, scheme, f"{key}: {col_id}")
+        else:
+            assert_painted(actual, expected, f"{key}: {col_id}")
+
+
+def test_the_zscore_dead_zone_leaves_the_middle_rows_alone(page: Page):
+    # 300 and 400 sit within 0.5 sd of the mean 350. Pinned explicitly rather
+    # than left to the parametrised loop: it is the one gate whose *absence*
+    # would still produce plausible-looking colours.
+    painted = cell_backgrounds(page, FLAT_GRID)
+    assert_unpainted(painted["body:2"]["neu_zscore"], "neutral", "body:2 (300)")
+    assert_unpainted(painted["body:3"]["neu_zscore"], "neutral", "body:3 (400)")
+    assert is_scheme_color(painted["body:1"]["neu_zscore"], "neutral")
+    assert is_scheme_color(painted["body:4"]["neu_zscore"], "neutral")
+
+
+def test_a_uniform_column_is_never_painted(page: Page):
+    painted = cell_backgrounds(page, FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_unpainted(painted[key]["uniform"], "positive", key)
+
+
+def test_skip_non_positive_excludes_the_zero_and_the_negative(page: Page):
+    painted = cell_backgrounds(page, FLAT_GRID)
+    # DE is -5 and FR is 0: unpainted, and out of the population, so IT (10) is
+    # the column minimum rather than a mid-ramp value.
+    assert_unpainted(painted["body:0"]["skip_on"], "positive", "body:0 (-5)")
+    assert_unpainted(painted["body:1"]["skip_on"], "positive", "body:1 (0)")
+    for key, value in zip(FLAT_ROWS, METRIC_B):
+        expected = expected_rgba("positive", METRIC_B, value, skip_non_positive=True)
+        if expected is not None:
+            assert_painted(painted[key]["skip_on"], expected, key)
+
+
+def test_without_the_skip_the_negative_is_painted(page: Page):
+    painted = cell_backgrounds(page, FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_B):
+        expected = expected_rgba("neutral", METRIC_B, value, skip_non_positive=False)
+        actual = painted[key]["skip_off"]
+        if expected is None:
+            assert_unpainted(actual, "neutral", key)
+        else:
+            assert_painted(actual, expected, key)
+
+
+def test_a_caller_supplied_cell_style_wins(page: Page):
+    # Same declaration as `pos_minmax`, but the column carries its own
+    # cellStyle: the built-in must not be attached at all.
+    painted = cell_backgrounds(page, FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_painted(painted[key]["own_style"], (1, 2, 3, 1.0), key)
