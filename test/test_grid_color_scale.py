@@ -322,18 +322,49 @@ def test_filtering_rescales_the_column(page: Page):
     before = cell_backgrounds(page, FLAT_GRID)
     assert_painted(before["body:0"]["pos_minmax"], expected_rgba("positive", METRIC_A, 100.0), "DE before")
 
+    it_background_before = page.evaluate(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="pos_minmax"]');
+             return getComputedStyle(cell).backgroundColor;
+           }""",
+        FLAT_GRID,
+    )
+
     grid = page.locator(".ag-root-wrapper").nth(FLAT_GRID)
     grid.locator('.ag-floating-filter[col-id="region"] input').fill("EU")
     # `.ag-center-cols-container` no longer exists under this AG-Grid version
     # (the row-container classes were renamed, same family of rename already
     # noted for the sticky-row containers in `grid_dom.py`); count `.ag-row`
-    # under the grid root instead, as `go_to_app` above already does.
+    # under the grid root instead, as `go_to_app` above already does. This has
+    # to land before the repaint wait below can mean anything.
     page.wait_for_function(
         """(gridIndex) => {
              const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
              return grid.querySelectorAll('.ag-row').length === 3;
            }""",
         arg=FLAT_GRID,
+        timeout=10000,
+    )
+
+    # The row count landing is not the same event as the colour scale
+    # finishing recomputing: `attachColorScaleInvalidation`
+    # (`colorScales/index.ts`) clears the stats cache synchronously on
+    # `modelUpdated`, then schedules the corrective repaint in a
+    # `requestAnimationFrame` as a safety net against listener ordering it
+    # does not control — so the row count can reach 3 on the same pass that
+    # still paints from the stale, pre-filter population. Wait for IT's
+    # background to actually change rather than trusting the row count alone:
+    # a repaint that never happens times out here with a clear signal, and a
+    # repaint to the wrong colour still fails on the assertion below, which is
+    # where it should be seen.
+    page.wait_for_function(
+        """([gridIndex, previousBackground]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="pos_minmax"]');
+             return !!cell && getComputedStyle(cell).backgroundColor !== previousBackground;
+           }""",
+        arg=[FLAT_GRID, it_background_before],
         timeout=10000,
     )
 
