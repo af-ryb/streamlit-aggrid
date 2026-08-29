@@ -34,12 +34,27 @@ assert.equal(zScore(stats, 300), null)
 assert.equal(zScore(stats, 400), null)
 assert.ok(Math.abs(zScore(stats, 100)! + 1.4638501094227998) < 1e-12)
 
+// The dead-zone boundary, exactly. mean 1.5, sd 0.5, so 1.75 is |z| = 0.5 to
+// the bit and 1.7 is inside it. The gate is a strict `<`, so the boundary
+// value itself paints — that asymmetry is what these two lines hold.
+const twoElement = popStats([1, 2])
+assert.equal(zScore(twoElement, 1.75), 0.5)
+assert.equal(zScore(twoElement, 1.7), null)
+
 // Uniformity floor uses |mean|, so a negative-mean column still paints.
 const negative = popStats([-100, -200, -300, -400, -500, -600])
 assert.ok(zScore(negative, -600) !== null)
 
 // mean === 0 skips the floor rather than dividing by zero.
 assert.ok(zScore(popStats([-10, 0, 10]), 10) !== null)
+
+// Near-uniform but NOT constant: sd is 2.05e-4, so this passes the sd === 0
+// guard and is stopped by the coefficient-of-variation floor specifically.
+// `popStats([7, 7, 7])` above cannot reach the floor — it returns one line
+// earlier — so this is the only thing holding CV_FLOOR in place.
+const nearUniform = popStats([1000, 1000.0005, 1000.0002])
+assert.ok(nearUniform.sd > 0)
+assert.equal(zScore(nearUniform, 1000.0005), null)
 
 assert.equal(zIntensity(0), 0)
 assert.equal(zIntensity(-1.5), 0.5)
