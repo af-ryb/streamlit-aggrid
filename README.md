@@ -408,6 +408,60 @@ against the JavaScript approach it replaces in `test/grid_ratio_js.py`) and
 `stRatioOfRatios` and `stWeightedAvg`), all over the same fixture in
 `test/ratio_fixture.py`.
 
+## Declarative colour scales without JavaScript
+
+A numeric column can be painted as a heat map from a declaration, with no
+`JsCode` and no `allow_unsafe_jscode`.
+
+```python
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_color_scale(scheme="positive")          # grid-level defaults
+gb.configure_column("revenue", color_scale=True)     # inherit them
+gb.configure_column("arppu", color_scale={"scheme": "diverging"})
+gb.configure_column("installs", color_scale=False)   # explicitly off
+AgGrid(df, gridOptions=gb.build())
+```
+
+A grid-level declaration paints nothing on its own — it supplies defaults, and
+a column opts in with its own entry.
+
+### Schemes
+
+| `scheme` | Default `mode` | Reads as |
+|---|---|---|
+| `neutral` | `zscore` | one blue hue, intensity = distance from the column mean |
+| `positive` | `minmax` | one green hue, palest at the column minimum |
+| `diverging` | `zscore` | red below the mean, green above it |
+
+### Keys
+
+| Key | Values | Default |
+|---|---|---|
+| `scheme` | `"neutral"`, `"positive"`, `"diverging"` | required at one of the two levels |
+| `mode` | `"minmax"`, `"zscore"` | the scheme's own |
+| `skip_non_positive` | `bool` | the scheme's own |
+
+`minmax` ramps linearly between the column's extremes. `zscore` measures
+distance from the column's mean in standard deviations, leaves values within
+half a deviation of the mean unpainted, and paints nothing at all when the
+column is effectively uniform.
+
+### What a column is compared against
+
+The rows of the same column **at the same group level**, after the current
+filter and sort. A group row's aggregate and a leaf's own value are not
+comparable quantities, so they are never pooled — pooling them lets a group
+total set the maximum and wash every leaf out. The grand total and pinned rows
+are neither painted nor counted.
+
+Because the population is read after filtering, hiding rows re-scales the
+column rather than leaving a dead ramp.
+
+### Interaction with `cellStyle`
+
+A column that declares its own `cellStyle` keeps it; the built-in is not
+attached. Pass `debug=True` to `AgGrid` to log when that happens.
+
 ### Export and clipboard
 
 A group row's aggregated cell — for `stRatio`, `stRatioOfRatios` and
