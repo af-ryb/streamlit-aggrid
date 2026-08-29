@@ -82,3 +82,38 @@ def test_every_re_exported_name_is_in_all():
     ):
         assert name in st_aggrid.__all__, f"{name!r} missing from st_aggrid.__all__"
         assert hasattr(st_aggrid, name), f"{name!r} not actually importable from st_aggrid"
+
+
+def test_color_scale_names_are_importable_from_the_package_root():
+    from st_aggrid import (
+        COLOR_SCALE_CONTEXT_KEY,
+        COLOR_SCALE_MODES,
+        COLOR_SCALE_SCHEMES,
+        validate_color_scale_columns,
+    )
+    from st_aggrid import color_scale as color_scale_module
+
+    assert st_aggrid.COLOR_SCALE_CONTEXT_KEY is color_scale_module.COLOR_SCALE_CONTEXT_KEY
+    assert st_aggrid.COLOR_SCALE_SCHEMES is color_scale_module.COLOR_SCALE_SCHEMES
+    assert st_aggrid.COLOR_SCALE_MODES is color_scale_module.COLOR_SCALE_MODES
+    assert st_aggrid.validate_color_scale_columns is validate_color_scale_columns
+
+
+def test_color_scale_literals_match_what_the_frontend_registers_under():
+    # `colorScales/index.ts` uses "stColorScale" as its context key and
+    # `colorScales/schemes.ts` keys `SCHEMES` by these exact names. Nothing
+    # mechanical keeps the two languages in step, so the literals are pinned
+    # here by hand.
+    assert st_aggrid.COLOR_SCALE_CONTEXT_KEY == "stColorScale"
+    assert st_aggrid.COLOR_SCALE_SCHEMES == ("neutral", "positive", "diverging")
+    assert st_aggrid.COLOR_SCALE_MODES == ("minmax", "zscore")
+
+
+def test_every_public_name_is_in_dunder_all():
+    for name in (
+        "COLOR_SCALE_CONTEXT_KEY",
+        "COLOR_SCALE_MODES",
+        "COLOR_SCALE_SCHEMES",
+        "validate_color_scale_columns",
+    ):
+        assert name in st_aggrid.__all__
