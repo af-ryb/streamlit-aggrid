@@ -38,7 +38,7 @@ there is never a second hand-written copy.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `st_aggrid._coldefs.iter_column_defs(column_defs: Any) -> Iterator[dict]` and `st_aggrid._coldefs.label(column: dict) -> str`.
+- Produces: `st_aggrid._coldefs.iter_column_defs(column_defs: Any) -> Iterator[dict]` and `st_aggrid._coldefs.column_label(column: dict) -> str`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -52,7 +52,7 @@ a walk that stopped at the top level would cover nothing there, and the
 consumer this feature exists for wraps all of its metric columns in groups.
 """
 
-from st_aggrid._coldefs import iter_column_defs, label
+from st_aggrid._coldefs import column_label, iter_column_defs
 
 
 def test_walk_yields_leaf_columns():
@@ -78,10 +78,10 @@ def test_walk_tolerates_a_non_list_and_non_dict_entries():
     assert [c["field"] for c in iter_column_defs([None, 7, {"field": "a"}])] == ["a"]
 
 
-def test_label_prefers_col_id_then_field():
-    assert label({"colId": "cpi", "field": "cost"}) == "column 'cpi'"
-    assert label({"field": "cost"}) == "column 'cost'"
-    assert label({}) == "unnamed aggregation column"
+def test_column_label_prefers_col_id_then_field():
+    assert column_label({"colId": "cpi", "field": "cost"}) == "column 'cpi'"
+    assert column_label({"field": "cost"}) == "column 'cost'"
+    assert column_label({}) == "unnamed aggregation column"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -121,8 +121,15 @@ def iter_column_defs(column_defs: Any) -> Iterator[dict]:
         yield from iter_column_defs(column.get("children"))
 
 
-def label(column: dict) -> str:
-    """How a colDef is named in a validation error."""
+def column_label(column: dict) -> str:
+    """How a colDef is named in a validation error.
+
+    Named ``column_label`` rather than ``label`` because ``ratio.py``'s
+    validators already bind a **local** ``label`` from it
+    (``label = column_label(column)``); a function of the same name would be
+    shadowed by that local and raise ``UnboundLocalError`` on the line that
+    calls it.
+    """
     name = column.get("colId") or column.get("field")
     return f"column {name!r}" if name else "unnamed aggregation column"
 ```
@@ -139,19 +146,27 @@ definitions (they sit together just below the `_is_number` helper), and add
 this import below the existing `from typing import ...` line:
 
 ```python
-from st_aggrid._coldefs import iter_column_defs, label
+from st_aggrid._coldefs import column_label, iter_column_defs
 ```
 
-Then rename the call sites:
+Then rename the call sites. ``_label`` becomes **``column_label``**, not
+``label``: three of `ratio.py`'s validators do ``label = _label(column)``, and
+renaming the function to ``label`` would make that line assign to a local of
+the same name and raise ``UnboundLocalError``. The local ``label`` variables
+stay exactly as they are.
 
 ```bash
-sed -i 's/\b_iter_column_defs(/iter_column_defs(/g; s/\b_label(/label(/g' st_aggrid/ratio.py
+sed -i 's/\b_iter_column_defs(/iter_column_defs(/g; s/\b_label(/column_label(/g' st_aggrid/ratio.py
 ```
 
 - [ ] **Step 6: Verify no stale references remain**
 
 Run: `grep -n "_iter_column_defs\|_label" st_aggrid/ratio.py`
 Expected: no output.
+
+Run: `grep -n "label = label(" st_aggrid/ratio.py`
+Expected: no output — the three ``label = column_label(column)`` bindings must
+keep their two distinct names.
 
 Run: `grep -rn "_iter_column_defs\|_label" --include=*.py st_aggrid/ test/`
 Expected: no output (these were private to `ratio.py` and nothing else imported them).
@@ -185,7 +200,7 @@ colour scale names no data fields — so it runs for every grid.
 - Test: `test/unit/test_public_exports.py` (append)
 
 **Interfaces:**
-- Consumes: `st_aggrid._coldefs.iter_column_defs`, `st_aggrid._coldefs.label` (Task 1).
+- Consumes: `st_aggrid._coldefs.iter_column_defs`, `st_aggrid._coldefs.column_label` (Task 1).
 - Produces: `COLOR_SCALE_CONTEXT_KEY = "stColorScale"`, `COLOR_SCALE_SCHEMES = ("neutral", "positive", "diverging")`, `COLOR_SCALE_MODES = ("minmax", "zscore")`, `validate_color_scale_columns(grid_options: Optional[dict]) -> None`. All four re-exported from `st_aggrid`.
 
 - [ ] **Step 1: Write the failing test**
@@ -376,7 +391,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from st_aggrid._coldefs import iter_column_defs, label
+from st_aggrid._coldefs import column_label, iter_column_defs
 
 #: Where a declaration lives inside ``context``, at both levels.
 COLOR_SCALE_CONTEXT_KEY = "stColorScale"
@@ -462,7 +477,7 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
             continue
 
         own = context[COLOR_SCALE_CONTEXT_KEY]
-        where = f"{label(column)}: context['{COLOR_SCALE_CONTEXT_KEY}']"
+        where = f"{column_label(column)}: context['{COLOR_SCALE_CONTEXT_KEY}']"
 
         if own is False:
             continue
