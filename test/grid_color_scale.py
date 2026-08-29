@@ -1,6 +1,6 @@
 """Streamlit app: the built-in declarative colour scales.
 
-Three grids over one fixture (`color_scale_fixture.py`, which also owns the
+Five grids over one fixture (`color_scale_fixture.py`, which also owns the
 expected colours):
 
   0  flat — every scheme at its default mode, every non-default `scheme x mode`
@@ -11,13 +11,24 @@ expected colours):
      the unpainted footer.
   2  row-grouped by country, pivoted on region — group rows painted per pivot
      result column.
+  3  built through `GridOptionsBuilder` — `configure_color_scale` for the
+     grid-level default and `configure_column(..., color_scale=True)` for a
+     column that inherits it, rather than a fully-specified per-column dict.
+     This is the consumer's actual migration shape and, before this grid, had
+     no coverage in either language.
+  4  a grid-wide `defaultColDef.cellStyle`, with a column that carries an
+     otherwise-valid colour-scale declaration — the branch that can silently
+     turn the feature off for an entire grid.
+
+Grids 0-2 keep their indices so no existing assertion moves when 3 and 4 are
+added.
 
 Run standalone with:  streamlit run test/grid_color_scale.py
 """
 
 import streamlit as st
 
-from st_aggrid import AgGrid, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 from color_scale_fixture import LEAF_DIM, ROW_DIM, color_scale_dataframe
 
@@ -139,4 +150,45 @@ AgGrid(
     enable_enterprise_modules=True,
     height=320,
     key="color_scale_pivot",
+)
+
+st.subheader("GridOptionsBuilder — grid-level default inherited via color_scale=True")
+# The consumer's actual migration shape: `configure_color_scale` once per grid,
+# then a bare `color_scale=True` per metric column, rather than a
+# fully-specified per-column dict. `metric_a` here is the same field as the
+# flat grid's `pos_minmax` column, over the same fixture, so the two must
+# paint identically.
+gb = GridOptionsBuilder.from_dataframe(df)
+gb.configure_grid_options(**COMMON_OPTIONS)
+gb.configure_color_scale(scheme="positive")
+gb.configure_column("metric_a", color_scale=True)
+AgGrid(
+    df,
+    grid_options=gb.build(),
+    enable_enterprise_modules=True,
+    height=320,
+    key="color_scale_builder",
+)
+
+st.subheader("A grid-wide defaultColDef.cellStyle disables the colour scale")
+# The branch that can silently turn the feature off for every column in a
+# grid: `metric_a` below carries an otherwise-valid `stColorScale`
+# declaration, but `defaultColDef.cellStyle` outranks it and the built-in is
+# never attached.
+BLOCKING_CELL_STYLE = JsCode("function(params) { return {fontWeight: 'bold'}; }")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "defaultColDef": {"cellStyle": BLOCKING_CELL_STYLE},
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM},
+            {"colId": LEAF_DIM, "field": LEAF_DIM},
+            metric_column("blocked", "metric_a", "positive", {"scheme": "positive"}),
+        ],
+    },
+    allow_unsafe_jscode=True,
+    enable_enterprise_modules=True,
+    height=320,
+    key="color_scale_default_cellstyle",
 )

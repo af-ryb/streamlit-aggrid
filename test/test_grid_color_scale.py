@@ -30,6 +30,8 @@ APP_FILE = ROOT_DIRECTORY / "test" / "grid_color_scale.py"
 FLAT_GRID = 0
 GROUPED_GRID = 1
 PIVOT_GRID = 2
+BUILDER_GRID = 3
+DEFAULT_CELLSTYLE_GRID = 4
 
 #: The flat grid's body rows, in fixture order: DE, FR, IT, CA, NY, TX.
 FLAT_ROWS = tuple(f"body:{index}" for index in range(6))
@@ -98,7 +100,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 3",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 5",
         timeout=60000,
     )
     # The grouped grid (index 1) is the last of the three to settle: 2 region
@@ -127,7 +129,6 @@ def test_positive_minmax_paints_the_flat_ramp(page: Page):
 
 
 METRIC_B = column_values("metric_b")
-METRIC_C = column_values("metric_c")
 
 
 @pytest.mark.parametrize(
@@ -378,3 +379,37 @@ def test_filtering_rescales_the_column(page: Page):
     assert half_up(after["body:2"]["pos_minmax"][3] * 255) != half_up(
         before["body:2"]["pos_minmax"][3] * 255
     )
+
+
+def test_grid_options_builder_default_is_inherited_by_a_bare_opt_in(page: Page):
+    """The consumer's actual migration shape: `configure_color_scale` once per
+    grid, then `configure_column(field, color_scale=True)` per metric column —
+    no per-column dict at all. Before this test, `readColorScaleConfig`'s
+    grid-defaults merge had zero coverage in either language, and it was
+    unproven that `gridOptions.context` survives the builder's `build()` and
+    the frontend's `cloneDeep` -> `deepMap` -> `updateGridOptions` pipeline to
+    arrive as `params.context`.
+
+    `metric_a` here is the same field, over the same fixture rows, as the flat
+    grid's `pos_minmax` column (`scheme="positive"`, default mode `minmax`,
+    default `skip_non_positive=False`) — so the two must paint identically.
+    """
+    painted = cell_backgrounds(page, BUILDER_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        assert_painted(
+            painted[key]["metric_a"], expected_rgba("positive", METRIC_A, value), key
+        )
+
+
+def test_default_coldef_cellstyle_disables_the_scale_grid_wide(page: Page):
+    """The branch that can silently turn the feature off for an entire grid.
+
+    `defaultColDef.cellStyle` outranks a column's own, otherwise-valid
+    `stColorScale` declaration (`callerCellStyleSource` in `colorScales/
+    index.ts`), so the built-in is never attached here and no row of the
+    `blocked` column may show the positive scheme's colour, however far its
+    value sits from the column's minimum or maximum.
+    """
+    painted = cell_backgrounds(page, DEFAULT_CELLSTYLE_GRID)
+    for key in FLAT_ROWS:
+        assert_unpainted(painted[key]["blocked"], "positive", key)
