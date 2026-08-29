@@ -9,6 +9,8 @@ Shared by every ratio e2e suite so the two never drift apart on what "the
 grand-total row" or "row 4" means.
 """
 
+import re
+
 import pytest
 from playwright.sync_api import Page
 
@@ -192,3 +194,51 @@ def campaign_order(page: Page, grid_index: int) -> list[str]:
     )
     labels = [cells.get("ag-Grid-AutoColumn-campaign", "") for _, cells in ordered]
     return [label[:1] for label in labels if label[:1] in ("A", "B")]
+
+
+_READ_CELL_BACKGROUNDS = """
+(gridIndex) => {
+  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+  const rows = {};
+  for (const row of grid.querySelectorAll('.ag-row')) {
+    const section = row.closest('.ag-floating-bottom') ? 'bottom'
+                  : row.closest('.ag-floating-top') ? 'top' : 'body';
+    const key = section + ':' + row.getAttribute('row-index');
+    const cells = rows[key] || (rows[key] = {});
+    for (const cell of row.querySelectorAll('.ag-cell')) {
+      cells[cell.getAttribute('col-id')] = getComputedStyle(cell).backgroundColor;
+    }
+  }
+  return rows;
+}
+"""
+
+
+def cell_backgrounds(page: Page, grid_index: int) -> dict[str, dict[str, tuple | None]]:
+    """Every rendered cell's computed background, keyed the way ``read_rows``
+    keys its text: ``"<section>:<row-index>"`` then col-id.
+
+    Parsed into ``(r, g, b, alpha)`` here rather than left as browser strings,
+    because the browser reserialises alpha at its own precision and a string
+    comparison would be comparing formatting rather than colour.
+    """
+    raw = page.evaluate(_READ_CELL_BACKGROUNDS, grid_index)
+    return {
+        key: {col_id: parse_rgba(text) for col_id, text in cells.items()}
+        for key, cells in raw.items()
+    }
+
+
+def parse_rgba(text: str) -> tuple[int, int, int, float] | None:
+    """``"rgba(29, 158, 117, 0.06)"`` or ``"rgb(29, 158, 117)"`` as
+    ``(r, g, b, alpha)``. ``None`` for anything else, including the
+    ``"transparent"`` some engines return."""
+    match = re.fullmatch(
+        r"\s*rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)"
+        r"(?:[,/\s]+([\d.]+))?\s*\)\s*",
+        text or "",
+    )
+    if not match:
+        return None
+    r, g, b, a = match.groups()
+    return (int(float(r)), int(float(g)), int(float(b)), float(a) if a is not None else 1.0)

@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
+from st_aggrid.color_scale import validate_color_scale_columns
 from st_aggrid.component import get_aggrid_component
 from st_aggrid.ratio import validate_ratio_columns
 from st_aggrid.result import AgGridResult
@@ -416,6 +417,11 @@ def AgGrid(
         grid_options,
         column_types.index if column_types is not None else None,
     )
+
+    # A colour-scale declaration names no data fields, only a shape, so unlike
+    # the ratio check above this one needs no column set and runs for every
+    # grid — including one built entirely from `grid_options["rowData"]`.
+    validate_color_scale_columns(grid_options)
 
     custom_css = custom_css or {}
 

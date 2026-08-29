@@ -21,6 +21,8 @@ st_aggrid/                   # Python package
 ├── shared.py                # JsCode, StAggridTheme, AgGridTheme, walk_grid_options
 ├── aggrid_utils.py          # Data/gridOptions parsing
 ├── ratio.py                 # Validation for stRatio/stRatioOfRatios/stWeightedAvg declarations
+├── color_scale.py           # Validation for stColorScale declarations
+├── _coldefs.py              # colDef walk shared by both validators
 └── frontend/                # TypeScript/React frontend (Vite)
     ├── src/
     │   ├── index.tsx                 # CCv2 entry point
@@ -34,6 +36,10 @@ st_aggrid/                   # Python package
     │   ├── aggFuncs/stRatio.ts       # Σnum/Σden aggregator
     │   ├── aggFuncs/stRatioOfRatios.ts # to_ratio/from_ratio aggregator
     │   ├── aggFuncs/stWeightedAvg.ts # Σ(v·w)/Σw aggregator
+    │   ├── colorScales/normalize.ts   # popStats, min-max / z-score gates
+    │   ├── colorScales/schemes.ts     # the three palettes and their alpha ramps
+    │   ├── colorScales/population.ts  # level-scoped population + memoised stats
+    │   ├── colorScales/index.ts       # declaration resolution, cellStyle, registration
     │   ├── hooks/useAutoCollect.ts   # Auto-collect hook
     │   ├── hooks/useExplicitApiCall.ts
     │   ├── components/GridToolBar.tsx
@@ -104,6 +110,13 @@ Python build: **hatchling** (via `uv build`).
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
 - **Three built-in declarative aggregators**: `stRatio`, `stRatioOfRatios`, `stWeightedAvg` — declared in `colDef.context[name]`, sharing one folding core (`aggFuncs/foldSums.ts`). Python (`ratio.py`) validates every declaration against the DataFrame, never against `columnDefs`. See the README's "Declarative aggregation without JavaScript" section for the arithmetic, the zero rule and each aggregator's fallback behaviour.
+- **Three built-in colour schemes**: `neutral`, `positive`, `diverging` —
+  declared in `colDef.context["stColorScale"]` with grid-level defaults in
+  `gridOptions["context"]`, sharing one statistics pass
+  (`colorScales/population.ts`). A column's population is the same column at
+  the same group level after filter and sort; a caller-supplied `cellStyle`
+  wins over the built-in, as with the aggregators. See the README's
+  "Declarative colour scales without JavaScript".
 
 ## Packaging & asset delivery
 
@@ -140,3 +153,10 @@ Python build: **hatchling** (via `uv build`).
   `test/conftest.py`.
 - Ratio tests never hand-type an expected number: `test/ratio_fixture.py` owns
   the data and the arithmetic, and declares the nodes it cannot discriminate.
+- The two pure colour-scale modules (`colorScales/normalize.ts`,
+  `colorScales/schemes.ts`) import nothing and are exercised by
+  `src/colorScales/__checks__/*.check.ts`, run with plain
+  `node <path>.check.ts` — Node 22 strips the types, so the arithmetic has a
+  fast test cycle without a JS test runner in a package that ships to the
+  browser. `tsconfig.json` sets `allowImportingTsExtensions` for those checks'
+  `.ts` import specifiers.

@@ -20,6 +20,10 @@ must not pull in `streamlit` as a side effect of import — cannot import
 `st_aggrid` at all, and must hard-code the literal (`"stRatio"`, ...)
 regardless of what this package exports. The re-export helps test code and
 grid-builder modules, which import `st_aggrid` anyway.
+
+The colour-scale names follow the prefixed convention from the start:
+``COLOR_SCALE_CONTEXT_KEY``, ``COLOR_SCALE_SCHEMES`` and ``COLOR_SCALE_MODES``
+have no unprefixed aliases, and new code should not add any.
 """
 
 from st_aggrid.aggrid import AgGrid, call_grid_api
@@ -28,6 +32,12 @@ from st_aggrid.column_state import (
     derive_user_hidden,
     set_visibility,
     visibility_state,
+)
+from st_aggrid.color_scale import (
+    COLOR_SCALE_CONTEXT_KEY,
+    COLOR_SCALE_MODES,
+    COLOR_SCALE_SCHEMES,
+    validate_color_scale_columns,
 )
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 from st_aggrid.ratio import (
@@ -60,6 +70,9 @@ __all__ = [
     "AgGrid",
     "AgGridResult",
     "AgGridTheme",
+    "COLOR_SCALE_CONTEXT_KEY",
+    "COLOR_SCALE_MODES",
+    "COLOR_SCALE_SCHEMES",
     "CONTEXT_KEY",
     "GridOptionsBuilder",
     "JsCode",
@@ -74,6 +87,7 @@ __all__ = [
     "derive_overlay",
     "derive_user_hidden",
     "set_visibility",
+    "validate_color_scale_columns",
     "validate_ratio_columns",
     "visibility_state",
     "walk_grid_options",

@@ -8,6 +8,7 @@ import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 import { registerStRatio } from "../aggFuncs/stRatio"
 import { registerStRatioOfRatios } from "../aggFuncs/stRatioOfRatios"
 import { registerStWeightedAvg } from "../aggFuncs/stWeightedAvg"
+import { registerColorScales } from "../colorScales"
 
 export function parseGridOptions(
   data: AgGridData,
@@ -40,6 +41,11 @@ export function parseGridOptions(
   registerStRatio(gridOptions, data.debug === true)
   registerStRatioOfRatios(gridOptions, data.debug === true)
   registerStWeightedAvg(gridOptions, data.debug === true)
+
+  // Built-in colour scales. Same site as the aggregators above for the same
+  // reason: both the mount path and the live-update path go through here, so a
+  // runtime config change never leaves a declared column unpainted.
+  registerColorScales(gridOptions, data.debug === true)
 
   // Process theming — prefer the live theme read from host CSS variables
   // over any server-side value, which can't see user-level theme toggles.

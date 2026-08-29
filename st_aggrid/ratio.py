@@ -49,7 +49,9 @@ validates that shape directly. It does reuse ``_validate_fill_null`` and
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
+
+from st_aggrid._coldefs import column_label, iter_column_defs
 
 AGG_FUNC_NAME = "stRatio"
 CONTEXT_KEY = "stRatio"
@@ -67,24 +69,6 @@ _NUMERIC = (int, float)
 def _is_number(value: Any) -> bool:
     # bool is an int subclass; a True multiplier is a mistake, not a 1.
     return isinstance(value, _NUMERIC) and not isinstance(value, bool)
-
-
-def _iter_column_defs(column_defs: Any) -> Iterator[dict]:
-    """Every leaf and group colDef, depth first. Column groups nest their
-    columns under ``children``; a walk that stops at the top level would cover
-    nothing on a grouped grid."""
-    if not isinstance(column_defs, (list, tuple)):
-        return
-    for column in column_defs:
-        if not isinstance(column, dict):
-            continue
-        yield column
-        yield from _iter_column_defs(column.get("children"))
-
-
-def _label(column: dict) -> str:
-    name = column.get("colId") or column.get("field")
-    return f"column {name!r}" if name else "unnamed aggregation column"
 
 
 def _field_names(value: Any, key: str, label: str, context_path: str) -> list[str]:
@@ -216,7 +200,7 @@ def _validate_fill_null(config: dict, label: str, context_path: str) -> None:
 
 def _validate_stratio_config(config: Any, column: dict, known: Optional[set]) -> None:
     """``context["stRatio"]`` is a single leg, plus its own `fill_null`."""
-    label = _label(column)
+    label = column_label(column)
     context_path = f"context['{CONTEXT_KEY}']"
 
     num, den = _validate_leg(config, label, context_path)
@@ -235,7 +219,7 @@ def _validate_ratio_of_ratios_config(
     lists, so a field named in both legs (or by both `num` and `den` of the
     same leg) is reported once, not once per occurrence.
     """
-    label = _label(column)
+    label = column_label(column)
     context_path = f"context['{RATIO_OF_RATIOS_CONTEXT_KEY}']"
 
     if not isinstance(config, dict):
@@ -266,7 +250,7 @@ def _validate_weighted_avg_config(
     folds ``Σ(vᵢ·wᵢ)/Σwᵢ`` over leaves, skipping any leaf whose value is
     non-finite or whose weight is not strictly positive.
     """
-    label = _label(column)
+    label = column_label(column)
     context_path = f"context['{WEIGHTED_AVG_CONTEXT_KEY}']"
 
     if not isinstance(config, dict):
@@ -350,7 +334,7 @@ def validate_ratio_columns(
 
     known = set(data_columns) if data_columns is not None else None
 
-    for column in _iter_column_defs(grid_options.get("columnDefs")):
+    for column in iter_column_defs(grid_options.get("columnDefs")):
         raw_context = column.get("context")
         context = raw_context if isinstance(raw_context, dict) else {}
         agg_func = column.get("aggFunc")
@@ -361,6 +345,6 @@ def validate_ratio_columns(
                 validate(config, column, known)
             elif agg_func == name:
                 raise ValueError(
-                    f"{_label(column)}: aggFunc {name!r} requires "
+                    f"{column_label(column)}: aggFunc {name!r} requires "
                     f"context[{name!r}] carrying {hint}."
                 )
