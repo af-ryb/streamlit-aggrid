@@ -127,6 +127,15 @@ inner_version="$(read_version st_aggrid/pyproject.toml)"
     || die "st_aggrid/pyproject.toml says '$inner_version', tag says '$VERSION'"
 ok "pyproject.toml and st_aggrid/pyproject.toml both say $VERSION"
 
+# uv.lock pins the editable `st-aggrid` at its own version, so a bump that
+# updates the two pyproject.toml files and stops there leaves a lockfile that
+# disagrees with them — and every `uv run` silently rewrites it, so it shows up
+# as phantom churn rather than as an error. This exact miss shipped in 2.4.0's
+# bump and was caught by hand.
+uv lock --check >/dev/null 2>&1 \
+    || die "uv.lock is out of date with pyproject.toml. Run 'uv lock' and commit the result."
+ok "uv.lock agrees with pyproject.toml"
+
 # ---------------------------------------------------------------------------
 # 4. The committed bundle is the one this source produces
 # ---------------------------------------------------------------------------
