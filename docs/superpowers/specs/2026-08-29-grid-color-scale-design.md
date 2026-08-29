@@ -4,6 +4,25 @@
 **Branch:** `grid-color-scale` (off `main`)
 **Date:** 2026-08-29
 
+> **Amended 2026-08-29, after implementation, during the final whole-branch
+> review.** The plan was amended three times while this was built and this
+> spec was never touched to match — the final review found it contradicted
+> the shipped code in five places, all corrected below: the statistics cache
+> key now includes `skipNonPositive`, and the original justification for
+> leaving it out was disproven, not just extended (*Statistics cache*); the
+> repaint cost is per displayed group level, not flat `O(rows)` (*Cost*); the
+> `cellStyle` attachment rule checks `columnTypes` and `defaultColDef` too, and
+> gates on `readColorScaleConfig`, not `def.cellStyle` (*Attachment*); the
+> population reads values through `api.getCellValue`, not
+> `row.data`/`row.aggData`, and that is now verified in flat, grouped and pivot
+> mode rather than merely planned (*Population*, *Value extraction*); and the
+> e2e alpha comparison snaps both sides to the browser's 8-bit channel rather
+> than allowing a `0.01` tolerance (*Testing*). `clearStats`, exported from
+> `colorScales/index.ts` and called ahead of both `redrawRows()` sites in
+> `AgGridComponent.tsx`, was missing from the invalidation section entirely and
+> has been added. A phase-2 reader should treat this document as current, not
+> as originally designed.
+
 ## Problem
 
 Every grid in the main consumer (`hitapps_analytics`) that wants a heat-map
@@ -185,24 +204,29 @@ constants: `COLOR_SCALE_CONTEXT_KEY`, `COLOR_SCALE_SCHEMES`,
 
 ## Population
 
-For a cell being painted in column `colId` on node `node`:
+For a cell being painted in column `colId` on node `node`, `statsFor`
+(`colorScales/population.ts`) computes:
 
 ```
 api.forEachNodeAfterFilterAndSort(row => keep row when
       row.footer !== true                  // grand total is not a comparable row
    && row.rowPinned == null                // nor is a pinned row
-   && row.level === node.level             // compare like with like
-   && extractValue(rowValue) !== null
+   && row.level === level                  // compare like with like
+   && extractValue(api.getCellValue({ rowNode: row, colKey: column })) !== null
    && (!skipNonPositive || value > 0))
 ```
 
-where `rowValue = row.group ? row.aggData?.[colId] : row.data?.[colId]` and
-`colId = params.column.getColId()`.
-
-The group/leaf branch also covers pivot mode: there `row.data[colId]` is
-undefined because `colId` names a pivot result column, and the group branch is
-what carries the value — the mechanism `funnel_saj/js_funcs.py` already
-documents in a comment.
+Superseding an earlier draft that read the raw row shape directly —
+`rowValue = row.group ? row.aggData?.[colId] : row.data?.[colId]` — the actual
+population walk, and the painted cell's own value in `stColorScaleCellStyle`,
+both go through `api.getCellValue({ rowNode, colKey })`. That resolves `field`,
+a `valueGetter`, and a pivot result column's value the way AG-Grid itself
+does, so a column whose `colId` differs from its `field` is not silently
+blank — a case the hand-rolled `row.data[colId]` lookup would have missed.
+This was unverified when first written; it now has e2e coverage in flat,
+grouped and pivot mode (`test/test_grid_color_scale.py`), and the pivot case
+in particular confirms `getCellValue` reaches a pivot result column's value
+without the manual group/leaf branch this draft proposed.
 
 Footer and pinned rows are excluded from the population **and** are never
 painted, matching `js_pivot_column_gradient_styler`, which is the only one of
@@ -378,21 +402,39 @@ never leaves a column unattached — the same reason the aggregator registration
 live there.
 
 It walks `columnDefs` with the existing `eachColDef` from `aggFuncs/foldSums`,
-not a second copy, and attaches by the same rule `registerAggFunc` uses for a
-caller-supplied aggregator:
+not a second copy. Both the candidate predicate and the caller-cellStyle check
+below turned out to need more than this document originally drafted:
 
 ```ts
-if (def.cellStyle) {
-  if (debug) console.log(
-    `[st_aggrid] cellStyle on "${colId}" was supplied by the caller and ` +
-    `overrides the built-in colour scale.`)
-} else {
-  def.cellStyle = stColorScaleCellStyle
+if (readColorScaleConfig(def, gridOptions.context) === null) return
+
+const source = callerCellStyleSource(def, gridOptions)
+if (source) {
+  // debug-gated for the colDef's own cellStyle or a columnTypes entry;
+  // an unconditional console.warn when the source is defaultColDef.cellStyle,
+  // because whoever set that never touched this column.
+  return
 }
+def.cellStyle = stColorScaleCellStyle
 ```
 
-A column is a candidate when `colDef.context.stColorScale` is present and not
-`false`. Resolution against the grid defaults happens later, per call.
+A column is a candidate when `readColorScaleConfig(def, gridOptions.context)`
+resolves to a non-null configuration — not, as first drafted, merely when
+"`colDef.context.stColorScale` is present and not `false`". The stricter check
+matters: a declaration that resolves to no valid `scheme` (e.g.
+`color_scale=True` with no grid-level default) must not occupy the `cellStyle`
+slot either, so the candidate check and the paint-time check in
+`stColorScaleCellStyle` share the same resolver rather than two versions of
+"is this column declared" drifting apart.
+
+`callerCellStyleSource` (`colorScales/index.ts`) also grew past a bare
+`def.cellStyle` check. AG-Grid resolves a cell's `cellStyle` from the colDef
+itself, over a `columnTypes` entry named through `def.type`, over
+`defaultColDef` — so a caller who never touched this column's own colDef can
+still shadow the built-in through either of the other two, most commonly a
+grid-wide `defaultColDef.cellStyle` set for alignment or fonts. All three are
+checked, in that same precedence order, so the reported source is the one that
+will actually render.
 
 The attached function does **not** close over the declaration; it re-reads it
 from `params.colDef.context` and `params.context` on every call. Phase 2 then
@@ -417,13 +459,27 @@ export function stColorScaleCellStyle(params: CellClassParams) {
   if (value === null) return null
   if (config.skipNonPositive && value <= 0) return null
 
-  const stats = statsFor(params.api, params.column.getColId(), node.level, config)
+  // `params.column`, not `.getColId()`: `statsFor` needs the `Column` object
+  // itself to call `api.getCellValue({ rowNode, colKey })` for every member of
+  // the population (see *Population* above). And the cache key needs
+  // `config.skipNonPositive` directly, not the whole `config` object — see
+  // *Statistics cache* below for why that key grew a third segment.
+  const stats = statsFor(params.api, params.column, node.level, config.skipNonPositive)
   if (!stats) return null
 
   const raw = config.mode === "minmax" ? minmaxT(stats, value) : zScore(stats, value)
   if (raw === null) return null
 
-  return { backgroundColor: colorFor(config.scheme, config.mode, raw) }
+  // `colorFor` takes the resolved `Normalized` shape (`{ mode, raw, intensity }`),
+  // not `(scheme, mode, raw)`: `intensity` is `zIntensity(raw)` under `zscore`
+  // and unused under `minmax`, and `schemes.ts` needs it as a single value to
+  // stay ignorant of which mode produced it.
+  const normalized = {
+    mode: config.mode,
+    raw,
+    intensity: config.mode === "zscore" ? zIntensity(raw) : 0,
+  }
+  return { backgroundColor: colorFor(config.scheme, normalized) }
 }
 ```
 
@@ -439,11 +495,19 @@ stays correct across `updateGridOptions`.
 const statsCache = new WeakMap<GridApi, Map<string, Stats | null>>()
 ```
 
-Keyed by `` `${colId}:${level}` ``. Level is part of the key because the
-population is level-scoped; `skipNonPositive` is not, because it is fixed per
-column and therefore already implied by `colId`. `null` is memoised too (an
-empty population is a stable answer for the generation), so the map is probed
-with `has()`, not by truthiness.
+Keyed by `` `${colId}:${level}:${skipNonPositive}` `` (`colorScales/
+population.ts`). Level is part of the key because the population is
+level-scoped. `skipNonPositive` is part of it too — this document originally
+left it out on the reasoning that it is "fixed per column and therefore
+already implied by `colId`", and review disproved that: the declaration is
+re-read per call (see `stColorScaleCellStyle` above), so within one grid's
+life the same `colId` can resolve to a different skip rule across a
+config-only Streamlit rerun that flips `skip_non_positive` on an existing
+column without changing `colId`. Keying on `colId` alone would let the old
+rule's population survive under the new one until some unrelated model change
+happened to clear the cache. `null` is memoised too (an empty population is a
+stable answer for the generation), so the map is probed with `has()`, not by
+truthiness.
 
 `attachColorScaleInvalidation(api)` is called from `onGridReady`, which already
 uses exactly this pattern — `addEventListener` plus a cleanup stored in a ref —
@@ -474,12 +538,27 @@ touches only the rendered viewport either way.
 `api.isDestroyed()` is checked before the refresh, since a Streamlit rerun can
 unmount the grid between the event and the frame.
 
+`clearStats` (exported from `colorScales/index.ts`) is also called directly,
+outside this event-driven path, from two sites in `AgGridComponent.tsx`: ahead
+of each of its two `redrawRows()` calls (the config-update effect, and the
+second redraw armed for once a column layout settles after that update).
+`redrawRows` re-evaluates every cell's `cellStyle` but does not raise
+`modelUpdated`, so `attachColorScaleInvalidation`'s listener never sees a
+config-only rerun — flipping a column's `skip_non_positive`, say — and would
+otherwise repaint from a population computed under the stale declaration.
+`clearStats` is exported for exactly this: it is load-bearing at both call
+sites, not an internal implementation detail of this module alone.
+
 ### Cost
 
-`O(rows)` per painted column per model generation, against today's
-`O(rows² × columns)` per repaint. The expensive part — the population walk over
-every row — happens once; the repaint that follows touches only the rendered
-viewport, which AG-Grid keeps to a few dozen rows.
+`O(rows × displayed group levels)` per painted column per model generation,
+against today's `O(rows² × columns)` per repaint — not the flat `O(rows)`
+originally claimed here. `statsFor` (`colorScales/population.ts`) walks the
+entire model once per `(colId, level)` pair via `forEachNodeAfterFilterAndSort`,
+filtering to `row.level === level`; a column painted at three displayed group
+levels — a three-level expanded pivot, say — pays three full walks, not one.
+The repaint that follows still touches only the rendered viewport, which
+AG-Grid keeps to a few dozen rows.
 
 ## Edge cases
 
@@ -493,7 +572,7 @@ viewport, which AG-Grid keeps to a few dozen rows.
 | Column acquired `aggFunc` at runtime with no declaration | `readColorScaleConfig` → `null` → not painted. The same "degrade sanely" principle `stRatio.ts` documents for an undeclared ratio column |
 | No `scheme` resolvable | Python validation raises before the browser sees it; the frontend still guards and logs under `debug` |
 | Grid destroyed before the scheduled frame | `api.isDestroyed()` guard |
-| Column already carries a `cellStyle` | Caller wins, built-in not attached, logged under `debug` |
+| Column already carries a `cellStyle` — its own, a `columnTypes` entry, or `defaultColDef`'s | Caller wins, built-in not attached. Logged under `debug` for the first two; an unconditional `console.warn` for `defaultColDef`, since whoever set that never touched the shadowed column |
 
 ## Testing
 
@@ -533,14 +612,30 @@ test) cover:
 6. `skip_non_positive` in both settings.
 7. A column carrying its own `cellStyle` is not painted.
 8. Footer / grand-total row not painted.
+9. Added at the final review, since nothing above exercised it: a grid built
+   through `GridOptionsBuilder`, with `configure_color_scale` for the
+   grid-level default and a bare `configure_column(field, color_scale=True)`
+   for the column that inherits it — the consumer's actual migration shape,
+   and the only coverage of `readColorScaleConfig`'s grid-defaults merge in
+   either language.
+10. Added at the same review: a grid-wide `defaultColDef.cellStyle`, with a
+    column carrying an otherwise-valid declaration, asserted unpainted — the
+    branch that can silently disable the feature for an entire grid.
 
 Cells are located by their `row-index` and `col-id` attributes, never by
 document order: AG-Grid positions rows absolutely and DOM order does not track
 display order.
 
 Colours are read with `getComputedStyle(cell).backgroundColor`, parsed, and
-compared channel-by-channel — the RGB channels exactly, alpha within `0.01`, as
-browsers reserialise alpha at their own precision.
+compared channel-by-channel. A flat `alpha` tolerance of `0.01`, as first
+proposed here, is superseded by `assert_painted`
+(`test/test_grid_color_scale.py`): Chromium stores a solid `rgba()` colour's
+alpha as an 8-bit fraction (`n / 255`) and re-serialises it as the *shortest*
+decimal string that round-trips to that same fraction, so both the expected
+and the actual alpha are snapped to that 1/255 grid — via `round(alpha * 255)`
+on each side — before comparing, rather than compared as raw floats within a
+tolerance band. RGB, which the browser never quantises, is compared exactly on
+both sides.
 
 ## Consumer migration (informative)
 

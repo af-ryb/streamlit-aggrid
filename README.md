@@ -419,7 +419,7 @@ gb.configure_color_scale(scheme="positive")          # grid-level defaults
 gb.configure_column("revenue", color_scale=True)     # inherit them
 gb.configure_column("arppu", color_scale={"scheme": "diverging"})
 gb.configure_column("installs", color_scale=False)   # explicitly off
-AgGrid(df, gridOptions=gb.build())
+AgGrid(df, grid_options=gb.build())
 ```
 
 A grid-level declaration paints nothing on its own — it supplies defaults, and
@@ -427,11 +427,11 @@ a column opts in with its own entry.
 
 #### Schemes
 
-| `scheme` | Default `mode` | Reads as |
-|---|---|---|
-| `neutral` | `zscore` | one blue hue, intensity = distance from the column mean |
-| `positive` | `minmax` | one green hue, palest at the column minimum |
-| `diverging` | `zscore` | red below the mean, green above it |
+| `scheme` | Default `mode` | Default `skip_non_positive` | Reads as |
+|---|---|---|---|
+| `neutral` | `zscore` | `True` | one blue hue, intensity = distance from the column mean |
+| `positive` | `minmax` | `False` | one green hue, palest at the column minimum |
+| `diverging` | `zscore` | `True` | red below the mean, green above it |
 
 #### Keys
 
@@ -463,11 +463,16 @@ A column keeps a `cellStyle` you supplied — on the colDef itself, on a
 `columnTypes` entry the column names through `type`, or on `defaultColDef` —
 and the built-in is not attached. A grid-wide `defaultColDef.cellStyle` for
 alignment or fonts therefore switches every colour scale in that grid off,
-which is worth knowing before you go looking for the bug elsewhere. Pass
-`debug=True` to `AgGrid` to log which source supplied the style.
+which is worth knowing before you go looking for the bug elsewhere. A
+`defaultColDef.cellStyle` shadowing a column's own declaration is always
+logged, via `console.warn`, since whoever set it never touched the shadowed
+column; a colDef's own `cellStyle` or a `columnTypes` entry is logged only
+under `debug=True`.
 
-Working examples: `test/grid_color_scale.py` builds three grids covering every
-scheme, both modes and both `skip_non_positive` settings;
+Working examples: `test/grid_color_scale.py` builds five grids covering every
+scheme, both modes, both `skip_non_positive` settings, the `GridOptionsBuilder`
+path (a grid-level default inherited via a bare `color_scale=True`), and a
+grid-wide `defaultColDef.cellStyle` that disables the scale entirely;
 `test/test_grid_color_scale.py` asserts what each one paints, against the
 reference arithmetic in `test/color_scale_fixture.py`.
 
