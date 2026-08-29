@@ -2691,11 +2691,19 @@ Expected: PASS.
 
 Add a section titled **"Declarative colour scales without JavaScript"**
 immediately after the existing "Declarative aggregation without JavaScript"
-section. Its content, verbatim (the outer fence below is four backticks so the
-nested Python block survives; do not copy the outer fence into the README):
+section.
+
+**Heading depth matters here.** The sibling section is `###`, nested under
+`## Core Concepts`, and its own subsections are `####`. `### Export and
+clipboard` and `### Toolbar` follow it at `###`. So the new section is a
+`###` with `####` subsections — a `##` would silently re-parent those two
+unrelated sections underneath it in every outline view.
+
+Its content, verbatim (the outer fence below is four backticks so the nested
+Python block survives; do not copy the outer fence into the README):
 
 ````markdown
-## Declarative colour scales without JavaScript
+### Declarative colour scales without JavaScript
 
 A numeric column can be painted as a heat map from a declaration, with no
 `JsCode` and no `allow_unsafe_jscode`.
@@ -2712,7 +2720,7 @@ AgGrid(df, gridOptions=gb.build())
 A grid-level declaration paints nothing on its own — it supplies defaults, and
 a column opts in with its own entry.
 
-### Schemes
+#### Schemes
 
 | `scheme` | Default `mode` | Reads as |
 |---|---|---|
@@ -2720,7 +2728,7 @@ a column opts in with its own entry.
 | `positive` | `minmax` | one green hue, palest at the column minimum |
 | `diverging` | `zscore` | red below the mean, green above it |
 
-### Keys
+#### Keys
 
 | Key | Values | Default |
 |---|---|---|
@@ -2733,7 +2741,7 @@ distance from the column's mean in standard deviations, leaves values within
 half a deviation of the mean unpainted, and paints nothing at all when the
 column is effectively uniform.
 
-### What a column is compared against
+#### What a column is compared against
 
 The rows of the same column **at the same group level**, after the current
 filter and sort. A group row's aggregate and a leaf's own value are not
@@ -2744,10 +2752,19 @@ are neither painted nor counted.
 Because the population is read after filtering, hiding rows re-scales the
 column rather than leaving a dead ramp.
 
-### Interaction with `cellStyle`
+#### Interaction with `cellStyle`
 
-A column that declares its own `cellStyle` keeps it; the built-in is not
-attached. Pass `debug=True` to `AgGrid` to log when that happens.
+A column keeps a `cellStyle` you supplied — on the colDef itself, on a
+`columnTypes` entry the column names through `type`, or on `defaultColDef` —
+and the built-in is not attached. A grid-wide `defaultColDef.cellStyle` for
+alignment or fonts therefore switches every colour scale in that grid off,
+which is worth knowing before you go looking for the bug elsewhere. Pass
+`debug=True` to `AgGrid` to log which source supplied the style.
+
+Working examples: `test/grid_color_scale.py` builds three grids covering every
+scheme, both modes and both `skip_non_positive` settings;
+`test/test_grid_color_scale.py` asserts what each one paints, against the
+reference arithmetic in `test/color_scale_fixture.py`.
 ````
 
 - [ ] **Step 4: Update CLAUDE.md**
