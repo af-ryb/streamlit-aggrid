@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from typing import Optional
 
 from st_aggrid.color_scale import COLOR_SCALE_CONTEXT_KEY
 from st_aggrid.shared import _get_all_column_props, _get_all_grid_options
@@ -165,7 +166,10 @@ class GridOptionsBuilder:
         self._grid_options["columnDefs"][field].update(col_def)
 
     def configure_color_scale(
-        self, scheme: str, mode: str = None, skip_non_positive: bool = None
+        self,
+        scheme: str,
+        mode: Optional[str] = None,
+        skip_non_positive: Optional[bool] = None,
     ):
         """Grid-level defaults for the built-in colour scales.
 

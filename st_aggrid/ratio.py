@@ -49,7 +49,7 @@ validates that shape directly. It does reuse ``_validate_fill_null`` and
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from st_aggrid._coldefs import column_label, iter_column_defs
 

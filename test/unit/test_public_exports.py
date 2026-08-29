@@ -93,10 +93,10 @@ def test_color_scale_names_are_importable_from_the_package_root():
     )
     from st_aggrid import color_scale as color_scale_module
 
-    assert st_aggrid.COLOR_SCALE_CONTEXT_KEY is color_scale_module.COLOR_SCALE_CONTEXT_KEY
-    assert st_aggrid.COLOR_SCALE_SCHEMES is color_scale_module.COLOR_SCALE_SCHEMES
-    assert st_aggrid.COLOR_SCALE_MODES is color_scale_module.COLOR_SCALE_MODES
-    assert st_aggrid.validate_color_scale_columns is validate_color_scale_columns
+    assert COLOR_SCALE_CONTEXT_KEY is color_scale_module.COLOR_SCALE_CONTEXT_KEY
+    assert COLOR_SCALE_SCHEMES is color_scale_module.COLOR_SCALE_SCHEMES
+    assert COLOR_SCALE_MODES is color_scale_module.COLOR_SCALE_MODES
+    assert validate_color_scale_columns is color_scale_module.validate_color_scale_columns
 
 
 def test_color_scale_literals_match_what_the_frontend_registers_under():

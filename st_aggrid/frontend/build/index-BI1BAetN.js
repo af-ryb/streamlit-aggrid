@@ -197067,8 +197067,11 @@ function qZt(e, t = !1) {
     if (jU(i, e.context) === null) return;
     const s = XZt(i, e);
     if (s) {
-      t && console.log(
-        `[st_aggrid] cellStyle on "${i.colId ?? i.field}" was supplied by ${s} and overrides the built-in colour scale.`
+      const n = i.colId ?? i.field;
+      s === "defaultColDef.cellStyle" ? console.warn(
+        `[st_aggrid] "${n}" declares a colour scale, but defaultColDef.cellStyle wins for every column in this grid, so the built-in was not attached and "${n}" will not be painted.`
+      ) : t && console.log(
+        `[st_aggrid] cellStyle on "${n}" was supplied by ${s} and overrides the built-in colour scale.`
       );
       return;
     }

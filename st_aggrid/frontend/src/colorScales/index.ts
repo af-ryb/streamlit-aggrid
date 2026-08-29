@@ -137,13 +137,21 @@ function callerCellStyleSource(def: ColDef, gridOptions: GridOptions): string | 
 /**
  * Attach `stColorScaleCellStyle` to every column carrying a declaration.
  *
- * A caller-supplied `cellStyle` wins and the built-in is not attached, logged
- * under `debug` — the same rule, for the same reason, that `registerAggFunc`
- * applies to a caller-supplied aggregator: a built-in is a default, not a
- * reservation, and a silently shadowed one would be baffling to track down.
- * "Caller-supplied" is checked through `callerCellStyleSource`, not just
- * `def.cellStyle`: `defaultColDef` and `columnTypes` can each supply one too,
- * and writing `def.cellStyle` unconditionally would silently displace either.
+ * A caller-supplied `cellStyle` wins and the built-in is not attached — the
+ * same rule, for the same reason, that `registerAggFunc` applies to a
+ * caller-supplied aggregator: a built-in is a default, not a reservation, and
+ * a silently shadowed one would be baffling to track down. "Caller-supplied"
+ * is checked through `callerCellStyleSource`, not just `def.cellStyle`:
+ * `defaultColDef` and `columnTypes` can each supply one too, and writing
+ * `def.cellStyle` unconditionally would silently displace either.
+ *
+ * Logging is not uniform across the three sources. A colDef's own `cellStyle`
+ * or a `columnTypes` entry named through `def.type` was written by someone
+ * working on that column, so it is logged only under `debug`. A grid-wide
+ * `defaultColDef.cellStyle` belongs to someone who never touched this column
+ * at all — most likely set for alignment or fonts on every column in the
+ * grid — and a debug-gated log leaves them nothing to find when it silently
+ * turns their colour scale off. That one is an unconditional `console.warn`.
  *
  * The attached function does not close over the declaration; it re-reads it
  * per call from `params.colDef.context` and `params.context`. Phase 2's
@@ -165,9 +173,16 @@ export function registerColorScales(
 
     const source = callerCellStyleSource(def, gridOptions)
     if (source) {
-      if (debug) {
+      const colId = def.colId ?? def.field
+      if (source === "defaultColDef.cellStyle") {
+        console.warn(
+          `[st_aggrid] "${colId}" declares a colour scale, but defaultColDef.cellStyle ` +
+            `wins for every column in this grid, so the built-in was not attached and ` +
+            `"${colId}" will not be painted.`
+        )
+      } else if (debug) {
         console.log(
-          `[st_aggrid] cellStyle on "${def.colId ?? def.field}" was supplied ` +
+          `[st_aggrid] cellStyle on "${colId}" was supplied ` +
             `by ${source} and overrides the built-in colour scale.`
         )
       }
@@ -199,8 +214,15 @@ function paintedColumnIds(api: GridApi): string[] {
  * control — so the refresh is the safety net that repaints anything already
  * drawn from stale statistics. `refreshCells` does not raise `modelUpdated`,
  * so this cannot loop; the `refreshing` flag says so explicitly rather than
- * leaving it implicit. Only the rendered viewport is repainted, so the cost is
- * a few dozen rows however large the grid is.
+ * leaving it implicit.
+ *
+ * The cost is not uniform across the repaint. `refreshCells` itself only
+ * re-renders the rendered viewport, a few dozen rows however large the grid
+ * is — but clearing the cache means the *first* cell it repaints in each
+ * `(column, level)` pays a full `statsFor` walk of the entire model, one
+ * `api.getCellValue` per row, to rebuild that entry. Still a large win over
+ * the per-cell `forEachNodeAfterFilterAndSort` scan this replaces, just not
+ * the flat "a few dozen rows total" cost that description alone would imply.
  */
 export function attachColorScaleInvalidation(api: GridApi): () => void {
   let frame = 0
