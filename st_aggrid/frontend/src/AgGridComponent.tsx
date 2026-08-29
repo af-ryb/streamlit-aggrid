@@ -35,6 +35,7 @@ import {
 
 import { parseGridOptions, parseData } from "./utils/parsers"
 import type { AgGridData } from "./types/AgGridTypes"
+import { attachColorScaleInvalidation } from "./colorScales"
 
 import "@fontsource/source-sans-pro"
 import "./AgGrid.css"
@@ -158,6 +159,10 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     { matches: 0, active: 0 }
   )
   const findCleanupRef = useRef<(() => void) | null>(null)
+  // Cleanup for the modelUpdated listener that invalidates the colour-scale
+  // statistics cache (registered in onGridReady). Held in a ref so the
+  // unmount effect can tear it down.
+  const colorScaleCleanupRef = useRef<(() => void) | null>(null)
 
   // Cell Notes (AG-Grid 35.3 Enterprise) store. Held in a ref (not state) so the
   // getNote/setNote closures read the live map at call time and never go stale,
@@ -776,6 +781,8 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       refitCleanupRef.current = null
       findCleanupRef.current?.()
       findCleanupRef.current = null
+      colorScaleCleanupRef.current?.()
+      colorScaleCleanupRef.current = null
       rowGroupOrderCleanupRef.current?.()
       rowGroupOrderCleanupRef.current = null
       redrawSettleCleanupRef.current?.()
@@ -809,6 +816,11 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           event.api.removeEventListener("findChanged", onFindChanged)
         }
       }
+
+      // Colour-scale statistics are memoised per column per model generation;
+      // this drops them and repaints when filtering, sorting or new data
+      // changes what the population is. Torn down in the unmount effect.
+      colorScaleCleanupRef.current = attachColorScaleInvalidation(event.api)
 
       // Keep the multipleColumns auto-group columns in row-group order whenever
       // the row grouping changes by ANY means — including an interactive
