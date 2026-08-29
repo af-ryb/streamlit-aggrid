@@ -5,6 +5,7 @@
 #   scripts/release.sh 2.4.0            # check everything, create the tag locally
 #   scripts/release.sh 2.4.0 --push     # ... and push it to origin
 #   scripts/release.sh 2.4.0 --quick    # skip the browser suite (see below)
+#   scripts/release.sh 2.4.0 --dry-run  # run every gate, create no tag
 #   scripts/release.sh 2.4.0 -m "..."   # custom annotation message
 #
 # Why this exists rather than a bare `git tag`:
@@ -33,11 +34,19 @@ readonly BUILD_DIR="st_aggrid/frontend/build"
 readonly FRONTEND_DIR="st_aggrid/frontend"
 
 die() { printf '\n\033[31mrelease: %s\033[0m\n' "$*" >&2; exit 1; }
+warn() { printf '    \033[33mwarn\033[0m %s\n' "$*"; }
+
+# Under --dry-run the checks about *where you are* — the branch, its remote,
+# whether the tag is taken — soften to warnings, so the gates can be exercised
+# from a feature branch before this script is itself merged. The checks about
+# *what you would ship* — the declared versions, the lockfile, the bundle, the
+# typecheck, the tests — stay fatal, because those are the point of a dry run.
+place_gate() { if [ "$DRY_RUN" -eq 1 ]; then warn "$*"; else die "$*"; fi; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok() { printf '    \033[32mok\033[0m  %s\n' "$*"; }
 
 usage() {
-    sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -49,11 +58,13 @@ VERSION=""
 MESSAGE=""
 PUSH=0
 QUICK=0
+DRY_RUN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --push)  PUSH=1; shift ;;
         --quick) QUICK=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
         -m)      MESSAGE="${2:-}"; [ -n "$MESSAGE" ] || die "-m needs a message"; shift 2 ;;
         -h|--help) usage 0 ;;
         -*)      die "unknown flag: $1" ;;
@@ -62,6 +73,8 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$VERSION" ] || usage 1
+[ "$DRY_RUN" -eq 1 ] && [ "$PUSH" -eq 1 ] && die "--dry-run and --push contradict each other"
+
 
 # Accept `2.4.0` or `v2.4.0`; the tag carries the `v`, pyproject.toml does not.
 VERSION="${VERSION#v}"
@@ -82,10 +95,10 @@ cd "$(git rev-parse --show-toplevel)"
 step "Tag $TAG is unused"
 
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-    die "$TAG already exists locally. A published tag must never move — ship the next patch version instead."
+    place_gate "$TAG already exists locally. A published tag must never move — ship the next patch version instead."
 fi
 if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-    die "$TAG already exists on origin. A published tag must never move — ship the next patch version instead."
+    place_gate "$TAG already exists on origin. A published tag must never move — ship the next patch version instead."
 fi
 ok "$TAG is free"
 
@@ -96,15 +109,15 @@ ok "$TAG is free"
 step "Working tree is $RELEASE_BRANCH, clean and current"
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
-[ "$branch" = "$RELEASE_BRANCH" ] || die "on '$branch'; releases are tagged from '$RELEASE_BRANCH'"
+[ "$branch" = "$RELEASE_BRANCH" ] || place_gate "on '$branch'; releases are tagged from '$RELEASE_BRANCH'"
 
 [ -z "$(git status --porcelain)" ] || die "working tree is dirty; commit or stash first"
 
-git fetch --quiet origin "$RELEASE_BRANCH"
+git fetch --quiet origin "$RELEASE_BRANCH" 2>/dev/null || place_gate "could not fetch origin/$RELEASE_BRANCH"
 local_head="$(git rev-parse HEAD)"
 remote_head="$(git rev-parse "origin/$RELEASE_BRANCH")"
 if [ "$local_head" != "$remote_head" ]; then
-    die "HEAD ($(git rev-parse --short HEAD)) differs from origin/$RELEASE_BRANCH ($(git rev-parse --short "origin/$RELEASE_BRANCH")); pull or push first"
+    place_gate "HEAD ($(git rev-parse --short HEAD)) differs from origin/$RELEASE_BRANCH ($(git rev-parse --short "origin/$RELEASE_BRANCH")); pull or push first"
 fi
 ok "$RELEASE_BRANCH at $(git rev-parse --short HEAD), in sync with origin"
 
@@ -203,6 +216,13 @@ ok "tests passed"
 # ---------------------------------------------------------------------------
 # 6. Tag
 # ---------------------------------------------------------------------------
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    step "Dry run — no tag created"
+    printf '\nEvery gate that judges what would ship has passed for %s.\n' "$VERSION"
+    printf 'Re-run on %s without --dry-run to create the tag.\n\n' "$RELEASE_BRANCH"
+    exit 0
+fi
 
 step "Creating annotated tag $TAG"
 
