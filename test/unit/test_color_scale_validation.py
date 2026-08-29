@@ -17,6 +17,7 @@ from st_aggrid.color_scale import (
     COLOR_SCALE_CONTEXT_KEY,
     COLOR_SCALE_MODES,
     COLOR_SCALE_SCHEMES,
+    _merge_declaration,
     validate_color_scale_columns,
 )
 
@@ -140,3 +141,43 @@ def test_a_sibling_context_key_is_left_alone():
 def test_non_dict_grid_options_is_a_no_op():
     validate_color_scale_columns(None)
     validate_color_scale_columns("not grid options")
+
+
+# `_merge_declaration` implements the column-over-grid-defaults rule that
+# `validate_color_scale_columns` relies on. That rule is invisible to the
+# raise/no-raise tests above: every case they cover pre-validates both
+# operands individually before the merge, and the only post-merge check is a
+# set-membership test on 'scheme' that cannot tell which operand supplied the
+# winning value. So the precedence itself is asserted directly here, against
+# the helper's return value.
+
+
+def test_merge_a_column_value_beats_the_grid_value_for_the_same_key():
+    assert _merge_declaration({"scheme": "positive"}, {"scheme": "neutral"}) == {
+        "scheme": "neutral"
+    }
+
+
+def test_merge_a_grid_only_key_survives():
+    assert _merge_declaration({"scheme": "positive", "mode": "zscore"}, {"scheme": "neutral"}) == {
+        "scheme": "neutral",
+        "mode": "zscore",
+    }
+
+
+def test_merge_a_column_only_key_survives():
+    assert _merge_declaration({"scheme": "positive"}, {"skip_non_positive": True}) == {
+        "scheme": "positive",
+        "skip_non_positive": True,
+    }
+
+
+def test_merge_an_empty_column_declaration_yields_the_grid_defaults_unchanged():
+    # This is the `color_scale=True` case: `own` is `{}`.
+    grid_declaration = {"scheme": "positive", "mode": "minmax"}
+    assert _merge_declaration(grid_declaration, {}) == grid_declaration
+
+
+def test_merge_a_none_grid_declaration_yields_the_column_s_own_dict():
+    own = {"scheme": "neutral"}
+    assert _merge_declaration(None, own) == own

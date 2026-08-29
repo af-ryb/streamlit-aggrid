@@ -79,6 +79,14 @@ def _validate_declaration(declaration: dict, where: str) -> None:
         )
 
 
+def _merge_declaration(grid_declaration: Optional[dict], own: dict) -> dict:
+    """The single place the column-over-grid-defaults rule lives: per key,
+    the column's own declaration wins over the grid-level default. The
+    frontend implements the same rule again in ``colorScales/index.ts``.
+    """
+    return {**(grid_declaration or {}), **own}
+
+
 def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
     """Raise ``ValueError`` for a malformed or unresolvable colour-scale
     declaration.
@@ -127,7 +135,7 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
 
         _validate_declaration(own, where)
 
-        merged = {**(grid_declaration or {}), **own}
+        merged = _merge_declaration(grid_declaration, own)
         if merged.get("scheme") not in COLOR_SCALE_SCHEMES:
             raise ValueError(
                 f"{where} resolves to no valid 'scheme'. Set one on the "
