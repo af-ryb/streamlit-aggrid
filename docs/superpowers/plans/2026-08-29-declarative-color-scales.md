@@ -2381,12 +2381,20 @@ First widen the import block at the top of `test/test_grid_color_scale.py` to:
 from color_scale_fixture import (
     column_values,
     expected_rgba,
+    half_up,
     is_scheme_color,
     region_totals,
 )
 from e2e_utils import StreamlitRunner
 from grid_dom import cell_backgrounds, read_rows
 ```
+
+Every assertion below goes through the `assert_painted` / `assert_unpainted`
+helpers Task 6 put in this file — never a bare `==` on an `(r, g, b, alpha)`
+tuple. Chromium stores a solid `rgba()` alpha as an 8-bit fraction and
+re-serialises it as the shortest string that round-trips, so a correctly
+painted cell fails an exact float comparison. `assert_painted` snaps both
+sides to that same 1/255 grid and keeps RGB exact.
 
 Then append:
 
@@ -2411,9 +2419,9 @@ def test_each_scheme_and_mode_matches_the_reference(page: Page, col_id, scheme, 
         expected = expected_rgba(scheme, METRIC_A, value, mode=mode)
         actual = painted[key][col_id]
         if expected is None:
-            assert not is_scheme_color(actual, scheme), f"{key}: {col_id} should be unpainted"
+            assert_unpainted(actual, scheme, f"{key}: {col_id}")
         else:
-            assert actual == expected, f"{key}: {col_id}"
+            assert_painted(actual, expected, f"{key}: {col_id}")
 
 
 def test_the_zscore_dead_zone_leaves_the_middle_rows_alone(page: Page):
@@ -2421,8 +2429,8 @@ def test_the_zscore_dead_zone_leaves_the_middle_rows_alone(page: Page):
     # than left to the parametrised loop: it is the one gate whose *absence*
     # would still produce plausible-looking colours.
     painted = cell_backgrounds(page, FLAT_GRID)
-    assert not is_scheme_color(painted["body:2"]["neu_zscore"], "neutral")
-    assert not is_scheme_color(painted["body:3"]["neu_zscore"], "neutral")
+    assert_unpainted(painted["body:2"]["neu_zscore"], "neutral", "body:2 (300)")
+    assert_unpainted(painted["body:3"]["neu_zscore"], "neutral", "body:3 (400)")
     assert is_scheme_color(painted["body:1"]["neu_zscore"], "neutral")
     assert is_scheme_color(painted["body:4"]["neu_zscore"], "neutral")
 
@@ -2430,19 +2438,19 @@ def test_the_zscore_dead_zone_leaves_the_middle_rows_alone(page: Page):
 def test_a_uniform_column_is_never_painted(page: Page):
     painted = cell_backgrounds(page, FLAT_GRID)
     for key in FLAT_ROWS:
-        assert not is_scheme_color(painted[key]["uniform"], "positive"), key
+        assert_unpainted(painted[key]["uniform"], "positive", key)
 
 
 def test_skip_non_positive_excludes_the_zero_and_the_negative(page: Page):
     painted = cell_backgrounds(page, FLAT_GRID)
     # DE is -5 and FR is 0: unpainted, and out of the population, so IT (10) is
     # the column minimum rather than a mid-ramp value.
-    assert not is_scheme_color(painted["body:0"]["skip_on"], "positive")
-    assert not is_scheme_color(painted["body:1"]["skip_on"], "positive")
+    assert_unpainted(painted["body:0"]["skip_on"], "positive", "body:0 (-5)")
+    assert_unpainted(painted["body:1"]["skip_on"], "positive", "body:1 (0)")
     for key, value in zip(FLAT_ROWS, METRIC_B):
         expected = expected_rgba("positive", METRIC_B, value, skip_non_positive=True)
         if expected is not None:
-            assert painted[key]["skip_on"] == expected, key
+            assert_painted(painted[key]["skip_on"], expected, key)
 
 
 def test_without_the_skip_the_negative_is_painted(page: Page):
@@ -2451,9 +2459,9 @@ def test_without_the_skip_the_negative_is_painted(page: Page):
         expected = expected_rgba("neutral", METRIC_B, value, skip_non_positive=False)
         actual = painted[key]["skip_off"]
         if expected is None:
-            assert not is_scheme_color(actual, "neutral"), key
+            assert_unpainted(actual, "neutral", key)
         else:
-            assert actual == expected, key
+            assert_painted(actual, expected, key)
 
 
 def test_a_caller_supplied_cell_style_wins(page: Page):
@@ -2461,7 +2469,7 @@ def test_a_caller_supplied_cell_style_wins(page: Page):
     # cellStyle: the built-in must not be attached at all.
     painted = cell_backgrounds(page, FLAT_GRID)
     for key in FLAT_ROWS:
-        assert painted[key]["own_style"] == (1, 2, 3, 1.0), key
+        assert_painted(painted[key]["own_style"], (1, 2, 3, 1.0), key)
 ```
 
 - [ ] **Step 2: Run them**
@@ -2494,12 +2502,12 @@ def test_group_rows_are_scaled_against_their_own_level(page: Page):
     totals = list(region_totals().values())
 
     # body:0 EU group, body:4 US group; leaves sit between and after them.
-    assert painted["body:0"]["grouped"] == expected_rgba("positive", totals, 600.0)
-    assert painted["body:4"]["grouped"] == expected_rgba("positive", totals, 1500.0)
+    assert_painted(painted["body:0"]["grouped"], expected_rgba("positive", totals, 600.0), "EU group")
+    assert_painted(painted["body:4"]["grouped"], expected_rgba("positive", totals, 1500.0), "US group")
 
     # And the leaves keep their own 100..600 scale.
-    assert painted["body:1"]["grouped"] == expected_rgba("positive", METRIC_A, 100.0)
-    assert painted["body:3"]["grouped"] == expected_rgba("positive", METRIC_A, 300.0)
+    assert_painted(painted["body:1"]["grouped"], expected_rgba("positive", METRIC_A, 100.0), "DE leaf")
+    assert_painted(painted["body:3"]["grouped"], expected_rgba("positive", METRIC_A, 300.0), "IT leaf")
 
     # The pooled-population answer, spelled out so the assertion above cannot
     # pass by coincidence.
@@ -2521,7 +2529,7 @@ def test_the_grand_total_row_is_not_painted(page: Page):
         if cells.get("ag-Grid-AutoColumn-region") == "Total"
     )
     painted = cell_backgrounds(page, GROUPED_GRID)
-    assert not is_scheme_color(painted[key].get("grouped"), "positive")
+    assert_unpainted(painted[key].get("grouped"), "positive", "grand total")
 
 
 def test_pivot_result_columns_are_scaled_column_by_column(page: Page):
@@ -2539,16 +2547,16 @@ def test_pivot_result_columns_are_scaled_column_by_column(page: Page):
     by_country = group_row_keys(page, PIVOT_GRID)
     eu_col, us_col = pivot_column_ids(page, PIVOT_GRID)
 
-    assert painted[by_country["DE"]][eu_col] == expected_rgba("positive", eu, 100.0)
-    assert painted[by_country["IT"]][eu_col] == expected_rgba("positive", eu, 300.0)
-    assert painted[by_country["CA"]][us_col] == expected_rgba("positive", us, 400.0)
-    assert painted[by_country["TX"]][us_col] == expected_rgba("positive", us, 600.0)
+    assert_painted(painted[by_country["DE"]][eu_col], expected_rgba("positive", eu, 100.0), "DE/EU")
+    assert_painted(painted[by_country["IT"]][eu_col], expected_rgba("positive", eu, 300.0), "IT/EU")
+    assert_painted(painted[by_country["CA"]][us_col], expected_rgba("positive", us, 400.0), "CA/US")
+    assert_painted(painted[by_country["TX"]][us_col], expected_rgba("positive", us, 600.0), "TX/US")
 
     # A country belongs to one region, so its cell in the other region's column
     # is empty — unpainted, and absent from that column's population, which the
     # three-value scales asserted above already depend on.
-    assert not is_scheme_color(painted[by_country["DE"]].get(us_col), "positive")
-    assert not is_scheme_color(painted[by_country["TX"]].get(eu_col), "positive")
+    assert_unpainted(painted[by_country["DE"]].get(us_col), "positive", "DE/US")
+    assert_unpainted(painted[by_country["TX"]].get(eu_col), "positive", "TX/EU")
 
     pooled = eu + us
     assert expected_rgba("positive", pooled, 300.0) != expected_rgba("positive", eu, 300.0)
@@ -2596,7 +2604,7 @@ def test_filtering_rescales_the_column(page: Page):
     """The reason the population is read after filter and sort, and the reason
     the cached statistics are invalidated on `modelUpdated`."""
     before = cell_backgrounds(page, FLAT_GRID)
-    assert before["body:0"]["pos_minmax"] == expected_rgba("positive", METRIC_A, 100.0)
+    assert_painted(before["body:0"]["pos_minmax"], expected_rgba("positive", METRIC_A, 100.0), "DE before")
 
     grid = page.locator(".ag-root-wrapper").nth(FLAT_GRID)
     grid.locator('.ag-floating-filter[col-id="region"] input').fill("EU")
@@ -2611,10 +2619,14 @@ def test_filtering_rescales_the_column(page: Page):
 
     after = cell_backgrounds(page, FLAT_GRID)
     eu_only = [100.0, 200.0, 300.0]
-    assert after["body:0"]["pos_minmax"] == expected_rgba("positive", eu_only, 100.0)
+    assert_painted(after["body:0"]["pos_minmax"], expected_rgba("positive", eu_only, 100.0), "DE after")
     # IT was mid-ramp over six rows and is the maximum over three.
-    assert after["body:2"]["pos_minmax"] == expected_rgba("positive", eu_only, 300.0)
-    assert after["body:2"]["pos_minmax"] != before["body:2"]["pos_minmax"]
+    assert_painted(after["body:2"]["pos_minmax"], expected_rgba("positive", eu_only, 300.0), "IT after")
+    # Both sides are browser output, so this one compares like with like — but
+    # via the 8-bit channel, which is the resolution the browser actually has.
+    assert half_up(after["body:2"]["pos_minmax"][3] * 255) != half_up(
+        before["body:2"]["pos_minmax"][3] * 255
+    )
 ```
 
 - [ ] **Step 5: Run them**
