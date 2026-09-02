@@ -136,9 +136,10 @@ class GridOptionsBuilder:
             color_scale (bool | dict, optional): opt this column into a
                 built-in colour scale. ``True`` inherits every setting from
                 the grid-level defaults set by `configure_color_scale`; a dict
-                overrides them key by key (``scheme``, ``mode``,
-                ``skip_non_positive``); ``False`` switches the column off
-                explicitly. ``None`` (the default) writes nothing.
+                overrides them key by key (``scheme``, ``mode``, ``scope``,
+                ``reverse``, ``skip_non_positive``, ``anchor``, ``span``,
+                ``color``); ``False`` switches the column off explicitly.
+                ``None`` (the default) writes nothing.
         """
         if not self._grid_options.get("columnDefs", None):
             self._grid_options["columnDefs"] = defaultdict(dict)
@@ -167,9 +168,15 @@ class GridOptionsBuilder:
 
     def configure_color_scale(
         self,
-        scheme: str,
+        scheme: Optional[str] = None,
         mode: Optional[str] = None,
         skip_non_positive: Optional[bool] = None,
+        *,
+        scope: Optional[str] = None,
+        reverse: Optional[bool] = None,
+        anchor: Optional[float] = None,
+        span: Optional[float] = None,
+        color: Optional[str] = None,
     ):
         """Grid-level defaults for the built-in colour scales.
 
@@ -179,20 +186,40 @@ class GridOptionsBuilder:
         dashboard's metric columns.
 
         Args:
-            scheme (str): "neutral", "positive" or "diverging".
-            mode (str, optional): "minmax" or "zscore". Defaults to the
-                scheme's own default when omitted.
+            scheme (str, optional): "neutral", "positive", "diverging",
+                "rank" or "fill". Optional because `mode="anchor"` with no
+                scheme is a complete default set (it resolves to "diverging").
+            mode (str, optional): "minmax", "zscore" or "anchor". Defaults to
+                the scheme's own default when omitted.
             skip_non_positive (bool, optional): leave zero and negative values
                 unpainted and out of the population. Defaults to the scheme's
                 own default when omitted.
+            scope (str, optional): "level" (every row at the same group depth,
+                the default) or "parent" (only the row's siblings under one
+                parent; top-level rows are then not painted).
+            reverse (bool, optional): flip the direction — palest at the
+                maximum, red above the mean, the minimum as the "best" rank.
+            anchor (float, optional): `mode="anchor"`'s reference value.
+            span (float, optional): `mode="anchor"`'s deviation that reaches
+                full intensity; must be greater than zero.
+            color (str, optional): `scheme="fill"`'s colour, any CSS colour
+                string, e.g. "var(--secondary-background-color)".
         """
-        declaration = {"scheme": scheme}
+        declaration = {}
         # An unset key is omitted rather than written as None: the scheme's own
         # default has to survive, and a null would override it.
-        if mode is not None:
-            declaration["mode"] = mode
-        if skip_non_positive is not None:
-            declaration["skip_non_positive"] = skip_non_positive
+        for key, value in (
+            ("scheme", scheme),
+            ("mode", mode),
+            ("skip_non_positive", skip_non_positive),
+            ("scope", scope),
+            ("reverse", reverse),
+            ("anchor", anchor),
+            ("span", span),
+            ("color", color),
+        ):
+            if value is not None:
+                declaration[key] = value
 
         context = dict(self._grid_options.get("context") or {})
         context[COLOR_SCALE_CONTEXT_KEY] = declaration
