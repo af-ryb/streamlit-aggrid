@@ -14,6 +14,7 @@ import {
   Scheme,
   SchemeName,
   colorFor,
+  isRampScheme,
 } from "./schemes"
 import { clearStats, extractValue, statsFor } from "./population"
 
@@ -65,7 +66,7 @@ export function readColorScaleConfig(
     skip_non_positive?: boolean
   }
 
-  const scheme = merged.scheme ? SCHEMES[merged.scheme] : undefined
+  const scheme = merged.scheme && isRampScheme(merged.scheme) ? SCHEMES[merged.scheme] : undefined
   if (!scheme) return null
 
   return {
