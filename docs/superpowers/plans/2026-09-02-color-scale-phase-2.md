@@ -1463,12 +1463,12 @@ node st_aggrid/frontend/src/colorScales/__checks__/schemes.check.ts
 ```
 Expected: `normalize.check.ts ok` and `schemes.check.ts ok`.
 
-`index.ts` still compiles against the old `ResolvedColorScale` at this point (it reads `scheme.defaultMode`, which is now `RampMode`, assignable to `ColorScaleMode`). Confirm:
+`index.ts` does **not** compile untouched at this point: its `SCHEMES[merged.scheme]` indexes a `Record<RampSchemeName, Scheme>` with a value that may now be `"rank" | "fill"`. Make the one-line interim fix — guard the lookup with `isRampScheme(merged.scheme)` and return `null` otherwise — so that
 
 ```bash
 cd st_aggrid/frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn tsc --noEmit
 ```
-Expected: silent.
+is silent. Task 6 replaces that whole section of `index.ts`, so keep the fix minimal.
 
 - [ ] **Step 6: Commit**
 
