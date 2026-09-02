@@ -84,6 +84,8 @@ assert.equal(colorFor(SCHEMES.diverging, anchor(-1)), "rgba(225, 18, 15, 0.7)")
 // linear ramp at u = 0.5 is 0.4. The line above holds 0.4.
 assert.equal(colorFor(SCHEMES.diverging, anchor(-0.09999999999999998)), "rgba(239, 18, 15, 0.16)")
 assert.equal(colorFor(SCHEMES.diverging, anchor(0.10000000000000009)), "rgba(35, 189, 40, 0.16)")
+assert.equal(colorFor(SCHEMES.positive, anchor(1)), "rgba(29, 158, 117, 0.55)")
+assert.equal(colorFor(SCHEMES.positive, anchor(-1)), "rgba(29, 158, 117, 0.55)")
 assert.equal(colorFor(SCHEMES.positive, anchor(-0.5)), "rgba(29, 158, 117, 0.305)")
 assert.equal(colorFor(SCHEMES.positive, anchor(0.25)), "rgba(29, 158, 117, 0.183)")
 assert.equal(colorFor(SCHEMES.neutral, anchor(1)), "rgba(51, 120, 200, 0.55)")

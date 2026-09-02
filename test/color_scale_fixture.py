@@ -125,6 +125,11 @@ SCHEMES: dict[str, Scheme] = {
 #: fixed alpha. Derived, not typed, so it cannot drift from the ramp.
 RANK_ALPHA = 0.35
 
+#: `rank` is bold; everything else is the theme's normal weight. Computed
+#: `font-weight` values, as the browser reports them.
+RANK_FONT_WEIGHT = "600"
+NORMAL_FONT_WEIGHT = "400"
+
 
 def _neutral_z_alpha(abs_z: float) -> float:
     if abs_z < 1:

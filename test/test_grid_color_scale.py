@@ -15,6 +15,8 @@ import pytest
 from playwright.sync_api import Page
 
 from color_scale_fixture import (
+    NORMAL_FONT_WEIGHT,
+    RANK_FONT_WEIGHT,
     RANK_RGBA,
     column_values,
     expected_rank,
@@ -517,8 +519,8 @@ def test_rank_paints_only_the_maximum(page: Page):
             assert_painted(painted[key]["rank_max"], RANK_RGBA, f"{key}: rank_max")
         else:
             assert_unpainted(painted[key]["rank_max"], "rank", f"{key}: rank_max")
-    assert font_weight(page, PHASE2_FLAT_GRID, 5, "rank_max") == "600"
-    assert font_weight(page, PHASE2_FLAT_GRID, 4, "rank_max") == "400"
+    assert font_weight(page, PHASE2_FLAT_GRID, 5, "rank_max") == RANK_FONT_WEIGHT
+    assert font_weight(page, PHASE2_FLAT_GRID, 4, "rank_max") == NORMAL_FONT_WEIGHT
 
 
 def test_rank_reverse_paints_only_the_minimum(page: Page):
@@ -528,7 +530,7 @@ def test_rank_reverse_paints_only_the_minimum(page: Page):
             assert_painted(painted[key]["rank_min"], RANK_RGBA, f"{key}: rank_min")
         else:
             assert_unpainted(painted[key]["rank_min"], "rank", f"{key}: rank_min")
-    assert font_weight(page, PHASE2_FLAT_GRID, 0, "rank_min") == "600"
+    assert font_weight(page, PHASE2_FLAT_GRID, 0, "rank_min") == RANK_FONT_WEIGHT
 
 
 def test_fill_paints_every_row_with_the_literal_colour(page: Page):
@@ -684,3 +686,64 @@ def test_filtering_another_group_away_does_not_rescale_a_parent_scoped_column(pa
     # Re-scaled: FR is now mid-ramp over three rows, not over six.
     assert_painted(after["body:2"]["level_pos"], expected_rgba("positive", EU_VALUES, 200.0), "FR level after")
     assert _alpha_channel(after["body:2"]["level_pos"][3]) != _alpha_channel(before["body:2"]["level_pos"][3])
+
+
+def test_a_cell_that_stops_being_the_winner_loses_its_highlight(page: Page):
+    """A painted cell must be *un*painted when the next model generation
+    says so. `cellStyle` returning `null` does not clear a cell's previous
+    inline style under ag-grid-react, so without an explicit clearing style
+    the interim winner would keep its highlight after the filter is cleared
+    — two winners on screen.
+
+    Filtered to `lessThan 15`, IT (300) is `level_rank`'s leaf winner over
+    100..300; cleared, TX (600) is, and IT must go back to plain.
+    """
+    grid = page.locator(".ag-root-wrapper").nth(SCOPE_GRID)
+    filter_input = grid.locator('.ag-floating-filter[col-id="metric_b"] input:not([disabled])')
+
+    filter_input.fill("15")
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 5;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    # IT keeps row-index 3 through both transitions; wait for it to become the winner.
+    page.wait_for_function(
+        """([gridIndex, weight]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="3"] .ag-cell[col-id="level_rank"]');
+             return !!cell && getComputedStyle(cell).fontWeight === weight;
+           }""",
+        arg=[SCOPE_GRID, RANK_FONT_WEIGHT],
+        timeout=10000,
+    )
+    filtered = cell_backgrounds(page, SCOPE_GRID)
+    assert_painted(filtered["body:3"]["level_rank"], RANK_RGBA, "IT while filtered")
+
+    filter_input.fill("")
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 9;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    # TX is a fresh row comp painted from the new population; once it wears
+    # the highlight, the repaint pass that must also clear IT has run.
+    page.wait_for_function(
+        """([gridIndex, weight]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="7"] .ag-cell[col-id="level_rank"]');
+             return !!cell && getComputedStyle(cell).fontWeight === weight;
+           }""",
+        arg=[SCOPE_GRID, RANK_FONT_WEIGHT],
+        timeout=10000,
+    )
+    cleared = cell_backgrounds(page, SCOPE_GRID)
+    assert_painted(cleared["body:7"]["level_rank"], RANK_RGBA, "TX after clearing")
+    assert_unpainted(cleared["body:3"]["level_rank"], "rank", "IT after clearing")
+    assert font_weight(page, SCOPE_GRID, 3, "level_rank") == NORMAL_FONT_WEIGHT

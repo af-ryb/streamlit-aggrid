@@ -30,6 +30,15 @@ export { clearStats }
  * Matches `st_aggrid/color_scale.py`'s COLOR_SCALE_CONTEXT_KEY. */
 export const ST_COLOR_SCALE = "stColorScale"
 
+/** What an unpainted cell returns once a declaration has resolved. Not
+ * `null`: ag-grid-react keeps a cell's previous inline style when the
+ * callback returns nothing, so a cell that was painted in one model
+ * generation and is not in the next would keep the old colour — for
+ * `rank`, a stale second winner after a filter is cleared. Empty strings
+ * remove exactly the two properties any built-in style can set and leave
+ * the theme's own painting untouched. Always spread into a fresh object. */
+const UNPAINTED: CellStyle = { backgroundColor: "", fontWeight: "" }
+
 /** The raw, merged declaration. Every key optional; the shape Python's
  * validator accepts. */
 interface Declaration {
@@ -147,8 +156,9 @@ export function readColorScaleConfig(
   return null
 }
 
-/** The built-in `cellStyle`. Returns `null` — not `{}` — for an unpainted cell,
- * so the theme paints it as it normally would.
+/** The built-in `cellStyle`. Returns `null` only when no declaration resolves.
+ * Every other unpainted outcome returns `UNPAINTED` (see above) so a cell that
+ * stops being painted actually loses its colour.
  *
  * `fill` is answered before the footer/pinned guard the other kinds share: a
  * fill marks a column as structural, and a stripe that stopped at the grand
@@ -159,17 +169,17 @@ export function stColorScaleCellStyle(params: CellClassParams): CellStyle | null
   if (config.kind === "fill") return { backgroundColor: config.color }
 
   const node = params.node
-  if (!node || node.footer || node.rowPinned != null) return null
+  if (!node || node.footer || node.rowPinned != null) return { ...UNPAINTED }
 
   const value = extractValue(params.value)
-  if (value === null) return null
-  if (config.skipNonPositive && value <= 0) return null
+  if (value === null) return { ...UNPAINTED }
+  if (config.skipNonPositive && value <= 0) return { ...UNPAINTED }
 
   if (config.kind === "anchor") {
     let d = anchorD(config.anchor, config.span, value)
     if (config.reverse) d = -d
     // `-0 === 0`, so a reversed exact anchor stays unpainted too.
-    if (d === 0) return null
+    if (d === 0) return { ...UNPAINTED }
     return {
       backgroundColor: colorFor(config.scheme, { mode: "anchor", raw: d, intensity: Math.abs(d) }),
     }
@@ -177,7 +187,7 @@ export function stColorScaleCellStyle(params: CellClassParams): CellStyle | null
 
   // Population-based from here on. Under parent scope a top-level row has no
   // siblings to be compared with — it is one of the groups.
-  if (config.scope === "parent" && isTopLevel(node)) return null
+  if (config.scope === "parent" && isTopLevel(node)) return { ...UNPAINTED }
   const stats = statsFor(
     params.api,
     params.column as Column,
@@ -185,19 +195,19 @@ export function stColorScaleCellStyle(params: CellClassParams): CellStyle | null
     config.scope,
     config.skipNonPositive
   )
-  if (!stats) return null
+  if (!stats) return { ...UNPAINTED }
 
   if (config.kind === "rank") {
     // "Best of one" carries no information — the same rule the ramps apply
     // through their spread gates. Equality is exact: both sides come from the
     // same `getCellValue` walk, so the best *is* one of the values.
-    if (stats.count < 2) return null
+    if (stats.count < 2) return { ...UNPAINTED }
     const best = config.reverse ? stats.min : stats.max
-    return value === best ? { ...RANK_STYLE } : null
+    return value === best ? { ...RANK_STYLE } : { ...UNPAINTED }
   }
 
   let raw = config.mode === "minmax" ? minmaxT(stats, value) : zScore(stats, value)
-  if (raw === null) return null
+  if (raw === null) return { ...UNPAINTED }
   // The dead zone and the uniformity gate are symmetric, so flipping after
   // them is equivalent to flipping before.
   if (config.reverse) raw = config.mode === "minmax" ? 1 - raw : -raw

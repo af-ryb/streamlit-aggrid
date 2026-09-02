@@ -148,8 +148,9 @@ export function statsFor(
 }
 
 /** One pass over the model that buckets every qualifying row's value by its
- * parent and writes one `Stats` per parent into the cache. Top-level rows
- * (parent is the root) are skipped, per `isTopLevel`. */
+ * parent and writes one `Stats` — or `null` for a parent with no qualifying
+ * values — per parent into the cache. Top-level rows (parent is the root) are
+ * skipped, per `isTopLevel`. */
 function fillParentStats(
   api: GridApi,
   column: Column,
@@ -161,19 +162,25 @@ function fillParentStats(
   api.forEachNodeAfterFilterAndSort((row: IRowNode) => {
     if (row.footer || row.rowPinned != null) return
     if (isTopLevel(row)) return
-    const value = extractValue(api.getCellValue({ rowNode: row, colKey: column }))
-    if (value === null) return
-    if (skipNonPositive && value <= 0) return
+    // Seeded on first sight of a parent, before the value gates: a parent
+    // whose children all fail them still gets an entry, so the next cell of
+    // that parent reads the memoised `null` instead of triggering a walk.
     const parent = row.parent as IRowNode
     let values = buckets.get(parent)
     if (!values) {
       values = []
       buckets.set(parent, values)
     }
+    const value = extractValue(api.getCellValue({ rowNode: row, colKey: column }))
+    if (value === null) return
+    if (skipNonPositive && value <= 0) return
     values.push(value)
   })
 
   for (const [parent, values] of buckets) {
-    byKey.set(`${colId}:P${groupPath(parent)}:${skipNonPositive}`, popStats(values))
+    byKey.set(
+      `${colId}:P${groupPath(parent)}:${skipNonPositive}`,
+      values.length ? popStats(values) : null
+    )
   }
 }

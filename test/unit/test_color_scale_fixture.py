@@ -18,6 +18,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from color_scale_fixture import (  # noqa: E402
+    NORMAL_FONT_WEIGHT,
+    RANK_FONT_WEIGHT,
     RANK_RGBA,
     column_values,
     expected_rank,
@@ -362,3 +364,6 @@ def test_rank_rgba_is_the_saturated_diverging_green():
     assert RANK_RGBA == (35, 175, 40, 0.35)
     assert is_scheme_color(RANK_RGBA, "rank")
     assert not is_scheme_color((29, 158, 117, 0.35), "rank")
+    # The other half of `RANK_STYLE`: the weights the e2e suite reads back
+    # from `getComputedStyle`, owned here rather than typed at each call site.
+    assert (RANK_FONT_WEIGHT, NORMAL_FONT_WEIGHT) == ("600", "400")

@@ -419,7 +419,7 @@ gb.configure_color_scale(scheme="positive")          # grid-level defaults
 gb.configure_column("revenue", color_scale=True)     # inherit them
 gb.configure_column("arppu", color_scale={"scheme": "diverging"})
 gb.configure_column("cpi", color_scale={"scheme": "positive", "reverse": True})   # lower is better
-gb.configure_column("growth", color_scale={"mode": "anchor", "anchor": 1.0, "span": 1.0})
+gb.configure_column("growth", color_scale={"scheme": "diverging", "mode": "anchor", "anchor": 1.0, "span": 1.0})
 gb.configure_column("best", color_scale={"scheme": "rank", "scope": "parent"})
 gb.configure_column("installs", color_scale={"scheme": "fill", "color": "var(--secondary-background-color)"})
 gb.configure_column("notes", color_scale=False)      # explicitly off
@@ -436,7 +436,7 @@ a column opts in with its own entry.
 | `neutral` | `zscore` | `True` | one blue hue, intensity = distance from the column mean |
 | `positive` | `minmax` | `False` | one green hue, palest at the column minimum |
 | `diverging` | `zscore` | `True` | red below the mean, green above it |
-| `rank` | — | `False` | the best value in the population — the maximum, or the minimum under `reverse` — in bold on green; nothing else is painted. A population of one paints nothing |
+| `rank` | — | `False` | the best value in the population — the maximum, or the minimum under `reverse` — in bold on green; nothing else is painted. A population of one paints nothing. Recomputed after every filter and sort, like every population here — unlike a maximum precomputed in the data |
 | `fill` | — | — | one constant colour on every cell of the column, including group rows, the grand total and pinned rows |
 
 #### Keys
@@ -470,8 +470,10 @@ deviation's magnitude is the intensity.
 
 `reverse` flips the direction: palest at the maximum under `minmax`, red
 above the mean under `zscore` and `anchor`, the minimum as the winner under
-`rank`. It has no visible effect on `neutral` + `zscore`, whose hue depends
-on the magnitude of the z-score alone.
+`rank`. On a single-hue scheme (`neutral`, `positive`) it is
+visible only under `minmax`: under `zscore` and `anchor` those schemes take
+their intensity from the magnitude of the deviation alone, so the flag
+changes nothing.
 
 #### What a column is compared against
 

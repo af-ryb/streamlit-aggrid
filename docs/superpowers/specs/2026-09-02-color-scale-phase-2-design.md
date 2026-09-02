@@ -252,10 +252,11 @@ Applied to the normalised value, after the gates and before colour:
 | `rank` | best = minimum instead of maximum |
 | `fill` | none |
 
-Under `neutral` + `zscore` the flag has no visible effect — that scheme's hue
-is a function of `|z|` alone. Documented in README; not an error, because a
-grid-level `reverse` default must be allowed to coexist with a `neutral`
-column.
+On a single-hue scheme (`neutral`, `positive`) it is visible only under
+`minmax`: under `zscore` and `anchor` those schemes take their intensity from
+the magnitude of the deviation alone, so the flag changes nothing. Documented
+in README; not an error, because a grid-level `reverse` default must be
+allowed to coexist with a `neutral` column.
 
 ### Where each piece of the arithmetic lives
 
@@ -319,7 +320,7 @@ component's situation, noted so nobody debugs it later.)
 
 The 2.4.0 rule, on the 2.4.0 code: the same column, the same `node.level`,
 after filter and sort; grand total and pinned rows neither painted nor
-counted. Cache key `${colId}:L${level}:${skipNonPositive}`. The walk that
+counted. Cache key `${colId}:${level}:${skipNonPositive}`. The walk that
 fills it is not edited.
 
 ### `scope: "parent"`
@@ -346,9 +347,10 @@ contains a separator unambiguous too.
 
 **One walk fills every parent.** A miss for `(colId, parent-scope, skip)`
 runs `forEachNodeAfterFilterAndSort` once, bucketing each qualifying row's
-value by its parent (a `Map<IRowNode, number[]>`), then writes one `Stats`
-(or `null`) per parent into the cache under that parent's chain key, and the
-requested key as `null` if its parent had no values. The cost of a generation
+value by its parent (a `Map<IRowNode, number[]>`), then writes one `Stats` — or
+`null` for a parent with no qualifying values — per parent into the cache
+under that parent's chain key, and the requested key as `null` if its parent
+was never seen by the walk. The cost of a generation
 is therefore one pass per painted column, the same as level scoping — not
 one pass per group. A naive "walk on every miss" would be `O(groups × rows)`
 and would show on the long-form pivot this exists for.
@@ -385,18 +387,23 @@ expresses its fills as declarations, the slot is free for everything else.
 ```
 config = readColorScaleConfig(params.colDef, params.context);  null → null
 config.kind === "fill"                                  → { backgroundColor }
-node.footer || node.rowPinned != null                   → null
-value = extractValue(params.value);  null → null
-config.skipNonPositive && value <= 0                    → null
-config.kind === "ramp" && config.mode === "anchor"      → raw = anchorD(...)   (no population)
+node.footer || node.rowPinned != null                   → UNPAINTED
+value = extractValue(params.value);  null → UNPAINTED
+config.skipNonPositive && value <= 0                    → UNPAINTED
+config.kind === "anchor"                                → raw = anchorD(...)   (no population)
 else:
-    config.scope === "parent" && isTopLevel(node)       → null
-    stats = statsFor(api, column, node, config.scope, config.skipNonPositive);  null → null
+    config.scope === "parent" && isTopLevel(node)       → UNPAINTED
+    stats = statsFor(api, column, node, config.scope, config.skipNonPositive);  null → UNPAINTED
     config.kind === "rank"                              → (see Schemes / rank)
-    raw = minmaxT | zScore;  null → null
-raw = reverse ? flip(raw) : raw;   anchor && raw === 0  → null
+    raw = minmaxT | zScore;  null → UNPAINTED
+raw = reverse ? flip(raw) : raw;   anchor && raw === 0  → UNPAINTED
 → { backgroundColor: colorFor(scheme, normalized) }
 ```
+
+`UNPAINTED` is `{backgroundColor: "", fontWeight: ""}` — ag-grid-react keeps
+a cell's previous inline style when the callback returns `null`, so an
+unpainted outcome must clear explicitly; only "no declaration resolves"
+returns `null`.
 
 ## Behaviour changes against the JavaScript being replaced
 
@@ -414,6 +421,9 @@ Stated here so the consumer's golden runs are read correctly.
   a single A/B group no longer highlights it.
 - **`installs` fills are pixel-identical**: the same variable, now resolved by
   the browser instead of read through `getComputedStyle`.
+- **`rank` recomputes after filtering and sorting**, like every population
+  here; the retired styler compared against a maximum precomputed in pandas,
+  which never moved.
 - **The eight 2.4.0 grids are unchanged**, by construction: they write none
   of the new keys and run the unedited level-scoped walk.
 
@@ -522,6 +532,11 @@ colours they had — their population did not change — where `level_pos`'s
 re-scale to `100..300` (the 2.4.0 behaviour grid 0 already pins, now
 observed side by side). This is the one property of parent scoping that a
 static grid cannot show.
+
+And one transition test: a cell that is `level_rank`'s winner while the grid
+is filtered must lose the highlight when the filter is cleared and another
+row becomes the winner — the case where returning `null` from `cellStyle`
+would leave a stale second winner on screen.
 
 Every expected colour comes through `expected_rgba` / `expected_rank` / the
 fixture's constants, never a literal in the test; comparison stays on the
