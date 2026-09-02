@@ -102,7 +102,8 @@ fill:  color must be a non-empty string     →  { kind: "fill", color }
 rank:  → { kind: "rank", scope, reverse, skipNonPositive }
 ramp:  mode = merged.mode ?? scheme.defaultMode
        mode === "anchor": anchor finite, span finite and > 0   (else: not painted / raise)
-       → { kind: "ramp", scheme, mode, scope, reverse, skipNonPositive, anchor?, span? }
+                          → { kind: "anchor", scheme, reverse, skipNonPositive, anchor, span }
+       mode minmax|zscore → { kind: "ramp", scheme, mode, scope, reverse, skipNonPositive }
 
 scope           = merged.scope ?? "level"
 reverse         = merged.reverse === true
@@ -115,9 +116,13 @@ that asked for the mode specified this default. It applies only when no
 scheme resolves at either level; an explicit `scheme` always wins.
 
 `ResolvedColorScale` becomes a discriminated union on `kind` — `"ramp"`,
-`"rank"`, `"fill"` — so the cell-style function dispatches on one field and
-the TypeScript compiler, not a runtime check, guarantees a `fill` never
-reaches `statsFor`.
+`"anchor"`, `"rank"`, `"fill"` — so the cell-style function dispatches on one
+field and the TypeScript compiler, not a runtime check, guarantees a `fill`
+never reaches `statsFor` and an `anchor` always carries its two numbers.
+(`anchor` is a *mode* in the declaration and a *kind* once resolved: the
+declaration keeps the user-facing shape the task asked for, the resolved
+config keeps the type honest — a ramp kind with optional `anchor?`/`span?`
+would let the compiler accept an anchored config missing both.)
 
 ### Schemes
 
@@ -181,8 +186,9 @@ COLOR_SCALE_SCOPES  = ("level", "parent")          # new
   as today: `1` is rejected.
 - `anchor` not a finite number, `span` not a finite number or `<= 0` →
   `ValueError`. "Number" is `ratio.py`'s `_is_number` rule (an `int` or
-  `float` that is not a `bool`) plus a finiteness check; hoist that predicate
-  into a shared helper rather than copy it.
+  `float` that is not a `bool`) plus a finiteness check; the predicate is
+  hoisted into `st_aggrid/_numbers.py` (`is_number`, `is_finite_number`) and
+  `ratio.py` imports it from there rather than keeping its own copy.
 - `color` not a `str`, or empty after `strip()` → `ValueError`. No attempt to
   parse CSS: the browser is the only authority on what a colour string means,
   and `var(--x)` cannot be checked from Python anyway.
@@ -506,12 +512,16 @@ the `go_to_app` wait moves from five root wrappers to seven.
 
 Plus one interaction test. The grouped `region` column is hidden, so the
 filter goes through a visible one: `metric_b` carries a floating
-`agNumberColumnFilter` with `filterParams: {defaultOption: "greaterThan"}`,
-and typing `15` keeps CA, NY, TX (`20, 30, 40`) and drops every EU row.
-After that, `parent_pos`'s US leaves keep exactly the colours they had — their
-population did not change — where `level_pos`'s re-scale to `400..600` (the
-2.4.0 behaviour grid 0 already pins, now observed side by side). This is the
-one property of parent scoping that a static grid cannot show.
+`agNumberColumnFilter` with `filterParams: {defaultOption: "lessThan"}`,
+and typing `15` keeps DE, FR, IT (`-5, 0, 10`) and drops every US row.
+Keeping EU rather than US is deliberate: the surviving leaves keep their
+row indices (`1..3`), so FR's `level_pos` cell changing colour in place is a
+usable repaint signal, the same one `test_filtering_rescales_the_column`
+already relies on. After that, `parent_pos`'s EU leaves keep exactly the
+colours they had — their population did not change — where `level_pos`'s
+re-scale to `100..300` (the 2.4.0 behaviour grid 0 already pins, now
+observed side by side). This is the one property of parent scoping that a
+static grid cannot show.
 
 Every expected colour comes through `expected_rgba` / `expected_rank` / the
 fixture's constants, never a literal in the test; comparison stays on the
