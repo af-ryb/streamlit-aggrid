@@ -847,7 +847,11 @@ def test_anchor_mode_measures_deviation_from_the_anchor_in_spans():
 
 def test_anchor_mode_clamps_at_one_span():
     assert expected_rgba("diverging", RATIO, 2.5, mode="anchor", anchor=1.0, span=1.0) == (35, 175, 40, 0.7)
-    assert expected_rgba("diverging", RATIO, -3.0, mode="anchor", anchor=1.0, span=1.0) == (225, 18, 15, 0.7)
+    # -3.0 is non-positive, so diverging's default skip would gate it before
+    # the clamp is ever reached; the override is what lets the clamp show.
+    assert expected_rgba(
+        "diverging", RATIO, -3.0, mode="anchor", anchor=1.0, span=1.0, skip_non_positive=False
+    ) == (225, 18, 15, 0.7)
 
 
 def test_the_exact_anchor_is_unpainted():
