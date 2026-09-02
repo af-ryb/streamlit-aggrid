@@ -121,7 +121,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 6",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 7",
         timeout=60000,
     )
     # The grouped grid (index 1) is the last of the three to settle: 2 region
@@ -133,6 +133,15 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.wait_for_function(
         """() => {
              const grid = document.querySelectorAll('.ag-root-wrapper')[1];
+             return !!grid && grid.querySelectorAll('.ag-row').length >= 9;
+           }""",
+        timeout=60000,
+    )
+    # Grid 6 has the same nine rows — two groups, six leaves, the grand total —
+    # and is now the last grid on the page to finish.
+    page.wait_for_function(
+        """() => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[6];
              return !!grid && grid.querySelectorAll('.ag-row').length >= 9;
            }""",
         timeout=60000,
@@ -536,3 +545,142 @@ def test_fill_resolves_a_css_variable_through_the_host_page(page: Page):
     painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
     for key in FLAT_ROWS:
         assert_painted(painted[key]["fill_var"], (7, 8, 9, 1.0), f"{key}: fill_var")
+
+
+# --- Phase 2: grid 6 ----------------------------------------------------------
+#
+# Row layout with `groupDefaultExpanded: -1` and the fixture's data order:
+# body:0 EU group, body:1-3 DE FR IT, body:4 US group, body:5-7 CA NY TX, and
+# the grand total either as the last body row or in the pinned-bottom section
+# (located by label, never by index — see `test_the_grand_total_row_is_not_painted`).
+
+EU_LEAVES = {"body:1": 100.0, "body:2": 200.0, "body:3": 300.0}
+US_LEAVES = {"body:5": 400.0, "body:6": 500.0, "body:7": 600.0}
+EU_VALUES = region_values("EU", "metric_a")
+US_VALUES = region_values("US", "metric_a")
+
+
+def total_row_key(page: Page, grid_index: int) -> str:
+    rows = read_rows(page, grid_index)
+    return next(key for key, cells in rows.items() if cells.get("ag-Grid-AutoColumn") == "Total")
+
+
+def test_parent_scope_compares_a_leaf_with_its_siblings_only(page: Page):
+    """Under `scope: "parent"` the EU leaves are scaled over 100..300 and the
+    US leaves over 400..600, so DE and CA are both palest and IT and TX both
+    darkest. The `level_pos` control column, same field, same rows, keeps the
+    2.4.0 picture — one 100..600 ramp — which is what makes the two scopes
+    distinguishable on one screen."""
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        assert_painted(painted[key]["parent_pos"], expected_rgba("positive", EU_VALUES, value), f"{key} parent")
+        assert_painted(painted[key]["level_pos"], expected_rgba("positive", METRIC_A, value), f"{key} level")
+    for key, value in US_LEAVES.items():
+        assert_painted(painted[key]["parent_pos"], expected_rgba("positive", US_VALUES, value), f"{key} parent")
+        assert_painted(painted[key]["level_pos"], expected_rgba("positive", METRIC_A, value), f"{key} level")
+    # Same alpha for DE and CA under parent scope; different under level.
+    assert _alpha_channel(painted["body:1"]["parent_pos"][3]) == _alpha_channel(painted["body:5"]["parent_pos"][3])
+    assert _alpha_channel(painted["body:1"]["level_pos"][3]) != _alpha_channel(painted["body:5"]["level_pos"][3])
+
+
+def test_parent_scope_leaves_top_level_groups_unpainted(page: Page):
+    # The group rows' parent is the root: they are the groups, not siblings.
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    assert_unpainted(painted["body:0"]["parent_pos"], "positive", "EU group / parent")
+    assert_unpainted(painted["body:4"]["parent_pos"], "positive", "US group / parent")
+    assert_unpainted(painted["body:0"]["parent_rank"], "rank", "EU group / parent rank")
+    assert_unpainted(painted["body:4"]["parent_rank"], "rank", "US group / parent rank")
+    # ...whereas level scope still scales the two groups against each other.
+    totals = list(region_totals().values())
+    assert_painted(painted["body:0"]["level_pos"], expected_rgba("positive", totals, 600.0), "EU group / level")
+
+
+def test_rank_under_parent_scope_picks_one_winner_per_group(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        if expected_rank(EU_VALUES, value):
+            assert_painted(painted[key]["parent_rank"], RANK_RGBA, f"{key} parent rank")
+        else:
+            assert_unpainted(painted[key]["parent_rank"], "rank", f"{key} parent rank")
+    for key, value in US_LEAVES.items():
+        if expected_rank(US_VALUES, value):
+            assert_painted(painted[key]["parent_rank"], RANK_RGBA, f"{key} parent rank")
+        else:
+            assert_unpainted(painted[key]["parent_rank"], "rank", f"{key} parent rank")
+    # Spelled out: IT and TX, one per region.
+    assert is_scheme_color(painted["body:3"]["parent_rank"], "rank")
+    assert is_scheme_color(painted["body:7"]["parent_rank"], "rank")
+
+
+def test_rank_under_level_scope_picks_one_winner_per_level(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    # Leaves: TX alone (600 over 100..600). IT is not the level maximum.
+    assert is_scheme_color(painted["body:7"]["level_rank"], "rank")
+    assert_unpainted(painted["body:3"]["level_rank"], "rank", "IT / level rank")
+    # Groups: US (1500) over EU (600).
+    assert is_scheme_color(painted["body:4"]["level_rank"], "rank")
+    assert_unpainted(painted["body:0"]["level_rank"], "rank", "EU group / level rank")
+
+
+def test_fill_reaches_group_rows_and_the_grand_total(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key in ("body:0", "body:1", "body:2", "body:3", "body:4", "body:5", "body:6", "body:7"):
+        assert_painted(painted[key]["fill_grouped"], (4, 5, 6, 1.0), f"{key} fill")
+    total = total_row_key(page, SCOPE_GRID)
+    assert_painted(painted[total].get("fill_grouped"), (4, 5, 6, 1.0), "grand total fill")
+
+
+def test_filtering_another_group_away_does_not_rescale_a_parent_scoped_column(page: Page):
+    """The one property of parent scoping a static grid cannot show.
+
+    `lessThan 15` on `metric_b` keeps DE, FR, IT and drops every US row. The
+    EU leaves' *parent* population is still 100/200/300, so `parent_pos`
+    must not change; `level_pos`'s population shrinks from 100..600 to
+    100..300 and FR moves from t = 0.2 to t = 0.5. FR keeps row-index 2
+    through the filter, so its `level_pos` background changing is the repaint
+    signal — the same wait `test_filtering_rescales_the_column` uses.
+    """
+    before = cell_backgrounds(page, SCOPE_GRID)
+    fr_level_before = page.evaluate(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="level_pos"]');
+             return getComputedStyle(cell).backgroundColor;
+           }""",
+        SCOPE_GRID,
+    )
+
+    grid = page.locator(".ag-root-wrapper").nth(SCOPE_GRID)
+    # `agNumberColumnFilter`'s floating filter renders two inputs: the
+    # editable number spinbutton and a disabled read-only text field (its
+    # summary fallback for multi-condition filters) — both under the same
+    # `.ag-floating-filter[col-id]`, so the enabled one must be singled out.
+    grid.locator('.ag-floating-filter[col-id="metric_b"] input:not([disabled])').fill("15")
+    # EU group + 3 leaves + the grand total.
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 5;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    page.wait_for_function(
+        """([gridIndex, previousBackground]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="level_pos"]');
+             return !!cell && getComputedStyle(cell).backgroundColor !== previousBackground;
+           }""",
+        arg=[SCOPE_GRID, fr_level_before],
+        timeout=10000,
+    )
+
+    after = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        # Unchanged: same expected colour as before the filter, and the same
+        # browser output, on the 8-bit grid.
+        assert_painted(after[key]["parent_pos"], expected_rgba("positive", EU_VALUES, value), f"{key} parent after")
+        assert _alpha_channel(after[key]["parent_pos"][3]) == _alpha_channel(before[key]["parent_pos"][3])
+    # Re-scaled: FR is now mid-ramp over three rows, not over six.
+    assert_painted(after["body:2"]["level_pos"], expected_rgba("positive", EU_VALUES, 200.0), "FR level after")
+    assert _alpha_channel(after["body:2"]["level_pos"][3]) != _alpha_channel(before["body:2"]["level_pos"][3])

@@ -1,6 +1,6 @@
 """Streamlit app: the built-in declarative colour scales.
 
-Five grids over one fixture (`color_scale_fixture.py`, which also owns the
+Grids over one fixture (`color_scale_fixture.py`, which also owns the
 expected colours):
 
   0  flat — every scheme at its default mode, every non-default `scheme x mode`
@@ -244,4 +244,46 @@ AgGrid(
     enable_enterprise_modules=True,
     height=320,
     key="color_scale_phase2_flat",
+)
+
+st.subheader("Row grouping — parent-scoped population next to level-scoped")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "groupDefaultExpanded": -1,
+        "grandTotalRow": "bottom",
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM, "rowGroup": True, "rowGroupIndex": 0},
+            {"colId": LEAF_DIM, "field": LEAF_DIM},
+            # The grouped `region` column is hidden, so the stability test
+            # filters through this visible one: `lessThan 15` keeps DE, FR, IT
+            # (-5, 0, 10) and drops every US row.
+            {
+                "colId": "metric_b",
+                "field": "metric_b",
+                "filter": "agNumberColumnFilter",
+                "floatingFilter": True,
+                "filterParams": {"defaultOption": "lessThan"},
+                "width": 110,
+            },
+            metric_column("level_pos", "metric_a", "positive/level", {"scheme": "positive"}, aggFunc="sum"),
+            metric_column(
+                "parent_pos", "metric_a", "positive/parent",
+                {"scheme": "positive", "scope": "parent"}, aggFunc="sum",
+            ),
+            metric_column(
+                "parent_rank", "metric_a", "rank/parent",
+                {"scheme": "rank", "scope": "parent"}, aggFunc="sum",
+            ),
+            metric_column("level_rank", "metric_a", "rank/level", {"scheme": "rank"}, aggFunc="sum"),
+            metric_column(
+                "fill_grouped", "metric_a", "fill",
+                {"scheme": "fill", "color": "rgb(4, 5, 6)"}, aggFunc="sum",
+            ),
+        ],
+    },
+    enable_enterprise_modules=True,
+    height=360,
+    key="color_scale_scope",
 )
