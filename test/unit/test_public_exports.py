@@ -89,6 +89,7 @@ def test_color_scale_names_are_importable_from_the_package_root():
         COLOR_SCALE_CONTEXT_KEY,
         COLOR_SCALE_MODES,
         COLOR_SCALE_SCHEMES,
+        COLOR_SCALE_SCOPES,
         validate_color_scale_columns,
     )
     from st_aggrid import color_scale as color_scale_module
@@ -96,17 +97,19 @@ def test_color_scale_names_are_importable_from_the_package_root():
     assert COLOR_SCALE_CONTEXT_KEY is color_scale_module.COLOR_SCALE_CONTEXT_KEY
     assert COLOR_SCALE_SCHEMES is color_scale_module.COLOR_SCALE_SCHEMES
     assert COLOR_SCALE_MODES is color_scale_module.COLOR_SCALE_MODES
+    assert COLOR_SCALE_SCOPES is color_scale_module.COLOR_SCALE_SCOPES
     assert validate_color_scale_columns is color_scale_module.validate_color_scale_columns
 
 
 def test_color_scale_literals_match_what_the_frontend_registers_under():
     # `colorScales/index.ts` uses "stColorScale" as its context key and
-    # `colorScales/schemes.ts` keys `SCHEMES` by these exact names. Nothing
-    # mechanical keeps the two languages in step, so the literals are pinned
-    # here by hand.
+    # `colorScales/schemes.ts` exports SCHEME_NAMES / MODE_NAMES / SCOPE_NAMES
+    # with these exact literals. Nothing mechanical keeps the two languages in
+    # step, so they are pinned here by hand.
     assert st_aggrid.COLOR_SCALE_CONTEXT_KEY == "stColorScale"
-    assert st_aggrid.COLOR_SCALE_SCHEMES == ("neutral", "positive", "diverging")
-    assert st_aggrid.COLOR_SCALE_MODES == ("minmax", "zscore")
+    assert st_aggrid.COLOR_SCALE_SCHEMES == ("neutral", "positive", "diverging", "rank", "fill")
+    assert st_aggrid.COLOR_SCALE_MODES == ("minmax", "zscore", "anchor")
+    assert st_aggrid.COLOR_SCALE_SCOPES == ("level", "parent")
 
 
 def test_every_public_name_is_in_dunder_all():
@@ -114,6 +117,7 @@ def test_every_public_name_is_in_dunder_all():
         "COLOR_SCALE_CONTEXT_KEY",
         "COLOR_SCALE_MODES",
         "COLOR_SCALE_SCHEMES",
+        "COLOR_SCALE_SCOPES",
         "validate_color_scale_columns",
     ):
         assert name in st_aggrid.__all__

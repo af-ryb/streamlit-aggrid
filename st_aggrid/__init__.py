@@ -22,8 +22,9 @@ regardless of what this package exports. The re-export helps test code and
 grid-builder modules, which import `st_aggrid` anyway.
 
 The colour-scale names follow the prefixed convention from the start:
-``COLOR_SCALE_CONTEXT_KEY``, ``COLOR_SCALE_SCHEMES`` and ``COLOR_SCALE_MODES``
-have no unprefixed aliases, and new code should not add any.
+``COLOR_SCALE_CONTEXT_KEY``, ``COLOR_SCALE_SCHEMES``, ``COLOR_SCALE_MODES`` and
+``COLOR_SCALE_SCOPES`` have no unprefixed aliases, and new code should not add
+any.
 """
 
 from st_aggrid.aggrid import AgGrid, call_grid_api
@@ -37,6 +38,7 @@ from st_aggrid.color_scale import (
     COLOR_SCALE_CONTEXT_KEY,
     COLOR_SCALE_MODES,
     COLOR_SCALE_SCHEMES,
+    COLOR_SCALE_SCOPES,
     validate_color_scale_columns,
 )
 from st_aggrid.grid_options_builder import GridOptionsBuilder
@@ -73,6 +75,7 @@ __all__ = [
     "COLOR_SCALE_CONTEXT_KEY",
     "COLOR_SCALE_MODES",
     "COLOR_SCALE_SCHEMES",
+    "COLOR_SCALE_SCOPES",
     "CONTEXT_KEY",
     "GridOptionsBuilder",
     "JsCode",
