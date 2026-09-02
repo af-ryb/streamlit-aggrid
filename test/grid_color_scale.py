@@ -19,9 +19,15 @@ expected colours):
   4  a grid-wide `defaultColDef.cellStyle`, with a column that carries an
      otherwise-valid colour-scale declaration — the branch that can silently
      turn the feature off for an entire grid.
+  5  flat, phase 2 — `mode: "anchor"` under three schemes and with the
+     scheme defaulted, `reverse` under every mode, `rank` in both directions,
+     and `fill` from a literal and from a CSS variable.
+  6  row-grouped by region with a grand total, phase 2 — `scope: "parent"`
+     against `scope: "level"` side by side, for a ramp and for `rank`, plus a
+     `fill` that must reach the grand total. A floating number filter on
+     `metric_b` is what the parent-scope stability test drives.
 
-Grids 0-2 keep their indices so no existing assertion moves when 3 and 4 are
-added.
+Grids keep their indices; a new grid is always appended.
 
 Run standalone with:  streamlit run test/grid_color_scale.py
 """
@@ -191,4 +197,51 @@ AgGrid(
     enable_enterprise_modules=True,
     height=320,
     key="color_scale_default_cellstyle",
+)
+
+# The CSS variable `fill_var` below resolves. Streamlit renders this `<style>`
+# into the page itself (CCv2, no iframe), so `:root` is the grid's own root —
+# the same way the consumer's `--secondary-background-color` reaches a cell.
+st.markdown(
+    "<style>:root { --st-aggrid-test-fill: rgb(7, 8, 9); }</style>",
+    unsafe_allow_html=True,
+)
+
+st.subheader("Phase 2 — anchor, reverse, rank, fill")
+ANCHOR = {"mode": "anchor", "anchor": 1.0, "span": 1.0}
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "columnDefs": [
+            {"colId": ROW_DIM, "field": ROW_DIM},
+            {"colId": LEAF_DIM, "field": LEAF_DIM},
+            metric_column("anchor_div", "ratio", "anchor", {"scheme": "diverging", **ANCHOR}),
+            # No scheme at either level: resolution defaults it to diverging.
+            metric_column("anchor_default", "ratio", "anchor/default", dict(ANCHOR)),
+            metric_column(
+                "anchor_rev", "ratio", "anchor/reverse",
+                {"scheme": "diverging", "reverse": True, **ANCHOR},
+            ),
+            metric_column("anchor_pos", "ratio", "anchor/positive", {"scheme": "positive", **ANCHOR}),
+            metric_column(
+                "rev_minmax", "metric_a", "positive/reverse",
+                {"scheme": "positive", "reverse": True},
+            ),
+            metric_column(
+                "rev_zscore", "metric_a", "diverging/reverse",
+                {"scheme": "diverging", "reverse": True},
+            ),
+            metric_column("rank_max", "metric_a", "rank", {"scheme": "rank"}),
+            metric_column("rank_min", "metric_a", "rank/reverse", {"scheme": "rank", "reverse": True}),
+            metric_column("fill_lit", "metric_a", "fill", {"scheme": "fill", "color": "rgb(4, 5, 6)"}),
+            metric_column(
+                "fill_var", "metric_a", "fill/var",
+                {"scheme": "fill", "color": "var(--st-aggrid-test-fill)"},
+            ),
+        ],
+    },
+    enable_enterprise_modules=True,
+    height=320,
+    key="color_scale_phase2_flat",
 )

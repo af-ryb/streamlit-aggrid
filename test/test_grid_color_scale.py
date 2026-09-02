@@ -15,11 +15,14 @@ import pytest
 from playwright.sync_api import Page
 
 from color_scale_fixture import (
+    RANK_RGBA,
     column_values,
+    expected_rank,
     expected_rgba,
     half_up,
     is_scheme_color,
     region_totals,
+    region_values,
 )
 from e2e_utils import StreamlitRunner
 from grid_dom import cell_backgrounds, read_rows
@@ -32,11 +35,15 @@ GROUPED_GRID = 1
 PIVOT_GRID = 2
 BUILDER_GRID = 3
 DEFAULT_CELLSTYLE_GRID = 4
+PHASE2_FLAT_GRID = 5
+SCOPE_GRID = 6
 
 #: The flat grid's body rows, in fixture order: DE, FR, IT, CA, NY, TX.
 FLAT_ROWS = tuple(f"body:{index}" for index in range(6))
 
 METRIC_A = column_values("metric_a")
+RATIO = column_values("ratio")
+ANCHOR_1 = dict(mode="anchor", anchor=1.0, span=1.0)
 
 
 def _alpha_channel(alpha: float) -> int:
@@ -88,6 +95,20 @@ def assert_unpainted(
     assert not is_scheme_color(actual, scheme), f"{where}: expected unpainted, got {actual!r}"
 
 
+def font_weight(page: Page, grid_index: int, row_index: int, col_id: str) -> str | None:
+    """The computed `font-weight` of one cell — `rank` is the one built-in
+    style with a second CSS property."""
+    return page.evaluate(
+        """([gridIndex, rowIndex, colId]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector(
+               `.ag-row[row-index="${rowIndex}"] .ag-cell[col-id="${colId}"]`);
+             return cell ? getComputedStyle(cell).fontWeight : null;
+           }""",
+        [grid_index, row_index, col_id],
+    )
+
+
 @pytest.fixture(autouse=True, scope="module")
 def streamlit_app():
     with StreamlitRunner(APP_FILE) as runner:
@@ -100,7 +121,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 5",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 6",
         timeout=60000,
     )
     # The grouped grid (index 1) is the last of the three to settle: 2 region
@@ -413,3 +434,105 @@ def test_default_coldef_cellstyle_disables_the_scale_grid_wide(page: Page):
     painted = cell_backgrounds(page, DEFAULT_CELLSTYLE_GRID)
     for key in FLAT_ROWS:
         assert_unpainted(painted[key]["blocked"], "positive", key)
+
+
+# --- Phase 2: grid 5 ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "col_id,scheme,reverse",
+    [
+        ("anchor_div", "diverging", False),
+        ("anchor_default", "diverging", False),
+        ("anchor_rev", "diverging", True),
+        ("anchor_pos", "positive", False),
+    ],
+)
+def test_anchor_mode_paints_deviation_from_a_fixed_anchor(page: Page, col_id, scheme, reverse):
+    """`ratio` against anchor 1.0, span 1.0: DE and FR below, IT exactly on
+    the anchor (unpainted), CA and NY above, TX past the clamp. `anchor_default`
+    names no scheme anywhere and must resolve to diverging."""
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, RATIO):
+        expected = expected_rgba(scheme, RATIO, value, reverse=reverse, **ANCHOR_1)
+        actual = painted[key][col_id]
+        if expected is None:
+            assert_unpainted(actual, scheme, f"{key}: {col_id}")
+        else:
+            assert_painted(actual, expected, f"{key}: {col_id}")
+    # The exact anchor, pinned explicitly: the gate whose absence would still
+    # produce a plausible faint colour.
+    assert_unpainted(painted["body:2"][col_id], scheme, f"body:2 (1.0): {col_id}")
+
+
+def test_anchor_mode_clamps_past_one_span(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    # TX is 2.5 — d = 1.5 before the clamp — and must paint exactly what a
+    # value one span above the anchor paints.
+    clamped = expected_rgba("diverging", RATIO, 2.5, **ANCHOR_1)
+    assert clamped == expected_rgba("diverging", RATIO, 2.0, **ANCHOR_1)
+    assert_painted(painted["body:5"]["anchor_div"], clamped, "TX clamped")
+
+
+def test_reverse_complements_a_minmax_ramp(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        assert_painted(
+            painted[key]["rev_minmax"],
+            expected_rgba("positive", METRIC_A, value, reverse=True),
+            f"{key}: rev_minmax",
+        )
+    # DE is now the darkest, TX the palest — the opposite of `pos_minmax`.
+    assert painted["body:0"]["rev_minmax"][3] > painted["body:5"]["rev_minmax"][3]
+
+
+def test_reverse_negates_a_zscore_ramp(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        expected = expected_rgba("diverging", METRIC_A, value, reverse=True)
+        actual = painted[key]["rev_zscore"]
+        if expected is None:
+            assert_unpainted(actual, "diverging", f"{key}: rev_zscore")
+        else:
+            assert_painted(actual, expected, f"{key}: rev_zscore")
+    # DE (100, below the mean) now wears the hue TX wears unreversed, and
+    # vice versa — the flip, spelled out without a literal.
+    assert painted["body:0"]["rev_zscore"][:3] == expected_rgba("diverging", METRIC_A, 600)[:3]
+    assert painted["body:5"]["rev_zscore"][:3] == expected_rgba("diverging", METRIC_A, 100)[:3]
+
+
+def test_rank_paints_only_the_maximum(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        if expected_rank(METRIC_A, value):
+            assert_painted(painted[key]["rank_max"], RANK_RGBA, f"{key}: rank_max")
+        else:
+            assert_unpainted(painted[key]["rank_max"], "rank", f"{key}: rank_max")
+    assert font_weight(page, PHASE2_FLAT_GRID, 5, "rank_max") == "600"
+    assert font_weight(page, PHASE2_FLAT_GRID, 4, "rank_max") == "400"
+
+
+def test_rank_reverse_paints_only_the_minimum(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        if expected_rank(METRIC_A, value, reverse=True):
+            assert_painted(painted[key]["rank_min"], RANK_RGBA, f"{key}: rank_min")
+        else:
+            assert_unpainted(painted[key]["rank_min"], "rank", f"{key}: rank_min")
+    assert font_weight(page, PHASE2_FLAT_GRID, 0, "rank_min") == "600"
+
+
+def test_fill_paints_every_row_with_the_literal_colour(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_painted(painted[key]["fill_lit"], (4, 5, 6, 1.0), f"{key}: fill_lit")
+
+
+def test_fill_resolves_a_css_variable_through_the_host_page(page: Page):
+    """`var(--st-aggrid-test-fill)` is set on `:root` by the app; the fill
+    passes the string through and the browser resolves it — the same path the
+    consumer's `--secondary-background-color` takes under CCv2's no-iframe
+    delivery."""
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_painted(painted[key]["fill_var"], (7, 8, 9, 1.0), f"{key}: fill_var")
