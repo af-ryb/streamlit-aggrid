@@ -8,7 +8,7 @@
  * `test/test_grid_color_scale.py` instead.
  */
 import assert from "node:assert/strict"
-import { minmaxT, popStats, zIntensity, zScore } from "../normalize.ts"
+import { anchorD, minmaxT, popStats, zIntensity, zScore } from "../normalize.ts"
 
 const RAMP = [100, 200, 300, 400, 500, 600]
 const stats = popStats(RAMP)
@@ -59,5 +59,15 @@ assert.equal(zScore(nearUniform, 1000.0005), null)
 assert.equal(zIntensity(0), 0)
 assert.equal(zIntensity(-1.5), 0.5)
 assert.equal(zIntensity(9), 1)
+
+// Anchored deviation, in spans, clamped. The sign survives; the exact anchor
+// is 0 and `index.ts` leaves it unpainted.
+assert.equal(anchorD(1, 1, 0.5), -0.5)
+assert.equal(anchorD(1, 1, 1.5), 0.5)
+assert.equal(anchorD(1, 1, 1), 0)
+assert.equal(anchorD(1, 1, 2.5), 1) // clamped
+assert.equal(anchorD(1, 1, -3), -1) // clamped
+assert.equal(anchorD(1, 0.5, 1.25), 0.5) // span scales the deviation
+assert.equal(anchorD(100, 40, 110), 0.25)
 
 console.log("normalize.check.ts ok")

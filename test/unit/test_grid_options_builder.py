@@ -162,3 +162,58 @@ def test_configure_column_without_color_scale_writes_no_context():
     gb = GridOptionsBuilder()
     gb.configure_column("cpi", width=120)
     assert "context" not in _col(gb.build(), "cpi")
+
+
+def test_configure_color_scale_writes_every_phase_two_key():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(
+        scheme="diverging", mode="anchor", skip_non_positive=False,
+        scope="parent", reverse=True, anchor=1.0, span=0.5, color="rgb(1, 2, 3)",
+    )
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "scheme": "diverging",
+        "mode": "anchor",
+        "skip_non_positive": False,
+        "scope": "parent",
+        "reverse": True,
+        "anchor": 1.0,
+        "span": 0.5,
+        "color": "rgb(1, 2, 3)",
+    }
+
+
+def test_configure_color_scale_omits_unset_phase_two_keys():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(scheme="neutral", reverse=False)
+    declaration = gb.build()["context"][COLOR_SCALE_CONTEXT_KEY]
+    assert declaration == {"scheme": "neutral", "reverse": False}
+    for absent in ("scope", "anchor", "span", "color"):
+        assert absent not in declaration
+
+
+def test_configure_color_scale_scheme_is_optional():
+    # `mode="anchor"` with no scheme is a complete default set — the
+    # validator resolves it to `diverging`.
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(mode="anchor", anchor=1.0, span=1.0)
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "mode": "anchor",
+        "anchor": 1.0,
+        "span": 1.0,
+    }
+
+
+def test_configure_color_scale_with_no_arguments_writes_an_empty_default():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale()
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {}
+
+
+def test_configure_color_scale_keeps_scheme_positional():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale("positive", "minmax", False)
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "scheme": "positive",
+        "mode": "minmax",
+        "skip_non_positive": False,
+    }

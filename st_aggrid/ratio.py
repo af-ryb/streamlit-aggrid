@@ -52,6 +52,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from st_aggrid._coldefs import column_label, iter_column_defs
+from st_aggrid._numbers import is_number as _is_number
 
 AGG_FUNC_NAME = "stRatio"
 CONTEXT_KEY = "stRatio"
@@ -62,13 +63,6 @@ RATIO_OF_RATIOS_AGG_FUNC = RATIO_OF_RATIOS_CONTEXT_KEY = "stRatioOfRatios"
 
 #: Same convention again, for the third and last aggregator this plan adds.
 WEIGHTED_AVG_AGG_FUNC = WEIGHTED_AVG_CONTEXT_KEY = "stWeightedAvg"
-
-_NUMERIC = (int, float)
-
-
-def _is_number(value: Any) -> bool:
-    # bool is an int subclass; a True multiplier is a mistake, not a 1.
-    return isinstance(value, _NUMERIC) and not isinstance(value, bool)
 
 
 def _field_names(value: Any, key: str, label: str, context_path: str) -> list[str]:

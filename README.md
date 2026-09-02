@@ -418,7 +418,11 @@ gb = GridOptionsBuilder.from_dataframe(df)
 gb.configure_color_scale(scheme="positive")          # grid-level defaults
 gb.configure_column("revenue", color_scale=True)     # inherit them
 gb.configure_column("arppu", color_scale={"scheme": "diverging"})
-gb.configure_column("installs", color_scale=False)   # explicitly off
+gb.configure_column("cpi", color_scale={"scheme": "positive", "reverse": True})   # lower is better
+gb.configure_column("growth", color_scale={"scheme": "diverging", "mode": "anchor", "anchor": 1.0, "span": 1.0})
+gb.configure_column("best", color_scale={"scheme": "rank", "scope": "parent"})
+gb.configure_column("installs", color_scale={"scheme": "fill", "color": "var(--secondary-background-color)"})
+gb.configure_column("notes", color_scale=False)      # explicitly off
 AgGrid(df, grid_options=gb.build())
 ```
 
@@ -432,19 +436,44 @@ a column opts in with its own entry.
 | `neutral` | `zscore` | `True` | one blue hue, intensity = distance from the column mean |
 | `positive` | `minmax` | `False` | one green hue, palest at the column minimum |
 | `diverging` | `zscore` | `True` | red below the mean, green above it |
+| `rank` | — | `False` | the best value in the population — the maximum, or the minimum under `reverse` — in bold on green; nothing else is painted. A population of one paints nothing. Recomputed after every filter and sort, like every population here — unlike a maximum precomputed in the data |
+| `fill` | — | — | one constant colour on every cell of the column, including group rows, the grand total and pinned rows |
 
 #### Keys
 
-| Key | Values | Default |
-|---|---|---|
-| `scheme` | `"neutral"`, `"positive"`, `"diverging"` | required at one of the two levels |
-| `mode` | `"minmax"`, `"zscore"` | the scheme's own |
-| `skip_non_positive` | `bool` | the scheme's own |
+| Key | Values | Read by | Default |
+|---|---|---|---|
+| `scheme` | `"neutral"`, `"positive"`, `"diverging"`, `"rank"`, `"fill"` | all | required at one of the two levels — except under `mode: "anchor"`, which defaults it to `"diverging"` |
+| `mode` | `"minmax"`, `"zscore"`, `"anchor"` | the three ramps | the scheme's own |
+| `scope` | `"level"`, `"parent"` | `rank`, and ramps under `minmax` / `zscore` | `"level"` |
+| `reverse` | `bool` | ramps and `rank` | `False` |
+| `skip_non_positive` | `bool` | ramps and `rank` | the scheme's own |
+| `anchor` | number | `mode: "anchor"` | required under that mode |
+| `span` | number `> 0` | `mode: "anchor"` | required under that mode |
+| `color` | any CSS colour string, e.g. `"var(--secondary-background-color)"` | `fill` | required by that scheme |
+
+A key a scheme does not read is ignored, not rejected — a grid-level
+`mode` default does not break a `fill` column. Every key that *is* present
+is type-checked at both levels, and a declaration that resolves to no
+scheme, a `fill` with no `color`, or an `anchor` mode without both its
+numbers raises at build time.
 
 `minmax` ramps linearly between the column's extremes. `zscore` measures
 distance from the column's mean in standard deviations, leaves values within
 half a deviation of the mean unpainted, and paints nothing at all when the
-column is effectively uniform.
+column is effectively uniform. `anchor` measures the deviation from a fixed
+`anchor` in units of `span`, clamped at one span either side, and consults
+no population at all: a growth ratio anchored at `1.0` reads red below one,
+green above it, and paints nothing at exactly one. Under `diverging` — its
+default — the two sides take the two hues; under `neutral` or `positive` the
+deviation's magnitude is the intensity.
+
+`reverse` flips the direction: palest at the maximum under `minmax`, red
+above the mean under `zscore` and `anchor`, the minimum as the winner under
+`rank`. On a single-hue scheme (`neutral`, `positive`) it is
+visible only under `minmax`: under `zscore` and `anchor` those schemes take
+their intensity from the magnitude of the deviation alone, so the flag
+changes nothing.
 
 #### What a column is compared against
 
@@ -456,6 +485,15 @@ are neither painted nor counted.
 
 Because the population is read after filtering, hiding rows re-scales the
 column rather than leaving a dead ramp.
+
+`scope: "parent"` narrows the population to the row's **siblings under one
+parent group**: a long-form grid whose level-0 groups are unlike metrics
+compares each metric's rows with each other, never across metrics. Under
+this scope a row whose parent is the root — a top-level group, or any row
+of an ungrouped grid — is neither painted nor counted: it *is* one of the
+groups, and comparing the groups across is what choosing this scope
+declines to do. Filtering other groups away therefore does not re-scale a
+parent-scoped column. `anchor` and `fill` ignore `scope`.
 
 #### Interaction with `cellStyle`
 
@@ -469,10 +507,15 @@ logged, via `console.warn`, since whoever set it never touched the shadowed
 column; a colDef's own `cellStyle` or a `columnTypes` entry is logged only
 under `debug=True`.
 
-Working examples: `test/grid_color_scale.py` builds five grids covering every
-scheme, both modes, both `skip_non_positive` settings, the `GridOptionsBuilder`
-path (a grid-level default inherited via a bare `color_scale=True`), and a
-grid-wide `defaultColDef.cellStyle` that disables the scale entirely;
+This is also why a plain background — a column marked as structural with a
+theme colour — should be a `fill` declaration rather than a one-line
+`cellStyle`: as a `cellStyle` it occupies the slot, and no colour scale can
+ever attach to that column afterwards.
+
+Working examples: `test/grid_color_scale.py` builds seven grids covering
+every scheme, every mode, both `skip_non_positive` settings, `reverse`,
+both scopes, the `GridOptionsBuilder` path, a `fill` from a CSS variable,
+and a grid-wide `defaultColDef.cellStyle` that disables the scale entirely;
 `test/test_grid_color_scale.py` asserts what each one paints, against the
 reference arithmetic in `test/color_scale_fixture.py`.
 

@@ -17,6 +17,7 @@ from st_aggrid.color_scale import (
     COLOR_SCALE_CONTEXT_KEY,
     COLOR_SCALE_MODES,
     COLOR_SCALE_SCHEMES,
+    COLOR_SCALE_SCOPES,
     _merge_declaration,
     validate_color_scale_columns,
 )
@@ -36,8 +37,9 @@ def grid_options(column_declaration, grid_declaration=None):
 
 def test_constants_are_the_literals_the_frontend_uses():
     assert COLOR_SCALE_CONTEXT_KEY == "stColorScale"
-    assert COLOR_SCALE_SCHEMES == ("neutral", "positive", "diverging")
-    assert COLOR_SCALE_MODES == ("minmax", "zscore")
+    assert COLOR_SCALE_SCHEMES == ("neutral", "positive", "diverging", "rank", "fill")
+    assert COLOR_SCALE_MODES == ("minmax", "zscore", "anchor")
+    assert COLOR_SCALE_SCOPES == ("level", "parent")
 
 
 def test_a_full_column_declaration_passes():
@@ -87,11 +89,14 @@ def test_unknown_key_is_rejected():
         validate_color_scale_columns(grid_options({"scheme": "neutral", "alpha": 0.4}))
 
 
-def test_reverse_is_rejected_until_phase_two():
-    # Accepting a key the frontend ignores would let a consumer come to depend
-    # on behaviour that does not exist.
+def test_reverse_is_accepted_as_a_bool():
+    validate_color_scale_columns(grid_options({"scheme": "neutral", "reverse": True}))
+    validate_color_scale_columns(grid_options({"scheme": "neutral", "reverse": False}))
+
+
+def test_reverse_must_be_a_bool_not_an_int():
     with pytest.raises(ValueError, match="reverse"):
-        validate_color_scale_columns(grid_options({"scheme": "neutral", "reverse": True}))
+        validate_color_scale_columns(grid_options({"scheme": "neutral", "reverse": 1}))
 
 
 def test_skip_non_positive_must_be_a_bool_not_an_int():
@@ -141,6 +146,144 @@ def test_a_sibling_context_key_is_left_alone():
 def test_non_dict_grid_options_is_a_no_op():
     validate_color_scale_columns(None)
     validate_color_scale_columns("not grid options")
+
+
+# --- Phase 2 keys -----------------------------------------------------------
+
+
+def test_scope_accepts_level_and_parent():
+    validate_color_scale_columns(grid_options({"scheme": "neutral", "scope": "level"}))
+    validate_color_scale_columns(grid_options({"scheme": "neutral", "scope": "parent"}))
+
+
+def test_unknown_scope_is_rejected():
+    with pytest.raises(ValueError, match="scope"):
+        validate_color_scale_columns(grid_options({"scheme": "neutral", "scope": "depth"}))
+
+
+def test_anchor_mode_with_both_keys_passes():
+    validate_color_scale_columns(
+        grid_options({"scheme": "diverging", "mode": "anchor", "anchor": 1.0, "span": 1.0})
+    )
+
+
+def test_anchor_mode_defaults_the_scheme_to_diverging():
+    # No scheme at either level: the one asymmetry in resolution.
+    validate_color_scale_columns(grid_options({"mode": "anchor", "anchor": 1.0, "span": 1.0}))
+
+
+def test_anchor_mode_without_anchor_is_rejected():
+    with pytest.raises(ValueError, match="anchor"):
+        validate_color_scale_columns(grid_options({"scheme": "diverging", "mode": "anchor", "span": 1.0}))
+
+
+def test_anchor_mode_without_span_is_rejected():
+    with pytest.raises(ValueError, match="span"):
+        validate_color_scale_columns(grid_options({"scheme": "diverging", "mode": "anchor", "anchor": 1.0}))
+
+
+def test_anchor_mode_resolved_through_the_grid_default_still_needs_its_keys():
+    # `mode` comes from the grid level, the keys from nowhere: still an error,
+    # because the *merged* declaration is what has to be complete.
+    with pytest.raises(ValueError, match="anchor"):
+        validate_color_scale_columns(grid_options(True, {"scheme": "diverging", "mode": "anchor"}))
+
+
+def test_anchor_keys_can_come_from_the_grid_default():
+    validate_color_scale_columns(
+        grid_options({"scheme": "positive"}, {"mode": "anchor", "anchor": 100, "span": 40})
+    )
+
+
+@pytest.mark.parametrize("anchor", [True, "1", None, float("nan"), float("inf")])
+def test_anchor_must_be_a_finite_number(anchor):
+    with pytest.raises(ValueError, match="anchor"):
+        validate_color_scale_columns(
+            grid_options({"scheme": "diverging", "mode": "anchor", "anchor": anchor, "span": 1.0})
+        )
+
+
+@pytest.mark.parametrize("span", [0, -1, True, "1", float("nan")])
+def test_span_must_be_a_positive_finite_number(span):
+    with pytest.raises(ValueError, match="span"):
+        validate_color_scale_columns(
+            grid_options({"scheme": "diverging", "mode": "anchor", "anchor": 1.0, "span": span})
+        )
+
+
+def test_anchor_keys_are_type_checked_even_when_the_mode_is_not_anchor():
+    # Present keys are always type-checked, at both levels; only *relevance*
+    # is lenient.
+    with pytest.raises(ValueError, match="span"):
+        validate_color_scale_columns(grid_options({"scheme": "positive", "span": -3}))
+
+
+def test_rank_scheme_passes_with_and_without_direction():
+    validate_color_scale_columns(grid_options({"scheme": "rank"}))
+    validate_color_scale_columns(grid_options({"scheme": "rank", "reverse": True, "scope": "parent"}))
+
+
+def test_rank_ignores_an_explicit_mode():
+    # `rank` reads no mode. An explicit one validates and is ignored — a
+    # grid-level `mode` default must not break a rank column.
+    validate_color_scale_columns(grid_options({"scheme": "rank"}, {"mode": "minmax"}))
+    validate_color_scale_columns(grid_options({"scheme": "rank", "mode": "anchor"}))
+
+
+def test_fill_with_a_colour_passes():
+    validate_color_scale_columns(grid_options({"scheme": "fill", "color": "rgb(4, 5, 6)"}))
+    validate_color_scale_columns(
+        grid_options({"scheme": "fill", "color": "var(--secondary-background-color)"})
+    )
+
+
+def test_fill_without_a_colour_is_rejected():
+    with pytest.raises(ValueError, match="color"):
+        validate_color_scale_columns(grid_options({"scheme": "fill"}))
+
+
+def test_fill_colour_can_come_from_the_grid_default():
+    validate_color_scale_columns(grid_options({"scheme": "fill"}, {"color": "rgb(1, 2, 3)"}))
+
+
+@pytest.mark.parametrize("color", ["", "   ", 7, None, ["rgb(1, 2, 3)"]])
+def test_fill_colour_must_be_a_non_empty_string(color):
+    with pytest.raises(ValueError, match="color"):
+        validate_color_scale_columns(grid_options({"scheme": "fill", "color": color}))
+
+
+def test_fill_ignores_every_population_key_from_the_grid_default():
+    # The rule that keeps grid-level defaults harmless: a fill column under a
+    # ramp-shaped grid default must validate.
+    validate_color_scale_columns(
+        grid_options(
+            {"scheme": "fill", "color": "rgb(1, 2, 3)"},
+            {"scheme": "diverging", "mode": "zscore", "scope": "parent",
+             "skip_non_positive": True, "reverse": True},
+        )
+    )
+
+
+def test_a_grid_level_default_may_carry_every_new_key():
+    validate_color_scale_columns(
+        {
+            "columnDefs": [{"field": "a"}],
+            "context": {
+                COLOR_SCALE_CONTEXT_KEY: {
+                    "scheme": "diverging", "mode": "anchor", "scope": "parent",
+                    "reverse": False, "skip_non_positive": False,
+                    "anchor": 1.0, "span": 1.0, "color": "rgb(0, 0, 0)",
+                }
+            },
+        }
+    )
+
+
+def test_true_with_a_defaults_only_grid_entry_and_no_scheme_is_still_rejected():
+    # `configure_color_scale()` with no arguments writes `{}`; a bare opt-in
+    # under it resolves to nothing, exactly as with no grid entry at all.
+    with pytest.raises(ValueError, match="scheme"):
+        validate_color_scale_columns(grid_options(True, {}))
 
 
 # `_merge_declaration` implements the column-over-grid-defaults rule that

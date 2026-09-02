@@ -13,12 +13,17 @@ A declaration lives under ``context['stColorScale']`` at two levels. The grid
 level (``gridOptions['context']``) carries **defaults only** and never
 activates painting; a column is painted when its own colDef carries an entry
 that is not ``False``. The two are merged per key with the column winning, and
-it is the **merged** result that must name a valid scheme. That is how
-``color_scale=True`` with no grid-level default is caught here instead of
-silently painting nothing in the browser.
+it is the **merged** result that must resolve. That is how ``color_scale=True``
+with no grid-level default is caught here instead of silently painting nothing
+in the browser.
 
-The frontend implements the same merge again, as a guard, because it has to
-cope with grid options that never went through ``GridOptionsBuilder`` — but
+Two rules keep grid-level defaults harmless. Every key that is *present* is
+type-checked, at both levels — a typo never survives. But a key a scheme does
+not *read* is ignored, not rejected: a grid default of ``mode: "minmax"`` must
+not break a column that says ``scheme: "fill"``.
+
+The frontend implements the same resolution again, as a guard, because it has
+to cope with grid options that never went through ``GridOptionsBuilder`` — but
 returning ``null`` inside a cell renderer is a worse error than raising here,
 so this copy is the one that talks to the developer.
 """
@@ -28,26 +33,46 @@ from __future__ import annotations
 from typing import Optional
 
 from st_aggrid._coldefs import column_label, iter_column_defs
+from st_aggrid._numbers import is_finite_number
 
 #: Where a declaration lives inside ``context``, at both levels.
 COLOR_SCALE_CONTEXT_KEY = "stColorScale"
 
-#: Palette names. The colours and ramps live in
-#: ``frontend/src/colorScales/schemes.ts``; these strings must match its
-#: ``SCHEMES`` keys exactly.
-COLOR_SCALE_SCHEMES = ("neutral", "positive", "diverging")
+#: Scheme names. The three ramps' colours live in
+#: ``frontend/src/colorScales/schemes.ts``; ``rank`` is a predicate (the best
+#: value in the population) and ``fill`` a constant colour. These strings
+#: must match ``schemes.ts``'s ``SCHEME_NAMES`` exactly.
+COLOR_SCALE_SCHEMES = ("neutral", "positive", "diverging", "rank", "fill")
+
+#: The schemes that run a ramp and so read ``mode``.
+_RAMP_SCHEMES = ("neutral", "positive", "diverging")
 
 #: Normalisation names, matching ``frontend/src/colorScales/normalize.ts``.
-COLOR_SCALE_MODES = ("minmax", "zscore")
+#: ``anchor`` measures deviation from a fixed value rather than from a
+#: population statistic.
+COLOR_SCALE_MODES = ("minmax", "zscore", "anchor")
 
-#: Every key a v1 declaration may carry. ``reverse`` is deliberately absent:
-#: it is phase 2's metric-direction flag, and accepting it now would let a
-#: consumer come to depend on a key the frontend ignores.
-_KNOWN_KEYS = ("scheme", "mode", "skip_non_positive")
+#: What a population-based scheme is compared against: every row at the same
+#: group depth (``level``), or only the row's siblings under one parent
+#: (``parent``). Matches ``schemes.ts``'s ``SCOPE_NAMES``.
+COLOR_SCALE_SCOPES = ("level", "parent")
+
+#: Every key a declaration may carry.
+_KNOWN_KEYS = (
+    "scheme",
+    "mode",
+    "scope",
+    "reverse",
+    "skip_non_positive",
+    "anchor",
+    "span",
+    "color",
+)
 
 
 def _validate_declaration(declaration: dict, where: str) -> None:
-    """The rules shared by the grid-level and the column-level declaration."""
+    """The rules shared by the grid-level and the column-level declaration:
+    every present key has the right shape. Relevance is not checked here."""
     unknown = sorted(key for key in declaration if key not in _KNOWN_KEYS)
     if unknown:
         raise ValueError(
@@ -55,27 +80,48 @@ def _validate_declaration(declaration: dict, where: str) -> None:
             f"declaration. Available: {list(_KNOWN_KEYS)}."
         )
 
-    if "scheme" in declaration and declaration["scheme"] not in COLOR_SCALE_SCHEMES:
-        raise ValueError(
-            f"{where}['scheme'] must be one of {COLOR_SCALE_SCHEMES}, got "
-            f"{declaration['scheme']!r}."
-        )
-
-    if "mode" in declaration and declaration["mode"] not in COLOR_SCALE_MODES:
-        raise ValueError(
-            f"{where}['mode'] must be one of {COLOR_SCALE_MODES}, got "
-            f"{declaration['mode']!r}."
-        )
-
-    if "skip_non_positive" in declaration and not isinstance(
-        declaration["skip_non_positive"], bool
+    for key, allowed in (
+        ("scheme", COLOR_SCALE_SCHEMES),
+        ("mode", COLOR_SCALE_MODES),
+        ("scope", COLOR_SCALE_SCOPES),
     ):
+        if key in declaration and declaration[key] not in allowed:
+            raise ValueError(
+                f"{where}['{key}'] must be one of {allowed}, got "
+                f"{declaration[key]!r}."
+            )
+
+    for flag in ("reverse", "skip_non_positive"):
         # Checked against `bool` specifically: `bool` is an `int` subclass, so
         # an `isinstance(..., int)` test would accept `1`. Same trap
-        # `ratio.py`'s `_is_number` documents from the other direction.
+        # `_numbers.is_number` guards from the other direction.
+        if flag in declaration and not isinstance(declaration[flag], bool):
+            raise ValueError(
+                f"{where}['{flag}'] must be a bool, got {declaration[flag]!r}."
+            )
+
+    if "anchor" in declaration and not is_finite_number(declaration["anchor"]):
         raise ValueError(
-            f"{where}['skip_non_positive'] must be a bool, got "
-            f"{declaration['skip_non_positive']!r}."
+            f"{where}['anchor'] must be a finite number, got "
+            f"{declaration['anchor']!r}."
+        )
+
+    if "span" in declaration and not (
+        is_finite_number(declaration["span"]) and declaration["span"] > 0
+    ):
+        raise ValueError(
+            f"{where}['span'] must be a finite number greater than zero, got "
+            f"{declaration['span']!r}."
+        )
+
+    if "color" in declaration and not (
+        isinstance(declaration["color"], str) and declaration["color"].strip()
+    ):
+        # No attempt to parse CSS: the browser is the only authority on what a
+        # colour string means, and `var(--x)` cannot be checked from here.
+        raise ValueError(
+            f"{where}['color'] must be a non-empty CSS colour string, got "
+            f"{declaration['color']!r}."
         )
 
 
@@ -85,6 +131,47 @@ def _merge_declaration(grid_declaration: Optional[dict], own: dict) -> dict:
     frontend implements the same rule again in ``colorScales/index.ts``.
     """
     return {**(grid_declaration or {}), **own}
+
+
+def _resolved_scheme(merged: dict) -> Optional[str]:
+    """The scheme a merged declaration paints with. ``mode: "anchor"`` with no
+    scheme at either level defaults to ``diverging`` — an anchored scale is
+    almost always "above or below a reference" — and that is the one
+    asymmetry in resolution. An explicit scheme always wins."""
+    scheme = merged.get("scheme")
+    if scheme is None and merged.get("mode") == "anchor":
+        return "diverging"
+    return scheme
+
+
+def _validate_resolution(merged: dict, where: str) -> None:
+    """The rules that only make sense on the merged declaration: it must
+    resolve to a scheme, and that scheme's required keys must be present."""
+    scheme = _resolved_scheme(merged)
+    if scheme not in COLOR_SCALE_SCHEMES:
+        raise ValueError(
+            f"{where} resolves to no valid 'scheme'. Set one on the column, "
+            f"or supply a grid-level default with "
+            f"GridOptionsBuilder.configure_color_scale(scheme=...), or use "
+            f"mode='anchor' (which defaults to 'diverging'). "
+            f"Available: {COLOR_SCALE_SCHEMES}."
+        )
+
+    if scheme == "fill" and "color" not in merged:
+        raise ValueError(
+            f"{where} resolves to scheme 'fill' but no 'color'. Set one on "
+            f"the column or as a grid-level default, e.g. "
+            f"'var(--secondary-background-color)'."
+        )
+
+    if scheme in _RAMP_SCHEMES and merged.get("mode") == "anchor":
+        missing = [key for key in ("anchor", "span") if key not in merged]
+        if missing:
+            raise ValueError(
+                f"{where} resolves to mode 'anchor' but is missing {missing}. "
+                f"An anchored scale needs the reference value ('anchor') and "
+                f"the deviation that reaches full intensity ('span')."
+            )
 
 
 def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
@@ -134,12 +221,4 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
             )
 
         _validate_declaration(own, where)
-
-        merged = _merge_declaration(grid_declaration, own)
-        if merged.get("scheme") not in COLOR_SCALE_SCHEMES:
-            raise ValueError(
-                f"{where} resolves to no valid 'scheme'. Set one on the "
-                f"column, or supply a grid-level default with "
-                f"GridOptionsBuilder.configure_color_scale(scheme=...). "
-                f"Available: {COLOR_SCALE_SCHEMES}."
-            )
+        _validate_resolution(_merge_declaration(grid_declaration, own), where)

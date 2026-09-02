@@ -15,11 +15,16 @@ import pytest
 from playwright.sync_api import Page
 
 from color_scale_fixture import (
+    NORMAL_FONT_WEIGHT,
+    RANK_FONT_WEIGHT,
+    RANK_RGBA,
     column_values,
+    expected_rank,
     expected_rgba,
     half_up,
     is_scheme_color,
     region_totals,
+    region_values,
 )
 from e2e_utils import StreamlitRunner
 from grid_dom import cell_backgrounds, read_rows
@@ -32,11 +37,15 @@ GROUPED_GRID = 1
 PIVOT_GRID = 2
 BUILDER_GRID = 3
 DEFAULT_CELLSTYLE_GRID = 4
+PHASE2_FLAT_GRID = 5
+SCOPE_GRID = 6
 
 #: The flat grid's body rows, in fixture order: DE, FR, IT, CA, NY, TX.
 FLAT_ROWS = tuple(f"body:{index}" for index in range(6))
 
 METRIC_A = column_values("metric_a")
+RATIO = column_values("ratio")
+ANCHOR_1 = dict(mode="anchor", anchor=1.0, span=1.0)
 
 
 def _alpha_channel(alpha: float) -> int:
@@ -88,6 +97,20 @@ def assert_unpainted(
     assert not is_scheme_color(actual, scheme), f"{where}: expected unpainted, got {actual!r}"
 
 
+def font_weight(page: Page, grid_index: int, row_index: int, col_id: str) -> str | None:
+    """The computed `font-weight` of one cell — `rank` is the one built-in
+    style with a second CSS property."""
+    return page.evaluate(
+        """([gridIndex, rowIndex, colId]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector(
+               `.ag-row[row-index="${rowIndex}"] .ag-cell[col-id="${colId}"]`);
+             return cell ? getComputedStyle(cell).fontWeight : null;
+           }""",
+        [grid_index, row_index, col_id],
+    )
+
+
 @pytest.fixture(autouse=True, scope="module")
 def streamlit_app():
     with StreamlitRunner(APP_FILE) as runner:
@@ -100,7 +123,7 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.get_by_role("img", name="Running...").is_hidden()
     page.wait_for_selector(".ag-root-wrapper", timeout=60000)
     page.wait_for_function(
-        "() => document.querySelectorAll('.ag-root-wrapper').length >= 5",
+        "() => document.querySelectorAll('.ag-root-wrapper').length >= 7",
         timeout=60000,
     )
     # The grouped grid (index 1) is the last of the three to settle: 2 region
@@ -112,6 +135,15 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     page.wait_for_function(
         """() => {
              const grid = document.querySelectorAll('.ag-root-wrapper')[1];
+             return !!grid && grid.querySelectorAll('.ag-row').length >= 9;
+           }""",
+        timeout=60000,
+    )
+    # Grid 6 has the same nine rows — two groups, six leaves, the grand total —
+    # and is now the last grid on the page to finish.
+    page.wait_for_function(
+        """() => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[6];
              return !!grid && grid.querySelectorAll('.ag-row').length >= 9;
            }""",
         timeout=60000,
@@ -413,3 +445,305 @@ def test_default_coldef_cellstyle_disables_the_scale_grid_wide(page: Page):
     painted = cell_backgrounds(page, DEFAULT_CELLSTYLE_GRID)
     for key in FLAT_ROWS:
         assert_unpainted(painted[key]["blocked"], "positive", key)
+
+
+# --- Phase 2: grid 5 ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "col_id,scheme,reverse",
+    [
+        ("anchor_div", "diverging", False),
+        ("anchor_default", "diverging", False),
+        ("anchor_rev", "diverging", True),
+        ("anchor_pos", "positive", False),
+    ],
+)
+def test_anchor_mode_paints_deviation_from_a_fixed_anchor(page: Page, col_id, scheme, reverse):
+    """`ratio` against anchor 1.0, span 1.0: DE and FR below, IT exactly on
+    the anchor (unpainted), CA and NY above, TX past the clamp. `anchor_default`
+    names no scheme anywhere and must resolve to diverging."""
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, RATIO):
+        expected = expected_rgba(scheme, RATIO, value, reverse=reverse, **ANCHOR_1)
+        actual = painted[key][col_id]
+        if expected is None:
+            assert_unpainted(actual, scheme, f"{key}: {col_id}")
+        else:
+            assert_painted(actual, expected, f"{key}: {col_id}")
+    # The exact anchor, pinned explicitly: the gate whose absence would still
+    # produce a plausible faint colour.
+    assert_unpainted(painted["body:2"][col_id], scheme, f"body:2 (1.0): {col_id}")
+
+
+def test_anchor_mode_clamps_past_one_span(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    # TX is 2.5 — d = 1.5 before the clamp — and must paint exactly what a
+    # value one span above the anchor paints.
+    clamped = expected_rgba("diverging", RATIO, 2.5, **ANCHOR_1)
+    assert clamped == expected_rgba("diverging", RATIO, 2.0, **ANCHOR_1)
+    assert_painted(painted["body:5"]["anchor_div"], clamped, "TX clamped")
+
+
+def test_reverse_complements_a_minmax_ramp(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        assert_painted(
+            painted[key]["rev_minmax"],
+            expected_rgba("positive", METRIC_A, value, reverse=True),
+            f"{key}: rev_minmax",
+        )
+    # DE is now the darkest, TX the palest — the opposite of `pos_minmax`.
+    assert painted["body:0"]["rev_minmax"][3] > painted["body:5"]["rev_minmax"][3]
+
+
+def test_reverse_negates_a_zscore_ramp(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        expected = expected_rgba("diverging", METRIC_A, value, reverse=True)
+        actual = painted[key]["rev_zscore"]
+        if expected is None:
+            assert_unpainted(actual, "diverging", f"{key}: rev_zscore")
+        else:
+            assert_painted(actual, expected, f"{key}: rev_zscore")
+    # DE (100, below the mean) now wears the hue TX wears unreversed, and
+    # vice versa — the flip, spelled out without a literal.
+    assert painted["body:0"]["rev_zscore"][:3] == expected_rgba("diverging", METRIC_A, 600)[:3]
+    assert painted["body:5"]["rev_zscore"][:3] == expected_rgba("diverging", METRIC_A, 100)[:3]
+
+
+def test_rank_paints_only_the_maximum(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        if expected_rank(METRIC_A, value):
+            assert_painted(painted[key]["rank_max"], RANK_RGBA, f"{key}: rank_max")
+        else:
+            assert_unpainted(painted[key]["rank_max"], "rank", f"{key}: rank_max")
+    assert font_weight(page, PHASE2_FLAT_GRID, 5, "rank_max") == RANK_FONT_WEIGHT
+    assert font_weight(page, PHASE2_FLAT_GRID, 4, "rank_max") == NORMAL_FONT_WEIGHT
+
+
+def test_rank_reverse_paints_only_the_minimum(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key, value in zip(FLAT_ROWS, METRIC_A):
+        if expected_rank(METRIC_A, value, reverse=True):
+            assert_painted(painted[key]["rank_min"], RANK_RGBA, f"{key}: rank_min")
+        else:
+            assert_unpainted(painted[key]["rank_min"], "rank", f"{key}: rank_min")
+    assert font_weight(page, PHASE2_FLAT_GRID, 0, "rank_min") == RANK_FONT_WEIGHT
+
+
+def test_fill_paints_every_row_with_the_literal_colour(page: Page):
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_painted(painted[key]["fill_lit"], (4, 5, 6, 1.0), f"{key}: fill_lit")
+
+
+def test_fill_resolves_a_css_variable_through_the_host_page(page: Page):
+    """`var(--st-aggrid-test-fill)` is set on `:root` by the app; the fill
+    passes the string through and the browser resolves it — the same path the
+    consumer's `--secondary-background-color` takes under CCv2's no-iframe
+    delivery."""
+    painted = cell_backgrounds(page, PHASE2_FLAT_GRID)
+    for key in FLAT_ROWS:
+        assert_painted(painted[key]["fill_var"], (7, 8, 9, 1.0), f"{key}: fill_var")
+
+
+# --- Phase 2: grid 6 ----------------------------------------------------------
+#
+# Row layout with `groupDefaultExpanded: -1` and the fixture's data order:
+# body:0 EU group, body:1-3 DE FR IT, body:4 US group, body:5-7 CA NY TX, and
+# the grand total either as the last body row or in the pinned-bottom section
+# (located by label, never by index — see `test_the_grand_total_row_is_not_painted`).
+
+EU_LEAVES = {"body:1": 100.0, "body:2": 200.0, "body:3": 300.0}
+US_LEAVES = {"body:5": 400.0, "body:6": 500.0, "body:7": 600.0}
+EU_VALUES = region_values("EU", "metric_a")
+US_VALUES = region_values("US", "metric_a")
+
+
+def total_row_key(page: Page, grid_index: int) -> str:
+    rows = read_rows(page, grid_index)
+    return next(key for key, cells in rows.items() if cells.get("ag-Grid-AutoColumn") == "Total")
+
+
+def test_parent_scope_compares_a_leaf_with_its_siblings_only(page: Page):
+    """Under `scope: "parent"` the EU leaves are scaled over 100..300 and the
+    US leaves over 400..600, so DE and CA are both palest and IT and TX both
+    darkest. The `level_pos` control column, same field, same rows, keeps the
+    2.4.0 picture — one 100..600 ramp — which is what makes the two scopes
+    distinguishable on one screen."""
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        assert_painted(painted[key]["parent_pos"], expected_rgba("positive", EU_VALUES, value), f"{key} parent")
+        assert_painted(painted[key]["level_pos"], expected_rgba("positive", METRIC_A, value), f"{key} level")
+    for key, value in US_LEAVES.items():
+        assert_painted(painted[key]["parent_pos"], expected_rgba("positive", US_VALUES, value), f"{key} parent")
+        assert_painted(painted[key]["level_pos"], expected_rgba("positive", METRIC_A, value), f"{key} level")
+    # Same alpha for DE and CA under parent scope; different under level.
+    assert _alpha_channel(painted["body:1"]["parent_pos"][3]) == _alpha_channel(painted["body:5"]["parent_pos"][3])
+    assert _alpha_channel(painted["body:1"]["level_pos"][3]) != _alpha_channel(painted["body:5"]["level_pos"][3])
+
+
+def test_parent_scope_leaves_top_level_groups_unpainted(page: Page):
+    # The group rows' parent is the root: they are the groups, not siblings.
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    assert_unpainted(painted["body:0"]["parent_pos"], "positive", "EU group / parent")
+    assert_unpainted(painted["body:4"]["parent_pos"], "positive", "US group / parent")
+    assert_unpainted(painted["body:0"]["parent_rank"], "rank", "EU group / parent rank")
+    assert_unpainted(painted["body:4"]["parent_rank"], "rank", "US group / parent rank")
+    # ...whereas level scope still scales the two groups against each other.
+    totals = list(region_totals().values())
+    assert_painted(painted["body:0"]["level_pos"], expected_rgba("positive", totals, 600.0), "EU group / level")
+
+
+def test_rank_under_parent_scope_picks_one_winner_per_group(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        if expected_rank(EU_VALUES, value):
+            assert_painted(painted[key]["parent_rank"], RANK_RGBA, f"{key} parent rank")
+        else:
+            assert_unpainted(painted[key]["parent_rank"], "rank", f"{key} parent rank")
+    for key, value in US_LEAVES.items():
+        if expected_rank(US_VALUES, value):
+            assert_painted(painted[key]["parent_rank"], RANK_RGBA, f"{key} parent rank")
+        else:
+            assert_unpainted(painted[key]["parent_rank"], "rank", f"{key} parent rank")
+    # Spelled out: IT and TX, one per region.
+    assert is_scheme_color(painted["body:3"]["parent_rank"], "rank")
+    assert is_scheme_color(painted["body:7"]["parent_rank"], "rank")
+
+
+def test_rank_under_level_scope_picks_one_winner_per_level(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    # Leaves: TX alone (600 over 100..600). IT is not the level maximum.
+    assert is_scheme_color(painted["body:7"]["level_rank"], "rank")
+    assert_unpainted(painted["body:3"]["level_rank"], "rank", "IT / level rank")
+    # Groups: US (1500) over EU (600).
+    assert is_scheme_color(painted["body:4"]["level_rank"], "rank")
+    assert_unpainted(painted["body:0"]["level_rank"], "rank", "EU group / level rank")
+
+
+def test_fill_reaches_group_rows_and_the_grand_total(page: Page):
+    painted = cell_backgrounds(page, SCOPE_GRID)
+    for key in ("body:0", "body:1", "body:2", "body:3", "body:4", "body:5", "body:6", "body:7"):
+        assert_painted(painted[key]["fill_grouped"], (4, 5, 6, 1.0), f"{key} fill")
+    total = total_row_key(page, SCOPE_GRID)
+    assert_painted(painted[total].get("fill_grouped"), (4, 5, 6, 1.0), "grand total fill")
+
+
+def test_filtering_another_group_away_does_not_rescale_a_parent_scoped_column(page: Page):
+    """The one property of parent scoping a static grid cannot show.
+
+    `lessThan 15` on `metric_b` keeps DE, FR, IT and drops every US row. The
+    EU leaves' *parent* population is still 100/200/300, so `parent_pos`
+    must not change; `level_pos`'s population shrinks from 100..600 to
+    100..300 and FR moves from t = 0.2 to t = 0.5. FR keeps row-index 2
+    through the filter, so its `level_pos` background changing is the repaint
+    signal — the same wait `test_filtering_rescales_the_column` uses.
+    """
+    before = cell_backgrounds(page, SCOPE_GRID)
+    fr_level_before = page.evaluate(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="level_pos"]');
+             return getComputedStyle(cell).backgroundColor;
+           }""",
+        SCOPE_GRID,
+    )
+
+    grid = page.locator(".ag-root-wrapper").nth(SCOPE_GRID)
+    # `agNumberColumnFilter`'s floating filter renders two inputs: the
+    # editable number spinbutton and a disabled read-only text field (its
+    # summary fallback for multi-condition filters) — both under the same
+    # `.ag-floating-filter[col-id]`, so the enabled one must be singled out.
+    grid.locator('.ag-floating-filter[col-id="metric_b"] input:not([disabled])').fill("15")
+    # EU group + 3 leaves + the grand total.
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 5;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    page.wait_for_function(
+        """([gridIndex, previousBackground]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="2"] .ag-cell[col-id="level_pos"]');
+             return !!cell && getComputedStyle(cell).backgroundColor !== previousBackground;
+           }""",
+        arg=[SCOPE_GRID, fr_level_before],
+        timeout=10000,
+    )
+
+    after = cell_backgrounds(page, SCOPE_GRID)
+    for key, value in EU_LEAVES.items():
+        # Unchanged: same expected colour as before the filter, and the same
+        # browser output, on the 8-bit grid.
+        assert_painted(after[key]["parent_pos"], expected_rgba("positive", EU_VALUES, value), f"{key} parent after")
+        assert _alpha_channel(after[key]["parent_pos"][3]) == _alpha_channel(before[key]["parent_pos"][3])
+    # Re-scaled: FR is now mid-ramp over three rows, not over six.
+    assert_painted(after["body:2"]["level_pos"], expected_rgba("positive", EU_VALUES, 200.0), "FR level after")
+    assert _alpha_channel(after["body:2"]["level_pos"][3]) != _alpha_channel(before["body:2"]["level_pos"][3])
+
+
+def test_a_cell_that_stops_being_the_winner_loses_its_highlight(page: Page):
+    """A painted cell must be *un*painted when the next model generation
+    says so. `cellStyle` returning `null` does not clear a cell's previous
+    inline style under ag-grid-react, so without an explicit clearing style
+    the interim winner would keep its highlight after the filter is cleared
+    — two winners on screen.
+
+    Filtered to `lessThan 15`, IT (300) is `level_rank`'s leaf winner over
+    100..300; cleared, TX (600) is, and IT must go back to plain.
+    """
+    grid = page.locator(".ag-root-wrapper").nth(SCOPE_GRID)
+    filter_input = grid.locator('.ag-floating-filter[col-id="metric_b"] input:not([disabled])')
+
+    filter_input.fill("15")
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 5;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    # IT keeps row-index 3 through both transitions; wait for it to become the winner.
+    page.wait_for_function(
+        """([gridIndex, weight]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="3"] .ag-cell[col-id="level_rank"]');
+             return !!cell && getComputedStyle(cell).fontWeight === weight;
+           }""",
+        arg=[SCOPE_GRID, RANK_FONT_WEIGHT],
+        timeout=10000,
+    )
+    filtered = cell_backgrounds(page, SCOPE_GRID)
+    assert_painted(filtered["body:3"]["level_rank"], RANK_RGBA, "IT while filtered")
+
+    filter_input.fill("")
+    page.wait_for_function(
+        """(gridIndex) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             return grid.querySelectorAll('.ag-row').length === 9;
+           }""",
+        arg=SCOPE_GRID,
+        timeout=10000,
+    )
+    # TX is a fresh row comp painted from the new population; once it wears
+    # the highlight, the repaint pass that must also clear IT has run.
+    page.wait_for_function(
+        """([gridIndex, weight]) => {
+             const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+             const cell = grid.querySelector('.ag-row[row-index="7"] .ag-cell[col-id="level_rank"]');
+             return !!cell && getComputedStyle(cell).fontWeight === weight;
+           }""",
+        arg=[SCOPE_GRID, RANK_FONT_WEIGHT],
+        timeout=10000,
+    )
+    cleared = cell_backgrounds(page, SCOPE_GRID)
+    assert_painted(cleared["body:7"]["level_rank"], RANK_RGBA, "TX after clearing")
+    assert_unpainted(cleared["body:3"]["level_rank"], "rank", "IT after clearing")
+    assert font_weight(page, SCOPE_GRID, 3, "level_rank") == NORMAL_FONT_WEIGHT

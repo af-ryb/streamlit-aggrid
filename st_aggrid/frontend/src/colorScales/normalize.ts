@@ -72,3 +72,12 @@ export function zScore(stats: Stats, value: number): number | null {
 export function zIntensity(z: number): number {
   return Math.min(Math.abs(z) / Z_CAP, 1)
 }
+
+/** Signed deviation from a fixed anchor, in units of `span`, clamped into
+ * `[-1, 1]`. The `anchor` mode's whole reference frame: no population, no
+ * statistics. The exact anchor is `0`, and `index.ts` leaves it unpainted —
+ * "no deviation" must not read as a faint colour in either direction. */
+export function anchorD(anchor: number, span: number, value: number): number {
+  const d = (value - anchor) / span
+  return d < -1 ? -1 : d > 1 ? 1 : d
+}

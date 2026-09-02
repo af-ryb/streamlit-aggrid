@@ -24,6 +24,9 @@ the z-score dead zone. `metric_b` carries a negative and a zero so
 `skip_non_positive` is observable in both settings. `metric_c` is constant so
 the uniformity gate fires.
 
+`ratio` straddles an anchor of `1.0` with a span of `1.0`: both signs, the
+exact anchor (IT), and one value past the clamp (TX).
+
 Summed by region, `metric_a` gives EU 600 and US 1500 — deliberately outside
 the leaf range 100..600, so a grid that pooled group totals with leaf values
 would paint every leaf near the pale end and the level-scoped rule is
@@ -42,12 +45,12 @@ ROW_DIM = "region"
 LEAF_DIM = "country"
 
 COLOR_SCALE_ROWS: tuple[dict, ...] = (
-    {"region": "EU", "country": "DE", "metric_a": 100, "metric_b": -5, "metric_c": 7},
-    {"region": "EU", "country": "FR", "metric_a": 200, "metric_b": 0, "metric_c": 7},
-    {"region": "EU", "country": "IT", "metric_a": 300, "metric_b": 10, "metric_c": 7},
-    {"region": "US", "country": "CA", "metric_a": 400, "metric_b": 20, "metric_c": 7},
-    {"region": "US", "country": "NY", "metric_a": 500, "metric_b": 30, "metric_c": 7},
-    {"region": "US", "country": "TX", "metric_a": 600, "metric_b": 40, "metric_c": 7},
+    {"region": "EU", "country": "DE", "metric_a": 100, "metric_b": -5, "metric_c": 7, "ratio": 0.5},
+    {"region": "EU", "country": "FR", "metric_a": 200, "metric_b": 0, "metric_c": 7, "ratio": 0.9},
+    {"region": "EU", "country": "IT", "metric_a": 300, "metric_b": 10, "metric_c": 7, "ratio": 1.0},
+    {"region": "US", "country": "CA", "metric_a": 400, "metric_b": 20, "metric_c": 7, "ratio": 1.1},
+    {"region": "US", "country": "NY", "metric_a": 500, "metric_b": 30, "metric_c": 7, "ratio": 1.5},
+    {"region": "US", "country": "TX", "metric_a": 600, "metric_b": 40, "metric_c": 7, "ratio": 2.5},
 )
 
 
@@ -68,6 +71,12 @@ def region_totals(field: str = "metric_a") -> dict[str, float]:
     for row in COLOR_SCALE_ROWS:
         totals[row[ROW_DIM]] = totals.get(row[ROW_DIM], 0.0) + float(row[field])
     return totals
+
+
+def region_values(region: str, field: str = "metric_a") -> list[float]:
+    """``field``'s leaf values within one region — the parent-scoped
+    population of a grid that row-groups by region."""
+    return [float(row[field]) for row in COLOR_SCALE_ROWS if row[ROW_DIM] == region]
 
 
 # --------------------------------------------------------------------------
@@ -111,6 +120,15 @@ SCHEMES: dict[str, Scheme] = {
     "positive": Scheme("positive", "minmax", False, 0.06, 0.55),
     "diverging": Scheme("diverging", "zscore", True, 0.1, 0.7),
 }
+
+#: `rank`'s single highlight: the saturated end of diverging's green, at a
+#: fixed alpha. Derived, not typed, so it cannot drift from the ramp.
+RANK_ALPHA = 0.35
+
+#: `rank` is bold; everything else is the theme's normal weight. Computed
+#: `font-weight` values, as the browser reports them.
+RANK_FONT_WEIGHT = "600"
+NORMAL_FONT_WEIGHT = "400"
 
 
 def _neutral_z_alpha(abs_z: float) -> float:
@@ -160,6 +178,23 @@ def stats(values: Sequence[float]) -> tuple[float, float, float, float]:
     return min(values), max(values), mean, sd
 
 
+def _rgb(scheme_name: str, signed: float, u: float) -> tuple[int, int, int]:
+    if scheme_name == "neutral":
+        return (51, 120, 200)
+    if scheme_name == "positive":
+        return (29, 158, 117)
+    if signed < 0:
+        return (half_up(240 - 15 * u), 18, 15)
+    return (35, half_up(190 - 15 * u), 40)
+
+
+RANK_RGBA: tuple[int, int, int, float] = (*_rgb("diverging", 1.0, 1.0), RANK_ALPHA)
+
+
+def _clamp(d: float) -> float:
+    return -1.0 if d < -1.0 else 1.0 if d > 1.0 else d
+
+
 def expected_rgba(
     scheme_name: str,
     values: Iterable,
@@ -167,12 +202,18 @@ def expected_rgba(
     *,
     mode: Optional[str] = None,
     skip_non_positive: Optional[bool] = None,
+    reverse: bool = False,
+    anchor: Optional[float] = None,
+    span: Optional[float] = None,
 ) -> Optional[tuple[int, int, int, float]]:
     """The ``(r, g, b, alpha)`` a cell must be painted, or ``None`` when it is
     left unpainted.
 
-    ``values`` is the raw population — every value of the same column at the
-    same group level, before the skip rule, which is applied here.
+    ``values`` is the raw population — every value of the same column in the
+    same scope, before the skip rule, which is applied here. It is ignored
+    under ``mode="anchor"``, which needs ``anchor`` and ``span`` instead.
+    ``reverse`` complements a min/max position, negates a z-score, and
+    mirrors an anchored deviation.
     """
     scheme = SCHEMES[scheme_name]
     mode = mode or scheme.default_mode
@@ -190,6 +231,21 @@ def expected_rgba(
     if skip and v <= 0:
         return None
 
+    if mode == "anchor":
+        if anchor is None:
+            raise ValueError("mode='anchor' needs an anchor")
+        if span is None:
+            raise ValueError("mode='anchor' needs a span")
+        d = _clamp((v - anchor) / span)
+        if reverse:
+            d = -d
+        if d == 0:
+            return None
+        signed = d
+        u = abs(d)
+        alpha = scheme.alpha_min + u * (scheme.alpha_max - scheme.alpha_min)
+        return (*_rgb(scheme_name, signed, u), half_up(alpha * 1000) / 1000)
+
     pop = population(values, skip)
     if not pop:
         return None
@@ -199,6 +255,8 @@ def expected_rgba(
         if high <= low:
             return None
         t = (v - low) / (high - low)
+        if reverse:
+            t = 1 - t
         if scheme_name == "diverging":
             signed = 2 * t - 1
             u = abs(signed)
@@ -217,6 +275,8 @@ def expected_rgba(
         z = (v - mean) / sd
         if abs(z) < Z_DEAD:
             return None
+        if reverse:
+            z = -z
         signed = z
         u = min(abs(z) / Z_CAP, 1.0)
         if scheme_name == "neutral":
@@ -226,16 +286,29 @@ def expected_rgba(
         else:
             alpha = scheme.alpha_min + u * (scheme.alpha_max - scheme.alpha_min)
 
-    if scheme_name == "neutral":
-        rgb = (51, 120, 200)
-    elif scheme_name == "positive":
-        rgb = (29, 158, 117)
-    elif signed < 0:
-        rgb = (half_up(240 - 15 * u), 18, 15)
-    else:
-        rgb = (35, half_up(190 - 15 * u), 40)
+    return (*_rgb(scheme_name, signed, u), half_up(alpha * 1000) / 1000)
 
-    return (*rgb, half_up(alpha * 1000) / 1000)
+
+def expected_rank(
+    values: Iterable,
+    value,
+    *,
+    reverse: bool = False,
+    skip_non_positive: bool = False,
+) -> bool:
+    """Whether ``value`` is the best of ``values`` — the maximum, or the
+    minimum under ``reverse`` — and so painted ``RANK_RGBA``. A population
+    of fewer than two is never painted; ties all are."""
+    if value is None:
+        return False
+    v = float(value)
+    if skip_non_positive and v <= 0:
+        return False
+    pop = population(values, skip_non_positive)
+    if len(pop) < 2:
+        return False
+    best = min(pop) if reverse else max(pop)
+    return v == best
 
 
 def is_scheme_color(
@@ -256,4 +329,6 @@ def is_scheme_color(
         return (r, g, b) == (51, 120, 200)
     if scheme_name == "positive":
         return (r, g, b) == (29, 158, 117)
+    if scheme_name == "rank":
+        return (r, g, b) == RANK_RGBA[:3]
     return (g == 18 and b == 15) or (r == 35 and b == 40)
