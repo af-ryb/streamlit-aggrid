@@ -7,7 +7,15 @@
  * two ever disagree, one of them transcribed a ramp wrong.
  */
 import assert from "node:assert/strict"
-import { MODE_NAMES, SCHEME_NAMES, SCHEMES, colorFor } from "../schemes.ts"
+import {
+  MODE_NAMES,
+  RANK_STYLE,
+  SCHEME_NAMES,
+  SCHEMES,
+  SCOPE_NAMES,
+  colorFor,
+  isRampScheme,
+} from "../schemes.ts"
 import { zIntensity } from "../normalize.ts"
 
 const Z = -1.4638501094227998 // metric_a = 100 against the 100..600 ramp
@@ -59,7 +67,36 @@ assert.equal(SCHEMES.diverging.defaultSkipNonPositive, true)
 // These must equal st_aggrid/color_scale.py's COLOR_SCALE_SCHEMES and
 // COLOR_SCALE_MODES, which test/unit/test_public_exports.py pins on the
 // Python side. Nothing mechanical keeps the two languages in step.
-assert.deepEqual(SCHEME_NAMES, ["neutral", "positive", "diverging"])
-assert.deepEqual(MODE_NAMES, ["minmax", "zscore"])
+assert.deepEqual(SCHEME_NAMES, ["neutral", "positive", "diverging", "rank", "fill"])
+assert.deepEqual(MODE_NAMES, ["minmax", "zscore", "anchor"])
+assert.deepEqual(SCOPE_NAMES, ["level", "parent"])
+
+// Anchor mode: `raw` is the clamped signed deviation, `intensity` its
+// magnitude, and alpha is the scheme's *linear* ramp — never `zRamp`. The
+// same numbers `test/unit/test_color_scale_fixture.py` pins.
+const anchor = (raw: number) => ({ mode: "anchor" as const, raw, intensity: Math.abs(raw) })
+
+assert.equal(colorFor(SCHEMES.diverging, anchor(-0.5)), "rgba(233, 18, 15, 0.4)")
+assert.equal(colorFor(SCHEMES.diverging, anchor(0.5)), "rgba(35, 183, 40, 0.4)")
+assert.equal(colorFor(SCHEMES.diverging, anchor(1)), "rgba(35, 175, 40, 0.7)")
+assert.equal(colorFor(SCHEMES.diverging, anchor(-1)), "rgba(225, 18, 15, 0.7)")
+// zRamp provably not consulted: diverging's z-ramp at |z| = 0.5 is 0.1, the
+// linear ramp at u = 0.5 is 0.4. The line above holds 0.4.
+assert.equal(colorFor(SCHEMES.diverging, anchor(-0.09999999999999998)), "rgba(239, 18, 15, 0.16)")
+assert.equal(colorFor(SCHEMES.diverging, anchor(0.10000000000000009)), "rgba(35, 189, 40, 0.16)")
+assert.equal(colorFor(SCHEMES.positive, anchor(-0.5)), "rgba(29, 158, 117, 0.305)")
+assert.equal(colorFor(SCHEMES.positive, anchor(0.25)), "rgba(29, 158, 117, 0.183)")
+assert.equal(colorFor(SCHEMES.neutral, anchor(1)), "rgba(51, 120, 200, 0.55)")
+assert.equal(colorFor(SCHEMES.neutral, anchor(-0.5)), "rgba(51, 120, 200, 0.315)")
+
+// rank's highlight is derived from diverging's saturated green.
+assert.deepEqual(RANK_STYLE, { backgroundColor: "rgba(35, 175, 40, 0.35)", fontWeight: 600 })
+
+// The ramp predicate must not be fooled by Object.prototype.
+assert.ok(isRampScheme("neutral"))
+assert.ok(!isRampScheme("rank"))
+assert.ok(!isRampScheme("fill"))
+assert.ok(!isRampScheme("toString"))
+assert.ok(!isRampScheme(undefined))
 
 console.log("schemes.check.ts ok")
