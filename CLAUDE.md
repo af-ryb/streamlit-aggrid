@@ -23,6 +23,7 @@ st_aggrid/                   # Python package
 ├── ratio.py                 # Validation for stRatio/stRatioOfRatios/stWeightedAvg declarations
 ├── color_scale.py           # Validation for stColorScale declarations
 ├── _coldefs.py              # colDef walk shared by both validators
+├── _numbers.py              # strict number predicates shared by both validators
 └── frontend/                # TypeScript/React frontend (Vite)
     ├── src/
     │   ├── index.tsx                 # CCv2 entry point
@@ -110,11 +111,16 @@ Python build: **hatchling** (via `uv build`).
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
 - **Three built-in declarative aggregators**: `stRatio`, `stRatioOfRatios`, `stWeightedAvg` — declared in `colDef.context[name]`, sharing one folding core (`aggFuncs/foldSums.ts`). Python (`ratio.py`) validates every declaration against the DataFrame, never against `columnDefs`. See the README's "Declarative aggregation without JavaScript" section for the arithmetic, the zero rule and each aggregator's fallback behaviour.
-- **Three built-in colour schemes**: `neutral`, `positive`, `diverging` —
-  declared in `colDef.context["stColorScale"]` with grid-level defaults in
-  `gridOptions["context"]`, sharing one statistics pass
-  (`colorScales/population.ts`). A column's population is the same column at
-  the same group level after filter and sort; a caller-supplied `cellStyle`
+- **Five built-in colour schemes, three modes, two scopes**: `neutral`,
+  `positive`, `diverging` (ramps), `rank` (the best value in the population)
+  and `fill` (a constant colour) — declared in
+  `colDef.context["stColorScale"]` with grid-level defaults in
+  `gridOptions["context"]`, merged per key. Ramps run `minmax`, `zscore` or
+  `anchor` (a fixed reference, no population); `reverse` flips any direction.
+  A population is the same column at the same group level after filter and
+  sort (`scope: "level"`), or only the row's siblings under one parent
+  (`scope: "parent"`, top-level rows then unpainted) — one statistics pass
+  either way (`colorScales/population.ts`). A caller-supplied `cellStyle`
   wins over the built-in, as with the aggregators. See the README's
   "Declarative colour scales without JavaScript".
 

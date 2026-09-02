@@ -321,7 +321,8 @@ function paintedColumnIds(api: GridApi): string[] {
  * The cost is not uniform across the repaint. `refreshCells` itself only
  * re-renders the rendered viewport, a few dozen rows however large the grid
  * is — but clearing the cache means the *first* cell it repaints in each
- * `(column, level)` pays a full `statsFor` walk of the entire model, one
+ * `(column, level)` — or, under `scope: "parent"`, each `(column)` once for
+ * every parent at once — pays a full `statsFor` walk of the entire model, one
  * `api.getCellValue` per row, to rebuild that entry. Still a large win over
  * the per-cell `forEachNodeAfterFilterAndSort` scan this replaces, just not
  * the flat "a few dozen rows total" cost that description alone would imply.
