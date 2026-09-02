@@ -2328,7 +2328,10 @@ def test_filtering_another_group_away_does_not_rescale_a_parent_scoped_column(pa
     )
 
     grid = page.locator(".ag-root-wrapper").nth(SCOPE_GRID)
-    grid.locator('.ag-floating-filter[col-id="metric_b"] input').fill("15")
+    # `agNumberColumnFilter`'s floating filter renders a second, disabled
+    # read-only input next to the editable one; a bare `input` locator trips
+    # Playwright's strict mode.
+    grid.locator('.ag-floating-filter[col-id="metric_b"] input:not([disabled])').fill("15")
     # EU group + 3 leaves + the grand total.
     page.wait_for_function(
         """(gridIndex) => {
