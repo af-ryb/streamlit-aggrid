@@ -358,3 +358,34 @@ must stay in sync.
 - The fork's e2e suites are green in full, not only the new one.
 - Slice 9.1 is recorded in the consumer's `dash-ai-CHANGELOG.md` and removed
   from `dash-ai-TASKS.md`, per that tracker's closing rule.
+
+## Correction (2026-09-11, during implementation)
+
+Two claims in this spec did not survive contact with measurement, and the
+shipped documentation (`README.md`, Auto-Collect section) says less than the
+contract table above.
+
+1. **The contract table's split of what `gridReady` cannot see does not hold
+   up.** Three probes were tried. `focusedCell` and `scroll`, both read through
+   `getState()`, were invalid: `getState()` returns cached state seeded from
+   the supplied `initialState`, so it echoes the request back whether or not
+   anything has actually been applied yet. A third probe read `scroll` through
+   `getVerticalPixelRange()` instead, and measured `{top: 2000}` at both
+   `gridReady` and `firstDataRendered` — the restored scroll was already in
+   effect at the `gridReady` collect, the opposite of what the table above
+   claims. The README therefore documents only what these three rounds could
+   demonstrate (the restored column layout and row groups, the `merge`
+   overlay, and pre-selection, all confirmed at `gridReady`) and drops the
+   enumeration of what `gridReady` supposedly misses. Whether `gridReady` and
+   `firstDataRendered` actually differ in what they see is an open question,
+   not a documented behaviour.
+
+2. **Naming both triggers on one grid delivers one host-side update, not
+   two.** The frontend does collect twice — the e2e suite asserts this from
+   the browser console — but `grid_state` is a single component state value
+   rather than an event stream, and AG-Grid dispatches `firstDataRendered`
+   from a `requestAnimationFrame` callback right behind the synchronous
+   `gridReady` collect. The two writes land inside one flush window and
+   collapse to the later one, so only the `firstDataRendered` collect reaches
+   Python. This is now documented in the README rather than left as a
+   consumer-side surprise.

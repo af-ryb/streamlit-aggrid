@@ -60,7 +60,7 @@ result = AgGrid(
 result.selected_rows   # DataFrame of selected rows (or None)
 result.filter_model    # dict with active filters
 result.column_state    # list of column state dicts
-result.event_name      # name of the event that triggered the update
+result.event_name      # name of the event or action that triggered the update
 result.event_data      # serialized event payload
 ```
 
@@ -70,9 +70,37 @@ The `update_on` list accepts AG-Grid event names. Use a tuple `(event_name, debo
 
 Any AG-Grid API method that returns serializable data can be used in `collect`. The result key is derived from the method name: `getSelectedRows` -> `result.selected_rows`, `getFilterModel` -> `result.filter_model`, or via `result.get("selectedRows")`.
 
-**`gridReady` and `firstDataRendered` are rejected in `update_on`** — passing either raises `ValueError`. They cannot work as zero-interaction triggers, and used to fail silently: the listener-attaching effect behind `collect`/`update_on` only runs once the `gridApi` state is set, and that state is itself set from inside `AgGridComponent`'s own `onGridReady` callback — so by the time a `gridReady` listener registered through `update_on` is actually attached, the grid's internal `gridReady` event has already fired once and will never fire again. `firstDataRendered` loses the same race for the same reason whenever there is no asynchronous data load to delay it. Put a real user-driven event in `update_on` (`sortChanged`, `selectionChanged`, ...), or use `call_grid_api` for a one-off read.
+**`gridReady` and `firstDataRendered` are zero-interaction triggers.** Either
+name in `update_on` produces exactly one auto-collect per grid creation, with no
+click. They are served as callbacks bound when the grid is created, not as event
+subscriptions, and what each one sees differs:
 
-Only these two names are rejected. `update_on` is otherwise unchecked — AG-Grid's event set moves with every release and this package keeps no copy of it, so a misspelled event name is still a silent no-op.
+| Trigger | Fires | Sees |
+|---|---|---|
+| `gridReady` | Always, once per grid creation | The restored column layout and row groups, the `merge` overlay, and pre-selection — everything this component restores in its own `onGridReady`. |
+| `firstDataRendered` | Once per grid creation, **only if at least one row renders** | The same, one frame later, after the first rows have painted. |
+
+Need a guaranteed single fire even on a grid with no rows? Use `gridReady`.
+Need the collect to happen after the first rows are on screen? Use
+`firstDataRendered`. AG-Grid restores `initial_state` in several phases, and
+this component does not promise which phase either trigger lands after.
+
+Both are read at grid creation, so adding either name on a later rerun takes
+effect the next time the grid mounts.
+
+Naming both on one grid gives you one update, not two. `grid_state` is a single
+component state value rather than an event stream, so two writes to it inside
+one flush window collapse to the later one — and AG-Grid dispatches
+`firstDataRendered` from a `requestAnimationFrame` callback right behind the
+synchronous `gridReady` collect. Both collects do happen; only the second
+reaches Python.
+
+Neither can be debounced: `("gridReady", 300)` raises `ValueError`, because a
+debounce coalesces a burst of firings and these fire once.
+
+That is the only check. `update_on` is otherwise unchecked — AG-Grid's event set
+moves with every release and this package keeps no copy of it, so a misspelled
+event name is still a silent no-op.
 
 ### Explicit API Calls
 
@@ -636,7 +664,7 @@ AgGrid(
 | `.filter_model` | dict / None | Active filters |
 | `.sort_model` | list[dict] / None | Active sorts |
 | `.grid_state` | dict / None | Full grid state |
-| `.event_name` | str / None | Triggering event name |
+| `.event_name` | str / None | Triggering event or action name |
 | `.event_data` | dict / None | Serialized event data |
 | `.api_response` | dict / None | Explicit API call response |
 | `.data` | DataFrame / None | Original input data |
