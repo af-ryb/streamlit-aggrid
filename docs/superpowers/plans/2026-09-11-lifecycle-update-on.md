@@ -973,6 +973,7 @@ git commit -m "Cover both lifecycle triggers: one fire each, post-restore, empty
 - Modify: `README.md:73-77`
 - Modify: `test/grid_return.py:179-181`
 - Modify: `test/grid_agg_export.py:57-70`
+- Modify: `st_aggrid/result.py:92` (the `event_name` docstring)
 - Modify: `pyproject.toml:3`
 - Modify: `st_aggrid/pyproject.toml:13`
 
@@ -1059,8 +1060,13 @@ description to `Triggering event or action name`.
 
 - [ ] **Step 4: Check nothing stale survives**
 
-Run: `grep -rn "never fire\|can never reach\|UNSUPPORTED_UPDATE_ON" README.md st_aggrid test --include=*.py --include=*.ts --include=*.tsx --include=*.md | grep -v __pycache__`
+Run: `grep -rn "UNSUPPORTED_UPDATE_ON\|are rejected in\|it never fired\|does not work as a zero-interaction" README.md st_aggrid test --include=*.py --include=*.md | grep -v __pycache__`
 Expected: no matches.
+
+The pattern deliberately excludes `*.ts`/`*.tsx` and the bare phrase "never
+fire": Task 2 writes the comment "A listener here would never fire (gridReady)"
+in `useAutoCollect.ts`, which is the accurate explanation of why the skip
+exists, not stale prose.
 
 - [ ] **Step 5: Bump both versions**
 
