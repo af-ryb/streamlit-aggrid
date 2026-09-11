@@ -390,3 +390,21 @@ contract table above.
    collapse to the later one, so only the `firstDataRendered` collect reaches
    Python. This is now documented in the README rather than left as a
    consumer-side surprise.
+
+3. **`CollectNow`'s `eventData` ships as `any`, not the `unknown` this spec
+   specified.** Pragmatic rather than an oversight: both the programmatic-
+   source check and `serializeEventData` want to read into it, and `any`
+   matches the file's existing handler signatures. Recorded here rather than
+   left as a silent deviation from the contract above.
+
+4. **The placement argument ("collect after the restore block") is narrower
+   than stated.** It says the restore block and pre-selection must precede
+   the collect or `getColumnState` returns the pre-restore layout. That is
+   only true in `columns_state_mode="merge"`. In the default `replace` mode,
+   `initialState` restores the layout at grid *creation*, before
+   `onGridReady` runs at all — so a collect hoisted to the first statement of
+   `onGridReady` would still see the restored layout, and a regression test
+   built on `replace` mode pins nothing. The rule still holds, but only
+   through merge mode, pre-selection, and the caller's own handler — which is
+   why `test/test_grid_lifecycle_collect.py::test_grid_ready_snapshot_is_post_restore`
+   now drives its `restore` case with `columns_state_mode="merge"`.

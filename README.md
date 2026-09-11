@@ -88,12 +88,17 @@ this component does not promise which phase either trigger lands after.
 Both are read at grid creation, so adding either name on a later rerun takes
 effect the next time the grid mounts.
 
-Naming both on one grid gives you one update, not two. `grid_state` is a single
-component state value rather than an event stream, so two writes to it inside
-one flush window collapse to the later one — and AG-Grid dispatches
-`firstDataRendered` from a `requestAnimationFrame` callback right behind the
-synchronous `gridReady` collect. Both collects do happen; only the second
-reaches Python.
+A grid that names either trigger writes `grid_state` during mount, which is
+one Streamlit rerun the grid did not previously cause. It cannot loop: a
+rerun re-renders the component rather than remounting it, so the callbacks do
+not fire again.
+
+Naming both on one grid usually collapses to one update, not two — don't rely
+on receiving both. `grid_state` is a single component state value rather than
+an event stream, so two writes to it inside one flush window collapse to the
+later one — and AG-Grid dispatches `firstDataRendered` from a
+`requestAnimationFrame` callback right behind the synchronous `gridReady`
+collect. Both collects do happen; only the second reaches Python.
 
 Neither can be debounced: `("gridReady", 300)` raises `ValueError`, because a
 debounce coalesces a burst of firings and these fire once.
@@ -101,6 +106,17 @@ debounce coalesces a burst of firings and these fire once.
 That is the only check. `update_on` is otherwise unchecked — AG-Grid's event set
 moves with every release and this package keeps no copy of it, so a misspelled
 event name is still a silent no-op.
+
+**Caveat for auto-sized columns.** AG-Grid runs `autoSizeStrategy` at grid
+initialisation, but for `fitGridWidth` and `fitProvidedWidth` the actual fit
+is deferred behind a timer, so a `gridReady` collect of `getColumnState`
+captures widths from before the fit — widths that never appear on screen.
+Nothing corrects them afterwards: the resize AG-Grid emits carries
+`source: "sizeColumnsToFit"`, which this component deliberately filters out
+of capture. On a grid that auto-sizes (`fitGridWidth` is one line in this
+package's own `GridOptionsBuilder` — see `configure_grid_options`), use
+`firstDataRendered` instead, or don't persist widths from a `gridReady`
+collect.
 
 ### Explicit API Calls
 

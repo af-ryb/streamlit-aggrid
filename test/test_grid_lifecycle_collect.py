@@ -90,10 +90,9 @@ def test_both_triggers_fire_once_each_and_in_order(page: Page, collected):
     writes to it inside one flush window collapse to the later one — and
     AG-Grid dispatches `firstDataRendered` from a requestAnimationFrame
     callback right behind the synchronous `gridReady` collect, so the two
-    always share a window. The survivor is the better snapshot anyway:
-    `firstDataRendered`'s is taken after AG-Grid's deferred restore phase, a
-    superset of what `gridReady` can see. Measured over the raw WebSocket
-    traffic: one `grid_state` frame, carrying `firstDataRendered`.
+    always share a window. The later snapshot is simply the one that
+    survives; whether the two differ is unmeasured. Measured over the raw
+    WebSocket traffic: one `grid_state` frame, carrying `firstDataRendered`.
     """
     select_case(page, "both")
 
@@ -115,6 +114,11 @@ def test_grid_ready_snapshot_is_post_restore(page: Page, collected):
     by_id = {entry["colId"]: entry for entry in state}
     assert by_id["region"]["rowGroupIndex"] == 0
     assert by_id["channel"]["hide"] is True
+
+    # `collected` is what navigates the page in the first place (see the
+    # fixture) — reading it here makes that dependency explicit and confirms
+    # the snapshot came from a single `gridReady` collect, not a stray extra.
+    assert collected == ["gridReady"]
 
 
 def test_empty_grid_never_fires_first_data_rendered(page: Page, collected):

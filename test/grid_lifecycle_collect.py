@@ -124,12 +124,22 @@ elif CASE == "both":
     show_fires("lc_both")
 
 elif CASE == "restore":
+    # `columns_state_mode="merge"` is the point of this case, not an
+    # incidental setting: in the default `replace` mode, `columns_state` is
+    # restored through the `initialState` prop at grid creation, before
+    # `onGridReady` runs at all — so a collect hoisted to the first statement
+    # of `onGridReady` would still see the restored layout and this case
+    # would pin nothing. Merge mode restores nothing pre-paint (the
+    # `initialState` memo returns `undefined`), so `applyColumnState` and
+    # `setRowGroupColumns` run inside `onGridReady`, where the ordering
+    # against the `gridReady` collect is real.
     result = AgGrid(
         DF,
         grid_options=COMMON,
         collect=["getColumnState"],
         update_on=["gridReady"],
         columns_state=RESTORE_STATE,
+        columns_state_mode="merge",
         enable_enterprise_modules=True,
         debug=True,
         on_grid_state_change=recorder("lc_restore"),

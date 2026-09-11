@@ -984,10 +984,19 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         }
       }
 
-      // Fire original onGridReady if provided
+      // Fire original onGridReady if provided. A `JsCode` handler degrades to
+      // a plain (truthy) string when `allow_unsafe_jscode=False` — calling it
+      // would throw and the exception would escape AG-Grid's dispatch,
+      // silently killing the collect below. Guard on callability and warn
+      // instead of throwing.
       const { onGridReady: userOnGridReady } = gridOptions
-      if (userOnGridReady) {
+      if (typeof userOnGridReady === "function") {
         userOnGridReady(event)
+      } else if (userOnGridReady && debug) {
+        console.warn(
+          "[AgGridComponent] onGridReady handler ignored: not a function " +
+            "(likely a JsCode value with allow_unsafe_jscode not set)"
+        )
       }
 
       // Zero-interaction trigger. Last on purpose: the restore block above
@@ -1023,16 +1032,24 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // onGridReady chains its own.
   const onFirstDataRendered = useCallback(
     (event: FirstDataRenderedEvent) => {
+      // Same guard as onGridReady's user-handler chain: a non-callable
+      // (e.g. degraded JsCode) handler must not throw and silently kill the
+      // collect that follows.
       const { onFirstDataRendered: userOnFirstDataRendered } = gridOptions
-      if (userOnFirstDataRendered) {
+      if (typeof userOnFirstDataRendered === "function") {
         userOnFirstDataRendered(event)
+      } else if (userOnFirstDataRendered && debug) {
+        console.warn(
+          "[AgGridComponent] onFirstDataRendered handler ignored: not a " +
+            "function (likely a JsCode value with allow_unsafe_jscode not set)"
+        )
       }
 
       if (lifecycleWanted.has("firstDataRendered")) {
         collectNow("firstDataRendered", event, event.api)
       }
     },
-    [gridOptions, lifecycleWanted, collectNow]
+    [gridOptions, lifecycleWanted, collectNow, debug]
   )
 
   const isAutoHeight = data.gridOptions?.domLayout === "autoHeight"

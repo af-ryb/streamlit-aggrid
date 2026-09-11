@@ -26,6 +26,12 @@ export const LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
  * `api` overrides the hook's own grid API. That is what lets a grid-creation
  * callback collect while the `gridApi` state it is about to set is still null,
  * which is exactly where the naive fix for lifecycle triggers fails.
+ *
+ * A synthetic caller must not pass an `eventData` whose `source` starts with
+ * `api`, or equals `sizeColumnsToFit`, `flex` or `autosizeColumns` — the
+ * collector drops those as programmatic. Correct for real AG-Grid events, a
+ * trap for a synthetic one: passing such a `source` silently discards the
+ * collect.
  */
 export type CollectNow = (
   eventName: string,
@@ -89,16 +95,15 @@ export function useAutoCollect({
 }: UseAutoCollectOptions): CollectNow {
   const cleanupRef = useRef<(() => void)[]>([])
   // Live grid API, read at call time so `collectNow` stays referentially
-  // stable across the null -> api transition and the effect below does not
-  // re-attach every listener when the grid becomes ready. Assigned during
-  // render, the same way `AgGridComponent` maintains `notesEditableRef`.
+  // stable across the null -> api transition. Assigned during render, the
+  // same way `AgGridComponent` maintains `notesEditableRef`.
   const apiRef = useRef<GridApi | null>(null)
   apiRef.current = gridApi
 
   const collectNow = useCallback<CollectNow>(
     (eventName, eventData, api) => {
       const target = api ?? apiRef.current
-      if (!target) return
+      if (!target || target.isDestroyed()) return
 
       // Skip programmatic (api-sourced) column events. Applying saved column
       // state on mount/restore (initialState + onGridReady setRowGroupColumns

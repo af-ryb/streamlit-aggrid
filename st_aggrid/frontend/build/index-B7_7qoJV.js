@@ -190967,7 +190967,7 @@ function gXt({
   const a = W.useCallback(
     (l, c, u) => {
       const h = u ?? o.current;
-      if (!h) return;
+      if (!h || h.isDestroyed()) return;
       const d = c == null ? void 0 : c.source;
       if (typeof d == "string" && (d.startsWith("api") || d === "sizeColumnsToFit" || d === "flex" || d === "autosizeColumns")) {
         n && console.log(`[useAutoCollect] Skipping programmatic "${l}" (source=${d})`);
@@ -197574,7 +197574,9 @@ const pQt = ({
             (ot = ne.api.getRowNode(Oe)) == null || ot.setSelected(!0, !1);
       }
       const { onGridReady: ze } = V;
-      ze && ze(ne), O.has("gridReady") && _("gridReady", ne, ne.api);
+      typeof ze == "function" ? ze(ne) : ze && w && console.warn(
+        "[AgGridComponent] onGridReady handler ignored: not a function (likely a JsCode value with allow_unsafe_jscode not set)"
+      ), O.has("gridReady") && _("gridReady", ne, ne.api);
     },
     [
       e.columns_state,
@@ -197588,9 +197590,11 @@ const pQt = ({
   ), q = W.useCallback(
     (ne) => {
       const { onFirstDataRendered: ue } = V;
-      ue && ue(ne), O.has("firstDataRendered") && _("firstDataRendered", ne, ne.api);
+      typeof ue == "function" ? ue(ne) : ue && w && console.warn(
+        "[AgGridComponent] onFirstDataRendered handler ignored: not a function (likely a JsCode value with allow_unsafe_jscode not set)"
+      ), O.has("firstDataRendered") && _("firstDataRendered", ne, ne.api);
     },
-    [V, O, _]
+    [V, O, _, w]
   ), ee = ((ye = e.gridOptions) == null ? void 0 : ye.domLayout) === "autoHeight", X = W.useMemo(() => ee ? { width: "100%" } : { width: "100%", height: e.height }, [ee, e.height]);
   return w && console.log("[AgGridComponent] Render with data:", e), /* @__PURE__ */ si.jsxs(
     "div",
