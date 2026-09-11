@@ -353,8 +353,9 @@ must stay in sync.
 - Neither name fires twice when both are requested.
 - The tuple form on either name raises, and every other `update_on` shape
   behaves as it does today.
-- `README.md:73` describes the new behaviour, including the empty-grid case and
-  the split between what each trigger sees.
+- `README.md:73` describes the new behaviour, including the empty-grid case,
+  what each trigger is for, and what naming both on one grid delivers. See the
+  Correction below for the claim this originally made and why it was dropped.
 - The fork's e2e suites are green in full, not only the new one.
 - Slice 9.1 is recorded in the consumer's `dash-ai-CHANGELOG.md` and removed
   from `dash-ai-TASKS.md`, per that tracker's closing rule.

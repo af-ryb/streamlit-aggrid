@@ -73,7 +73,7 @@ Any AG-Grid API method that returns serializable data can be used in `collect`. 
 **`gridReady` and `firstDataRendered` are zero-interaction triggers.** Either
 name in `update_on` produces exactly one auto-collect per grid creation, with no
 click. They are served as callbacks bound when the grid is created, not as event
-subscriptions, and what each one sees differs:
+subscriptions, and they land at different moments:
 
 | Trigger | Fires | Sees |
 |---|---|---|
