@@ -213,3 +213,6 @@ test/issues/*
 test/src_original/*
 st_aggrid/frontend/bundle-analysis.json
 stats.json
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

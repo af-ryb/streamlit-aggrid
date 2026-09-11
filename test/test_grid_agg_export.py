@@ -214,13 +214,13 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
     )
     page.wait_for_selector('[row-index="9"]', timeout=60000)
 
-    # `collect=["getDataAsCsv"]` only fires on an `update_on` event
-    # (`grid_agg_export.py`'s module docstring explains why `gridReady`/
-    # `firstDataRendered` do not work as a zero-interaction trigger here), so
-    # click each grid's row-group header once to fire a genuine
-    # `sortChanged`. Ascending reproduces the fixture's own campaign order (A
-    # before B), so this does not disturb the row order `expected_csv` above
-    # assumes.
+    # `collect=["getDataAsCsv"]` only fires on an `update_on` event, so this
+    # suite drives a real `sortChanged` rather than naming `gridReady` (which
+    # does work now, per `grid_agg_export.py`'s module docstring): the point
+    # here is what a settled, user-sorted grid exports, so click each grid's
+    # row-group header once. Ascending reproduces the fixture's own campaign
+    # order (A before B), so this does not disturb the row order
+    # `expected_csv` above assumes.
     click_header(page, FORMATTED_GRID, "ag-Grid-AutoColumn", "ascending")
     click_header(page, RAW_GRID, "ag-Grid-AutoColumn", "ascending")
 

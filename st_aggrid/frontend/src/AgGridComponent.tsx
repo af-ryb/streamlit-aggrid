@@ -3,6 +3,7 @@ import { AgGridReact } from "ag-grid-react"
 
 import {
   AllCommunityModule,
+  FirstDataRenderedEvent,
   GetRowIdParams,
   GridApi,
   GridReadyEvent,
@@ -17,7 +18,7 @@ import omit from "lodash/omit"
 import debounce from "lodash/debounce"
 import cloneDeep from "lodash/cloneDeep"
 
-import { useAutoCollect } from "./hooks/useAutoCollect"
+import { LIFECYCLE_EVENTS, useAutoCollect } from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
 import { useStreamlitTheme } from "./hooks/useStreamlitTheme"
 import { ThemeParser } from "./ThemeParser"
@@ -454,13 +455,26 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Auto-collect hook — needs a stable `gridApi` value that changes exactly
   // once the grid becomes ready, so `useState` (not the ref) is the source.
-  useAutoCollect({
+  // The returned collector is what the two grid-creation callbacks below use:
+  // they run before that state exists, so they hand it `event.api` directly.
+  const collectNow = useAutoCollect({
     gridApi,
     collectConfig,
     updateOn,
     setStateValue,
     debug,
   })
+
+  // Which lifecycle triggers this grid asked for. Derived once from `updateOn`
+  // so a grid that asked for neither pays nothing at creation.
+  const lifecycleWanted = useMemo(() => {
+    const names = new Set<string>()
+    for (const entry of updateOn) {
+      const name = Array.isArray(entry) ? entry[0] : entry
+      if (LIFECYCLE_EVENTS.has(name)) names.add(name)
+    }
+    return names
+  }, [updateOn])
 
   // Explicit API call hook
   useExplicitApiCall({
@@ -970,13 +984,72 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
         }
       }
 
-      // Fire original onGridReady if provided
+      // Fire original onGridReady if provided. A `JsCode` handler degrades to
+      // a plain (truthy) string when `allow_unsafe_jscode=False` — calling it
+      // would throw and the exception would escape AG-Grid's dispatch,
+      // silently killing the collect below. Guard on callability and warn
+      // instead of throwing.
       const { onGridReady: userOnGridReady } = gridOptions
-      if (userOnGridReady) {
+      if (typeof userOnGridReady === "function") {
         userOnGridReady(event)
+      } else if (userOnGridReady && debug) {
+        console.warn(
+          "[AgGridComponent] onGridReady handler ignored: not a function " +
+            "(likely a JsCode value with allow_unsafe_jscode not set)"
+        )
+      }
+
+      // Zero-interaction trigger. Last on purpose: the restore block above
+      // (row groups, the merge overlay), pre-selection and the caller's own
+      // onGridReady all count as part of restore, and a snapshot taken before
+      // them would report the pre-restore layout as if it were live.
+      //
+      // `event.api` is passed explicitly because the `gridApi` state this
+      // callback set at its top has not committed yet.
+      if (lifecycleWanted.has("gridReady")) {
+        collectNow("gridReady", event, event.api)
       }
     },
-    [data.columns_state, data.columns_state_mode, data.gridOptions, gridOptions, debug]
+    [
+      data.columns_state,
+      data.columns_state_mode,
+      data.gridOptions,
+      gridOptions,
+      debug,
+      lifecycleWanted,
+      collectNow,
+    ]
+  )
+
+  // AG-Grid emits `firstDataRendered` at most once per grid instance, and its
+  // gridOptions handlers are queued until `gridReady` has fired, so this always
+  // runs after onGridReady above. It never runs at all on a grid with no rows:
+  // the event is dispatched from the first rendered body row.
+  //
+  // The user's handler is chained by hand because a prop of the same name
+  // REPLACES the gridOptions key rather than adding to it
+  // (`_combineAttributesAndGridOptions` in ag-grid-community) — the same reason
+  // onGridReady chains its own.
+  const onFirstDataRendered = useCallback(
+    (event: FirstDataRenderedEvent) => {
+      // Same guard as onGridReady's user-handler chain: a non-callable
+      // (e.g. degraded JsCode) handler must not throw and silently kill the
+      // collect that follows.
+      const { onFirstDataRendered: userOnFirstDataRendered } = gridOptions
+      if (typeof userOnFirstDataRendered === "function") {
+        userOnFirstDataRendered(event)
+      } else if (userOnFirstDataRendered && debug) {
+        console.warn(
+          "[AgGridComponent] onFirstDataRendered handler ignored: not a " +
+            "function (likely a JsCode value with allow_unsafe_jscode not set)"
+        )
+      }
+
+      if (lifecycleWanted.has("firstDataRendered")) {
+        collectNow("firstDataRendered", event, event.api)
+      }
+    },
+    [gridOptions, lifecycleWanted, collectNow, debug]
   )
 
   const isAutoHeight = data.gridOptions?.domLayout === "autoHeight"
@@ -1020,6 +1093,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       />
       <AgGridReact
         onGridReady={onGridReady}
+        onFirstDataRendered={onFirstDataRendered}
         rowData={rowData}
         gridOptions={gridOptions}
         initialState={initialState}

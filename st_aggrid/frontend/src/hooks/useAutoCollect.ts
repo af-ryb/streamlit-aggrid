@@ -4,6 +4,42 @@ import debounce from "lodash/debounce"
 import type { GridStateResult } from "../types/AgGridTypes"
 
 /**
+ * Events served as lifecycle callbacks bound at grid creation, not as
+ * subscriptions. AG-Grid emits each at most once per grid instance, and
+ * `gridReady` is the event that makes subscription possible in the first
+ * place, so a listener attached from the effect below is either dead
+ * (`gridReady`) or a duplicate on top of the callback (`firstDataRendered`,
+ * whose dispatch is queued into requestAnimationFrame and so loses to a React
+ * effect committed in the same tick — this was measured, not assumed).
+ *
+ * `AgGridComponent` imports this set, and `LIFECYCLE_UPDATE_ON_EVENTS` in
+ * `st_aggrid/aggrid.py` mirrors it. All three must agree.
+ */
+export const LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
+  "gridReady",
+  "firstDataRendered",
+])
+
+/**
+ * Run one auto-collect under `eventName` and post the result to the host.
+ *
+ * `api` overrides the hook's own grid API. That is what lets a grid-creation
+ * callback collect while the `gridApi` state it is about to set is still null,
+ * which is exactly where the naive fix for lifecycle triggers fails.
+ *
+ * A synthetic caller must not pass an `eventData` whose `source` starts with
+ * `api`, or equals `sizeColumnsToFit`, `flex` or `autosizeColumns` — the
+ * collector drops those as programmatic. Correct for real AG-Grid events, a
+ * trap for a synthetic one: passing such a `source` silently discards the
+ * collect.
+ */
+export type CollectNow = (
+  eventName: string,
+  eventData: any,
+  api?: GridApi
+) => void
+
+/**
  * Convert AG-Grid API method names to friendly result keys.
  * "getSelectedRows" -> "selectedRows", "getFilterModel" -> "filterModel"
  */
@@ -56,12 +92,18 @@ export function useAutoCollect({
   updateOn,
   setStateValue,
   debug,
-}: UseAutoCollectOptions) {
+}: UseAutoCollectOptions): CollectNow {
   const cleanupRef = useRef<(() => void)[]>([])
+  // Live grid API, read at call time so `collectNow` stays referentially
+  // stable across the null -> api transition. Assigned during render, the
+  // same way `AgGridComponent` maintains `notesEditableRef`.
+  const apiRef = useRef<GridApi | null>(null)
+  apiRef.current = gridApi
 
-  const collectAndSend = useCallback(
-    (eventName: string, eventData: any) => {
-      if (!gridApi) return
+  const collectNow = useCallback<CollectNow>(
+    (eventName, eventData, api) => {
+      const target = api ?? apiRef.current
+      if (!target || target.isDestroyed()) return
 
       // Skip programmatic (api-sourced) column events. Applying saved column
       // state on mount/restore (initialState + onGridReady setRowGroupColumns
@@ -77,6 +119,10 @@ export function useAutoCollect({
       // columnResized with source="sizeColumnsToFit" (likewise "flex" /
       // "autosizeColumns"). Capturing those would persist the auto-fit widths
       // as if the user set them and fire a needless rerun.
+      //
+      // Neither GridReadyEvent nor FirstDataRenderedEvent carries a `source`,
+      // so both pass this filter. That is deliberate: nothing about a
+      // lifecycle trigger is programmatic in the sense meant here.
       const source = eventData?.source
       const isProgrammatic =
         typeof source === "string" &&
@@ -98,9 +144,9 @@ export function useAutoCollect({
 
       for (const method of collectConfig) {
         try {
-          const fn = (gridApi as any)[method]
+          const fn = (target as any)[method]
           if (typeof fn === "function") {
-            const value = fn.call(gridApi)
+            const value = fn.call(target)
             result[toKey(method)] = value
           } else if (debug) {
             console.warn(`AG-Grid API method "${method}" not found`)
@@ -118,7 +164,7 @@ export function useAutoCollect({
 
       setStateValue("grid_state", result)
     },
-    [gridApi, collectConfig, setStateValue, debug]
+    [collectConfig, setStateValue, debug]
   )
 
   useEffect(() => {
@@ -129,10 +175,24 @@ export function useAutoCollect({
     cleanupRef.current = []
 
     for (const entry of updateOn) {
+      const name = Array.isArray(entry) ? entry[0] : entry
+
+      // Served by AgGridComponent as a grid-creation callback. A listener here
+      // would never fire (gridReady) or would fire on top of the callback
+      // (firstDataRendered) — one collect turning into two.
+      if (LIFECYCLE_EVENTS.has(name)) {
+        if (debug) {
+          console.log(
+            `[useAutoCollect] Lifecycle trigger, no listener: ${name}`
+          )
+        }
+        continue
+      }
+
       if (Array.isArray(entry)) {
         const [eventName, timeout] = entry
         const debouncedHandler = debounce(
-          (e: any) => collectAndSend(eventName, e),
+          (e: any) => collectNow(eventName, e),
           timeout,
           { leading: false, trailing: true, maxWait: timeout }
         )
@@ -144,7 +204,7 @@ export function useAutoCollect({
           }
         })
       } else {
-        const handler = (e: any) => collectAndSend(entry, e)
+        const handler = (e: any) => collectNow(entry, e)
         ;(gridApi as any).addEventListener(entry, handler)
         cleanupRef.current.push(() => {
           if (!gridApi.isDestroyed()) {
@@ -154,7 +214,7 @@ export function useAutoCollect({
       }
 
       if (debug) {
-        console.log(`[useAutoCollect] Attached listener: ${entry}`)
+        console.log(`[useAutoCollect] Attached listener: ${name}`)
       }
     }
 
@@ -162,5 +222,7 @@ export function useAutoCollect({
       cleanupRef.current.forEach((fn) => fn())
       cleanupRef.current = []
     }
-  }, [gridApi, updateOn, collectAndSend, debug])
+  }, [gridApi, updateOn, collectNow, debug])
+
+  return collectNow
 }
