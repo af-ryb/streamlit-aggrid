@@ -113,10 +113,9 @@ is deferred behind a timer, so a `gridReady` collect of `getColumnState`
 captures widths from before the fit — widths that never appear on screen.
 Nothing corrects them afterwards: the resize AG-Grid emits carries
 `source: "sizeColumnsToFit"`, which this component deliberately filters out
-of capture. On a grid that auto-sizes (`fitGridWidth` is one line in this
-package's own `GridOptionsBuilder` — see `configure_grid_options`), use
-`firstDataRendered` instead, or don't persist widths from a `gridReady`
-collect.
+of capture. So don't persist widths from a `gridReady` collect on a grid that
+auto-sizes — and `fitGridWidth` is one line in this package's own
+`GridOptionsBuilder`, so this is easy to hit by accident.
 
 ### Explicit API Calls
 
