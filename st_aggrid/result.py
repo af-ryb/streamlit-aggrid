@@ -89,7 +89,7 @@ class AgGridResult:
 
     @property
     def event_name(self) -> Optional[str]:
-        """Name of the event that triggered this update."""
+        """Name of the event or action that triggered this update."""
         if self._grid_state:
             return self._grid_state.get("eventName")
         return None

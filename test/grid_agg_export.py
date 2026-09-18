@@ -54,25 +54,14 @@ rendered with `st.text` inside a `st.container(key=...)`, the same
 specific piece of rendered output (see `grid_mixed_modules.py`,
 `grid_return.py`, etc.).
 
-`update_on=["sortChanged"]`, not `["gridReady"]`: measured (not assumed) that
-`gridReady` does not work as a zero-interaction auto-collect trigger here.
-`validate_update_on` now rejects it outright, so this is no longer a choice —
-the reasoning below is kept because it is why that rejection exists.
-`useAutoCollect`'s listener-attaching effect depends on the `gridApi` state
-set inside `AgGridComponent`'s own `onGridReady` callback, so by the time
-that effect runs and calls `gridApi.addEventListener("gridReady", ...)`, the
-grid's own internal `gridReady` event has already fired and will never fire
-again — confirmed via `debug=True` console logs, where `[AgGridComponent]
-Grid ready` always logs before `[useAutoCollect] Attached listener:
-gridReady`. `firstDataRendered` was tried too and is equally unreliable here,
-for the same reason (it also fires during/immediately after grid creation,
-before the listener is attached) — with static `rowData` there is no
-asynchronous data load to delay it past the attach point. So the test clicks
-the (hidden) row-group column's header once, ascending, purely to fire a
-genuine `sortChanged` after the grid has settled — ascending because it
-reproduces the fixture's natural campaign order (A before B) so the CSV is
-identical to what an unsorted grid would export, keeping the pinned strings
-meaningful. See `test_grid_agg_export.py` for the click.
+`update_on=["sortChanged"]`, not `["gridReady"]`: the lifecycle triggers work
+now (README, Auto-Collect), but this suite is about exporting what a settled,
+user-sorted grid holds. So the test clicks the (hidden) row-group column's
+header once, ascending, to fire a genuine `sortChanged` after the grid has
+settled — ascending because it reproduces the fixture's natural campaign order
+(A before B) so the CSV is identical to what an unsorted grid would export,
+keeping the pinned strings meaningful. See `test_grid_agg_export.py` for the
+click.
 
 Run standalone with:  streamlit run test/grid_agg_export.py
 """

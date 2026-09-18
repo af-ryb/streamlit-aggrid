@@ -14,62 +14,59 @@ from st_aggrid.result import AgGridResult
 from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
 
 
-#: AG-Grid events that cannot work as ``update_on`` triggers, however sensible
-#: they look. Both fire once, at grid creation, before the auto-collect
-#: listeners can exist: those are attached from an effect gated on the
-#: ``gridApi`` React state, and that state is set from inside the component's
-#: own ``onGridReady`` handler. For ``gridReady`` this is not a race but a
-#: circularity — the event being subscribed to is the one that enables
-#: subscribing. ``firstDataRendered`` is a real race, and a lost one whenever
-#: ``rowData`` is present at mount (i.e. always, for a synchronous DataFrame).
+#: AG-Grid events this component serves as lifecycle callbacks bound at grid
+#: creation rather than as subscriptions. Each is emitted at most once per grid
+#: instance, and ``gridReady`` is itself the event that makes subscription
+#: possible, so ``AgGridComponent`` calls the collector directly for both. They
+#: work as zero-interaction ``update_on`` triggers; what they cannot take is a
+#: debounce, which is all this module now rejects.
 #:
-#: Rejected rather than ignored because the failure is otherwise silent: the
-#: grid renders, the config looks live, and no collect ever happens.
-#:
-#: Deliberately a denylist. AG-Grid's event set changes with every release and
-#: this package carries no truthful copy of it, so an allowlist would reject
-#: valid new events; a merely misspelled name still fails silently.
-#:
-#: Remove an entry here the moment the component learns to serve it — the two
-#: are one change, and leaving this behind would forbid a feature that works.
-UNSUPPORTED_UPDATE_ON_EVENTS: frozenset = frozenset(
+#: Mirrors ``LIFECYCLE_EVENTS`` in
+#: ``st_aggrid/frontend/src/hooks/useAutoCollect.ts``. The two must agree: the
+#: hook skips exactly these names when attaching listeners, so a name here that
+#: is missing there would be collected twice.
+LIFECYCLE_UPDATE_ON_EVENTS: frozenset = frozenset(
     {"gridReady", "firstDataRendered"}
 )
 
 
 def validate_update_on(update_on: Optional[List]) -> None:
-    """Reject ``update_on`` entries that would silently never fire.
+    """Reject a debounce on an event that fires at most once.
 
-    Accepts both accepted spellings of an entry — a bare event name and the
-    ``(event_name, debounce_ms)`` tuple — and reports every offender in one
-    raise, so a caller who used both names fixes them in one pass.
+    A debounce coalesces a burst of firings. ``gridReady`` and
+    ``firstDataRendered`` are emitted once per grid creation, so
+    ``(name, debounce_ms)`` on either is a request the component cannot honour
+    — and dropping it silently is the failure class this guard exists to
+    prevent. Every offender is reported in one raise, so a caller who debounced
+    both fixes them in one pass.
 
     Args:
         update_on: The list as the caller passed it; ``None`` (meaning "use the
             default") is valid.
 
     Raises:
-        ValueError: if any entry names an event in
-            :data:`UNSUPPORTED_UPDATE_ON_EVENTS`.
+        ValueError: if any entry debounces an event in
+            :data:`LIFECYCLE_UPDATE_ON_EVENTS`.
     """
     if not update_on:
         return
 
     offenders = [
-        name
+        entry[0]
         for entry in update_on
-        for name in (entry[0] if isinstance(entry, (tuple, list)) and entry else entry,)
-        if name in UNSUPPORTED_UPDATE_ON_EVENTS
+        if isinstance(entry, (tuple, list))
+        and entry
+        and entry[0] in LIFECYCLE_UPDATE_ON_EVENTS
     ]
     if not offenders:
         return
 
     raise ValueError(
-        f"update_on={offenders!r} would never fire: these AG-Grid events are "
-        "emitted once at grid creation, before this component can subscribe to "
-        "them, so the auto-collect would silently never run. Use a user-driven "
-        "event instead (e.g. 'sortChanged', 'selectionChanged'), or "
-        "`call_grid_api` for a one-off read."
+        f"update_on={offenders!r} cannot be debounced: these AG-Grid events are "
+        "emitted at most once per grid creation, so there is no burst of "
+        "firings for a debounce to coalesce. Pass the bare event name instead "
+        f"(e.g. {offenders[0]!r}), which collects exactly once as soon as the "
+        "grid is ready."
     )
 
 
@@ -209,8 +206,10 @@ def AgGrid(
         AG-Grid events that trigger auto-collection.
         Use tuple (event_name, debounce_ms) for debounced events.
         Default: ["selectionChanged", "filterChanged", "sortChanged"].
-        Raises ValueError for grid-creation events that can never reach the
-        auto-collect listeners — see UNSUPPORTED_UPDATE_ON_EVENTS.
+        "gridReady" and "firstDataRendered" are zero-interaction triggers that
+        collect exactly once per grid creation; they cannot be debounced, and
+        the tuple form raises ValueError for them. See
+        LIFECYCLE_UPDATE_ON_EVENTS and the README's Auto-Collect section.
 
     allow_unsafe_jscode : bool, optional
         Allow JsCode injection in grid_options. Default: False.
