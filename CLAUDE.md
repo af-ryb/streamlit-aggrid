@@ -53,18 +53,26 @@ test/                        # test/unit is pure Python; everything else is Play
 
 ## AG-Grid Version
 
-**Current: 36.0.0**
+**Current: 36.1.0**
 
 AG-Grid packages in `st_aggrid/frontend/package.json`:
-- `ag-grid-community` — `^36.0.0`
-- `ag-grid-enterprise` — `36.0.0`
-- `ag-grid-react` — `36.0.0`
-- `ag-charts-enterprise` — `^14.0.0`
+- `ag-grid-community` — `36.1.0`
+- `ag-grid-enterprise` — `36.1.0`
+- `ag-grid-react` — `36.1.0`
+- `ag-charts-enterprise` — `14.1.0`
 
 Note: `ag-grid-enterprise` hard-pins `ag-grid-community` at the exact same version,
 and depends on `ag-charts-*` at an exact version too — bump all `ag-grid-*` in
-lockstep and keep `ag-charts-enterprise` aligned (36.0 requires `ag-charts` 14.0.x),
-or the build hits a duplicate-`ag-charts-types` type mismatch.
+lockstep and keep `ag-charts-enterprise` aligned (36.1 requires `ag-charts` 14.1.x),
+or the build hits a duplicate-`ag-charts-types` type mismatch. All four are pinned
+exactly: a caret range resolves to the newest minor (`^36.1.0` → 36.2.0), which
+installs a second copy next to the one `ag-grid-enterprise` pins. Check
+`grep -E '^"ag-' yarn.lock` shows one entry per package after an install.
+
+Do not go below 36.1.0: 36.0.x dispatches `gridColumnsChanged` only when the top
+level of the column tree changes, so a value column added to a live pivot grid
+gets no cell listeners and its cells stop following moves and resizes
+(`test_a_value_column_added_live_*` in `test/test_grid_cohort_pivot.py`).
 
 When updating AG-Grid:
 1. Update all `ag-grid-*` packages in `st_aggrid/frontend/package.json`
