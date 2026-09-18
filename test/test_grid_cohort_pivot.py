@@ -46,7 +46,7 @@ from playwright.sync_api import Page
 
 import cohort_pivot_fixture as fx
 from e2e_utils import StreamlitRunner
-from grid_dom import read_cell_boxes, stacked_cells
+from grid_dom import misaligned_cells, read_cell_boxes, stacked_cells
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 APP_FILE = ROOT_DIRECTORY / "test" / "grid_cohort_pivot.py"
@@ -318,6 +318,56 @@ def assert_not_stacked(page: Page, where: str) -> None:
     )
 
 
+def assert_under_headers(page: Page, where: str) -> None:
+    """Every rendered cell sits under its own header — see `misaligned_cells`."""
+    off = misaligned_cells(page, GRID)
+    assert not off, (
+        f"{where}: {len(off)} cells are not under their header, first "
+        f"{off[0]['colId']}={off[0]['text']!r} at x={off[0]['left']:.0f} "
+        f"while its header is at x={off[0]['headerLeft']:.0f}"
+    )
+
+
+def _header(page: Page, col_id: str):
+    return page.locator(
+        f'.ag-header-row-column .ag-header-cell[col-id="{col_id}"]'
+    ).first
+
+
+def _mouse_drag(page: Page, start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press, travel in small steps, release. AG-Grid's drag service only
+    starts a drag once the pointer has moved a few pixels while pressed, so a
+    single jump from start to end would register as a click."""
+    (sx, sy), (tx, ty) = start, end
+    page.mouse.move(sx, sy)
+    page.mouse.down()
+    steps = 20
+    for i in range(1, steps + 1):
+        page.mouse.move(sx + (tx - sx) * i / steps, sy + (ty - sy) * i / steps)
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(300)
+    page.mouse.up()
+    page.wait_for_timeout(900)
+
+
+def drag_column_before(page: Page, col_id: str, before_col_id: str) -> None:
+    """Move a column by dragging its header onto the left edge of another."""
+    src = _header(page, col_id).bounding_box()
+    dst = _header(page, before_col_id).bounding_box()
+    _mouse_drag(
+        page,
+        (src["x"] + src["width"] / 2, src["y"] + src["height"] / 2),
+        (dst["x"] + 5, dst["y"] + dst["height"] / 2),
+    )
+
+
+def resize_column(page: Page, col_id: str, delta: float) -> None:
+    """Drag a header's resize handle by `delta` pixels."""
+    handle = _header(page, col_id).locator(".ag-header-cell-resize").bounding_box()
+    x, y = handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2
+    _mouse_drag(page, (x, y), (x + delta, y))
+
+
 def sweep(page: Page, controls: Controls, where: str) -> Controls:
     """Check the settled grid at three scroll positions.
 
@@ -510,6 +560,64 @@ def test_adding_a_value_column_while_scrolled_does_not_stack_cells(page: Page):
     controls = toggle(page, controls, "metric_arpu")
     assert_not_stacked(page, "value-column-added-while-scrolled")
     assert_consistent(page, controls, "value-column-added-while-scrolled")
+
+
+def test_a_value_column_added_live_follows_a_column_move(page: Page):
+    """A value column that joins a live grid must move with its header.
+
+    The consumer's cohort grid gains `total_installs` / `%_installs` this way
+    when a `user_filter` is applied; dragging either one afterwards left its
+    cells at the old offset — an empty slot under the moved header, and two
+    values drawn in one cell where the stale cells landed on a neighbour.
+
+    AG-Grid 36.0's cell renderer subscribes to each column's `leftChanged` /
+    `widthChanged` only on `gridColumnsChanged`, and 36.0 dispatches that only
+    when the *top level* of the column tree changes. In pivot mode that level
+    is the pivot-key groups, which the tree builder reuses, so a value column
+    added under them arrives with no cell listener at all. Fixed upstream in
+    36.1.0 (`colsListChanged` joined the dispatch condition). Removing and
+    re-adding a metric is the harness's way to add a value column to a live
+    grid; a grid created with the column never had the defect.
+    """
+    controls = Controls()
+    controls = toggle(page, controls, "metric_arpu")
+    controls = toggle(page, controls, "metric_arpu")
+    assert_under_headers(page, "live-column/added")
+
+    # At this app's width `00_arpu`'s header is rendered but clipped by the
+    # viewport's right edge, so a press on it lands outside the grid. Scrolling
+    # 200px brings both headers of the gesture into view.
+    scroll_to(page, 200, 0)
+    drag_column_before(
+        page, fx.pivot_col_id("00", "arpu"), fx.pivot_col_id("00", "installs")
+    )
+    order = page.evaluate(
+        """(gridIndex) => [...document.querySelectorAll('.ag-root-wrapper')[gridIndex]
+             .querySelectorAll('.ag-header-row-column .ag-header-cell[col-id]')]
+             .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+             .map(h => h.getAttribute('col-id'))""",
+        GRID,
+    )
+    moved, anchor = fx.pivot_col_id("00", "arpu"), fx.pivot_col_id("00", "installs")
+    assert order.index(moved) < order.index(anchor), (
+        f"the drag did not move {moved} before {anchor}, so this test would "
+        f"prove nothing: {order}"
+    )
+    assert_under_headers(page, "live-column/moved")
+    assert_consistent(page, controls, "live-column/moved")
+
+
+def test_a_value_column_added_live_follows_a_resize_to_its_left(page: Page):
+    """The same missing listener seen through a resize: widening a column to
+    the left shifts every column after it, and a value column added to the
+    live grid must shift with them."""
+    controls = Controls()
+    controls = toggle(page, controls, "metric_arpu")
+    controls = toggle(page, controls, "metric_arpu")
+
+    resize_column(page, "ag-Grid-AutoColumn-install_date", 60)
+    assert_under_headers(page, "live-column/resized-left")
+    assert_consistent(page, controls, "live-column/resized-left")
 
 
 def test_hide_hook_does_not_re_run_after_a_refresh(page: Page):

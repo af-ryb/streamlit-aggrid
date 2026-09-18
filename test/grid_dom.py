@@ -122,6 +122,55 @@ def stacked_cells(boxes: list[dict], tolerance: float = 1.0) -> list[tuple[dict,
     return stacked
 
 
+_READ_CELLS_AND_HEADERS = """
+(gridIndex) => {
+  const grid = document.querySelectorAll('.ag-root-wrapper')[gridIndex];
+  const headers = {};
+  for (const h of grid.querySelectorAll('.ag-header-row-column .ag-header-cell[col-id]')) {
+    const box = h.getBoundingClientRect();
+    headers[h.getAttribute('col-id')] = [box.left, box.right];
+  }
+  const out = [];
+  for (const cell of grid.querySelectorAll('.ag-row .ag-cell[col-id]')) {
+    const colId = cell.getAttribute('col-id');
+    const header = headers[colId];
+    if (!header) continue;
+    const box = cell.getBoundingClientRect();
+    out.push({
+      colId: colId,
+      rowIndex: cell.closest('.ag-row').getAttribute('row-index'),
+      text: cell.textContent.trim(),
+      left: box.left,
+      right: box.right,
+      headerLeft: header[0],
+      headerRight: header[1],
+    });
+  }
+  return out;
+}
+"""
+
+
+def misaligned_cells(page: Page, grid_index: int, tolerance: float = 1.0) -> list[dict]:
+    """Rendered cells that are not drawn under their own column header.
+
+    AG-Grid moves a column's header and its cells through two separate
+    listeners, so the two can disagree: the header goes where the column model
+    says, the cells stay where they were. `stacked_cells` only sees that when
+    the stale spot happens to overlap another cell; this sees it wherever the
+    cells were left — including the empty slot under a header whose cells
+    never followed it. Cells whose header is not rendered (virtualised out)
+    are skipped.
+    """
+    cells = page.evaluate(_READ_CELLS_AND_HEADERS, grid_index)
+    return [
+        cell
+        for cell in cells
+        if abs(cell["left"] - cell["headerLeft"]) > tolerance
+        or abs(cell["right"] - cell["headerRight"]) > tolerance
+    ]
+
+
 def grand_total_row(
     rows: dict[str, dict[str, str]], group_col_id: str = "ag-Grid-AutoColumn-campaign"
 ) -> dict[str, str]:
