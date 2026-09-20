@@ -36,7 +36,8 @@ import {
 
 import { parseGridOptions, parseData } from "./utils/parsers"
 import type { AgGridData } from "./types/AgGridTypes"
-import { attachColorScaleInvalidation, clearStats } from "./colorScales"
+import { ColorScaleRuntime, attachColorScaleInvalidation, clearStats } from "./colorScales"
+import { sanitizeState } from "./colorScales/overrides"
 
 import "@fontsource/source-sans-pro"
 import "./AgGrid.css"
@@ -188,6 +189,22 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // multipleColumns auto-group columns in row-group order (registered in
   // onGridReady). Held in a ref so the unmount effect can tear it down.
   const rowGroupOrderCleanupRef = useRef<(() => void) | null>(null)
+
+  // The reader's per-column colour-scale choices, and the hook a menu action
+  // reports to. One object per mount, created on first render: `parseGridOptions`
+  // injects this same map into every `context` it builds, so a choice outlives
+  // `updateGridOptions`. Seeded from `color_scale_state`, which is therefore
+  // read at mount only — a live prop would inherit the capture<->prop lag that
+  // `columns_state` has (two quick clicks, and the rerun from the first writes
+  // the prop back over the second). A view switch remounts by `key` anyway.
+  const colorScaleChangeRef = useRef<(colId: string) => void>(() => {})
+  const colorScaleRuntimeRef = useRef<ColorScaleRuntime | null>(null)
+  if (colorScaleRuntimeRef.current === null) {
+    colorScaleRuntimeRef.current = {
+      overrides: sanitizeState(data.color_scale_state),
+      onChange: (colId) => colorScaleChangeRef.current(colId),
+    }
+  }
 
   const debug = data.debug || false
 
@@ -390,7 +407,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
-    const go = parseGridOptions(data, streamlitTheme)
+    const go = parseGridOptions(data, streamlitTheme, colorScaleRuntimeRef.current ?? undefined)
     // Defensive: strip any rowData that may have been carried over so the
     // separate <AgGridReact rowData> prop is the single source of truth.
     delete (go as any).rowData
@@ -497,7 +514,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     const prevGo = omit(prevData.gridOptions, "rowData")
     const currGo = omit(data.gridOptions, "rowData")
     if (!isEqual(prevGo, currGo)) {
-      const go = parseGridOptions(data)
+      const go = parseGridOptions(data, undefined, colorScaleRuntimeRef.current ?? undefined)
       delete (go as any).rowData
 
       // Snapshot the live sort before updateGridOptions. Re-processing

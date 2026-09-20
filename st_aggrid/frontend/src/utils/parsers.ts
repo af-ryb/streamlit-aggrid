@@ -8,11 +8,17 @@ import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 import { registerStRatio } from "../aggFuncs/stRatio"
 import { registerStRatioOfRatios } from "../aggFuncs/stRatioOfRatios"
 import { registerStWeightedAvg } from "../aggFuncs/stWeightedAvg"
-import { registerColorScales } from "../colorScales"
+import {
+  ColorScaleRuntime,
+  ST_COLOR_SCALE_OVERRIDES,
+  isInteractive,
+  registerColorScales,
+} from "../colorScales"
 
 export function parseGridOptions(
   data: AgGridData,
-  streamlitTheme?: StreamlitThemeInfo | null
+  streamlitTheme?: StreamlitThemeInfo | null,
+  colorScaleRuntime?: ColorScaleRuntime
 ): GridOptions {
   let gridOptions: GridOptions = cloneDeep(data.gridOptions)
 
@@ -46,6 +52,16 @@ export function parseGridOptions(
   // reason: both the mount path and the live-update path go through here, so a
   // runtime config change never leaves a declared column unpainted.
   registerColorScales(gridOptions, data.debug === true)
+
+  // The reader's choices. Injected after the `cloneDeep` above, so every parse
+  // — the mount and each live config update — hands AG-Grid a fresh `context`
+  // object carrying the *same* map. That is what lets a choice survive
+  // `updateGridOptions`, and being in `context` before the first cell is
+  // styled is what lets a restored choice paint with no unpainted flash.
+  // `context` is known to be an object here: `isInteractive` read it.
+  if (colorScaleRuntime && isInteractive(gridOptions.context)) {
+    gridOptions.context[ST_COLOR_SCALE_OVERRIDES] = colorScaleRuntime.overrides
+  }
 
   // Process theming — prefer the live theme read from host CSS variables
   // over any server-side value, which can't see user-level theme toggles.

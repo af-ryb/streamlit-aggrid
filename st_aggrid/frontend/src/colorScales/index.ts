@@ -18,6 +18,7 @@ import {
   isRampScheme,
 } from "./schemes"
 import { clearStats, extractValue, isTopLevel, statsFor } from "./population"
+import { Override, declarationCandidates } from "./overrides"
 
 // Re-exported so `AgGridComponent.tsx` can invalidate the statistics cache
 // ahead of a `redrawRows()` that is not preceded by `modelUpdated` — see
@@ -29,6 +30,56 @@ export { clearStats }
 /** The key a declaration lives under inside `context`, at both levels.
  * Matches `st_aggrid/color_scale.py`'s COLOR_SCALE_CONTEXT_KEY. */
 export const ST_COLOR_SCALE = "stColorScale"
+
+/** Reserved key of the grid `context` that holds the reader's live choices —
+ * a `Map<sourceColId, Override>` owned by `AgGridComponent` and injected by
+ * `parseGridOptions`. It lives in `context` rather than on a colDef because
+ * `updateGridOptions` installs fresh colDefs on every config rerun, and
+ * because a pivot result column's `colDef.context` is a copy, not the source
+ * column's object (measured 2026-09-20). `params.context`, by contrast, is the
+ * grid's own object by identity. Matches `color_scale.py`'s
+ * COLOR_SCALE_OVERRIDES_CONTEXT_KEY. */
+export const ST_COLOR_SCALE_OVERRIDES = "stColorScaleOverrides"
+
+/** What `AgGridComponent` hands to `parseGridOptions`: the live choices and
+ * the callback a menu action reports to. */
+export interface ColorScaleRuntime {
+  overrides: Map<string, Override>
+  onChange: (colId: string) => void
+}
+
+function gridDeclaration(gridContext: unknown): unknown {
+  return (gridContext as Record<string, unknown> | undefined)?.[ST_COLOR_SCALE]
+}
+
+function ownDeclaration(colDef: ColDef | null | undefined): unknown {
+  return (colDef?.context as Record<string, unknown> | undefined)?.[ST_COLOR_SCALE]
+}
+
+/** The grid-level opt-in for the reader's picker. */
+export function isInteractive(gridContext: unknown): boolean {
+  const declaration = gridDeclaration(gridContext)
+  return (
+    !!declaration &&
+    typeof declaration === "object" &&
+    (declaration as Record<string, unknown>).interactive === true
+  )
+}
+
+/** Grid defaults merged with the column's own declaration — the two layers
+ * below the reader's. The menu reads it to know whether an `anchor` exists. */
+export function lowerLayers(
+  colDef: ColDef | null | undefined,
+  gridContext: unknown
+): Record<string, unknown> {
+  const own = ownDeclaration(colDef)
+  const [merged] = declarationCandidates(
+    gridDeclaration(gridContext),
+    own === undefined || own === null || own === false ? true : own,
+    undefined
+  )
+  return merged ?? {}
+}
 
 /** What an unpainted cell returns once a declaration has resolved. Not
  * `null`: ag-grid-react keeps a cell's previous inline style when the
@@ -99,21 +150,32 @@ function isFiniteNumber(value: unknown): value is number {
  * the copy that produces an actionable error. This one exists because grid
  * options do not always come from `GridOptionsBuilder`, and returning `null`
  * inside a cell renderer is a better failure than throwing there.
+ *
+ * The optional third argument is the reader's layer, the one the picker
+ * writes. With it absent this is the two-layer rule above, unchanged. With it
+ * present the candidate order — and the fallback that keeps a stale choice
+ * from blanking a column the page still declares — is documented on
+ * `declarationCandidates`.
  */
 export function readColorScaleConfig(
   colDef: ColDef | null | undefined,
-  gridContext: unknown
+  gridContext: unknown,
+  override?: Override
 ): ResolvedColorScale | null {
-  const own = (colDef?.context as Record<string, unknown> | undefined)?.[ST_COLOR_SCALE]
-  if (own === undefined || own === null || own === false) return null
+  const candidates = declarationCandidates(
+    gridDeclaration(gridContext),
+    ownDeclaration(colDef),
+    override
+  )
+  for (const candidate of candidates) {
+    const resolved = resolveMerged(candidate as Declaration)
+    if (resolved) return resolved
+  }
+  return null
+}
 
-  const gridDefaults = (gridContext as Record<string, unknown> | undefined)?.[
-    ST_COLOR_SCALE
-  ]
-  const base = gridDefaults && typeof gridDefaults === "object" ? gridDefaults : {}
-  const overrides = own === true ? {} : typeof own === "object" ? own : {}
-  const merged = { ...base, ...overrides } as Declaration
-
+/** Turn one merged declaration into what it paints, or `null`. */
+function resolveMerged(merged: Declaration): ResolvedColorScale | null {
   const schemeName =
     merged.scheme ?? (merged.mode === "anchor" ? "diverging" : undefined)
 
@@ -156,7 +218,35 @@ export function readColorScaleConfig(
   return null
 }
 
-/** The built-in `cellStyle`. Returns `null` only when no declaration resolves.
+/** The column a choice is keyed by: a pivot result column stands for its
+ * value column, so one choice on a metric reaches every pivot key. */
+export function sourceColumnOf(
+  colDef: ColDef | null | undefined,
+  column: Column | null | undefined
+): Column | null {
+  return colDef?.pivotValueColumn ?? column ?? null
+}
+
+/** Resolve a displayed column including the reader's layer. The one place
+ * that looks a choice up, shared by the cell style and the invalidation. */
+export function resolveFor(
+  colDef: ColDef | null | undefined,
+  column: Column | null | undefined,
+  gridContext: unknown
+): ResolvedColorScale | null {
+  const overrides = (gridContext as Record<string, unknown> | undefined)?.[
+    ST_COLOR_SCALE_OVERRIDES
+  ]
+  const colId = sourceColumnOf(colDef, column)?.getColId()
+  const override =
+    overrides instanceof Map && colId !== undefined
+      ? (overrides.get(colId) as Override | undefined)
+      : undefined
+  return readColorScaleConfig(colDef, gridContext, override)
+}
+
+/** The built-in `cellStyle`. Returns `null` only when no declaration resolves
+ * **on a grid without the picker**.
  * Every other unpainted outcome returns `UNPAINTED` (see above) so a cell that
  * stops being painted actually loses its colour.
  *
@@ -164,8 +254,11 @@ export function readColorScaleConfig(
  * fill marks a column as structural, and a stripe that stopped at the grand
  * total would be a visible regression against the styler it replaces. */
 export function stColorScaleCellStyle(params: CellClassParams): CellStyle | null {
-  const config = readColorScaleConfig(params.colDef, params.context)
-  if (!config) return null
+  const config = resolveFor(params.colDef, params.column, params.context)
+  // `null` keeps ag-grid-react's previous inline style. Harmless while a
+  // declaration can only ever be absent from the start; on an interactive grid
+  // the reader can remove one ("None"), and the old colour would stay.
+  if (!config) return isInteractive(params.context) ? { ...UNPAINTED } : null
   if (config.kind === "fill") return { backgroundColor: config.color }
 
   const node = params.node
@@ -265,10 +358,15 @@ function callerCellStyleSource(def: ColDef, gridOptions: GridOptions): string | 
  * grid — and a debug-gated log leaves them nothing to find when it silently
  * turns their colour scale off. That one is an unconditional `console.warn`.
  *
+ * On an interactive grid the `defaultColDef.cellStyle` warning is raised once
+ * for the grid rather than once per column: in that mode the built-in is not
+ * about one column's declaration, it is the picker itself being unavailable.
+ *
  * The attached function does not close over the declaration; it re-reads it
- * per call from `params.colDef.context` and `params.context`. Phase 2's
- * runtime toggle therefore only has to change a declaration and refresh, with
- * nothing re-attached.
+ * per call from `params.colDef.context` and `params.context`. The reader's
+ * picker relies on exactly that: a choice changes the override map and
+ * refreshes, with nothing re-attached. On an interactive grid every column
+ * without a caller-supplied `cellStyle` gets the built-in, declared or not.
  *
  * Pivot needs no handling here: AG-Grid copies `cellStyle` from the source
  * value colDef onto the pivot result column it generates.
@@ -277,22 +375,40 @@ export function registerColorScales(
   gridOptions: GridOptions,
   debug: boolean = false
 ): GridOptions {
+  const interactive = isInteractive(gridOptions.context)
+  let warnedDefaultColDef = false
+
   eachColDef(gridOptions.columnDefs, (def) => {
-    // Same predicate `paintedColumnIds` and `stColorScaleCellStyle` use: a
-    // declaration that resolves to no valid scheme paints nothing, so it must
-    // not occupy the cellStyle slot either.
-    if (readColorScaleConfig(def, gridOptions.context) === null) return
+    const declared = readColorScaleConfig(def, gridOptions.context) !== null
+    // Without the picker: same predicate `paintedColumnIds` and
+    // `stColorScaleCellStyle` use — a declaration that resolves to nothing
+    // must not occupy the slot. With it, the slot has to exist *before* the
+    // reader asks: a choice is a context mutation plus `refreshCells`, and
+    // there is nothing to refresh on a column that carries no function.
+    if (!declared && !interactive) return
 
     const source = callerCellStyleSource(def, gridOptions)
     if (source) {
       const colId = def.colId ?? def.field
       if (source === "defaultColDef.cellStyle") {
-        console.warn(
-          `[st_aggrid] "${colId}" declares a colour scale, but defaultColDef.cellStyle ` +
-            `wins for every column in this grid, so the built-in was not attached and ` +
-            `"${colId}" will not be painted.`
-        )
-      } else if (debug) {
+        if (interactive) {
+          if (!warnedDefaultColDef) {
+            warnedDefaultColDef = true
+            console.warn(
+              `[st_aggrid] This grid is interactive for colour scales, but ` +
+                `defaultColDef.cellStyle wins for every column, so the built-in ` +
+                `was not attached anywhere: nothing will be painted and the ` +
+                `picker is unavailable.`
+            )
+          }
+        } else {
+          console.warn(
+            `[st_aggrid] "${colId}" declares a colour scale, but defaultColDef.cellStyle ` +
+              `wins for every column in this grid, so the built-in was not attached and ` +
+              `"${colId}" will not be painted.`
+          )
+        }
+      } else if (debug && declared) {
         console.log(
           `[st_aggrid] cellStyle on "${colId}" was supplied ` +
             `by ${source} and overrides the built-in colour scale.`
@@ -313,7 +429,7 @@ function paintedColumnIds(api: GridApi): string[] {
   const columns = (api.isPivotMode() ? api.getPivotResultColumns() : api.getColumns()) ?? []
   const context = api.getGridOption("context")
   return columns
-    .filter((column) => readColorScaleConfig(column.getColDef(), context) !== null)
+    .filter((column) => resolveFor(column.getColDef(), column, context) !== null)
     .map((column) => column.getColId())
 }
 
