@@ -28,10 +28,11 @@ What each check is for:
 Two separate defects came out of this, and they belong to different owners:
 
 * `test_adding_a_value_column_while_scrolled_does_not_stack_cells` — the
-  reported overlap. It arrived with the pin (50 stacked pairs on the AG-Grid 36
-  build, 0 on 35.2.1) and is fixed in this fork: the config-update effect now
-  repaints once the column layout has settled rather than while it is still
-  moving.
+  reported overlap. It arrived with the pin (50 stacked pairs on the AG-Grid
+  36.0 build, 0 on 35.2.1). The cause is AG-Grid's: 36.0.x does not dispatch
+  `gridColumnsChanged` when a value column is added to a live pivot grid, so
+  the new column's cells never get their `leftChanged`/`widthChanged`
+  listeners and stop following the layout. Fixed by pinning AG-Grid 36.1.0.
 * `test_hide_hook_does_not_re_run_after_a_refresh` — the consumer's
   `onStateUpdated` hook is one-shot per pivot shape. Reproduces identically on
   both pins, so this one is the configuration's, not the fork's, and is
@@ -458,7 +459,7 @@ def test_widening_the_range_and_adding_a_metric_together(page: Page):
     # `sweep` leaves the grid scrolled right, so every metric toggle below adds
     # or drops a value column from a scrolled grid — the arrangement that used
     # to stack cells. Left that way on purpose: it costs nothing here and puts
-    # the settled-redraw under load from a second angle.
+    # the 36.1.0 pin under load from a second angle.
     controls = toggle(page, controls, "metric_arpu")
     controls = set_date_range(page, controls, 4)
     controls = sweep(page, controls, "combo/narrow-one-metric")
@@ -536,8 +537,9 @@ def test_adding_a_value_column_while_scrolled_does_not_stack_cells(page: Page):
     the grid painted a value cell of one pivot key on top of a value cell of the
     next — a `¢` over a `%` in this configuration, which is how the owner
     spotted it. Both colIds were current: not a leftover column, but two live
-    columns computing the same left offset, because the redraw ran while the
-    column layout was still in flight.
+    columns computing the same left offset, because the added column's cells
+    had no `leftChanged` listener: AG-Grid 36.0.x does not dispatch
+    `gridColumnsChanged` for a value column added to a live pivot grid.
 
     Order is the whole point and is what makes this a separate test: the same
     toggle from the left edge was always clean, as were the data-only reshapes
@@ -546,10 +548,12 @@ def test_adding_a_value_column_while_scrolled_does_not_stack_cells(page: Page):
     build production runs, with the same app, viewport and gestures — so it
     arrived with the pin.
 
-    Guards the settled-redraw in `AgGridComponent`'s config-update effect. That
-    fix cannot be loosened into a delay: a redraw deferred from the effect by a
-    microtask, a frame, or a timeout of any length was measured to still land
-    before the columns settle.
+    Guards the AG-Grid 36.1.0 pin (see CLAUDE.md, "Do not go below 36.1.0").
+    Until 2026-09-20 this fork also repainted the rows a second time once the
+    columns had settled; that treated the symptom — `redrawRows` recreates
+    cells at the right offset but adds no listeners — and was removed once the
+    pin made it redundant. Not verified: that the original 36.0.0 defect went
+    through this exact mechanism, which would need a downgrade to show.
     """
     controls = Controls()
     controls = toggle(page, controls, "metric_arpu")

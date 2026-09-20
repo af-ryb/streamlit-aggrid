@@ -18,7 +18,11 @@ import omit from "lodash/omit"
 import debounce from "lodash/debounce"
 import cloneDeep from "lodash/cloneDeep"
 
-import { LIFECYCLE_EVENTS, useAutoCollect } from "./hooks/useAutoCollect"
+import {
+  LIFECYCLE_EVENTS,
+  ExtraCollectors,
+  useAutoCollect,
+} from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
 import { useStreamlitTheme } from "./hooks/useStreamlitTheme"
 import { ThemeParser } from "./ThemeParser"
@@ -36,7 +40,8 @@ import {
 
 import { parseGridOptions, parseData } from "./utils/parsers"
 import type { AgGridData } from "./types/AgGridTypes"
-import { attachColorScaleInvalidation, clearStats } from "./colorScales"
+import { ColorScaleRuntime, attachColorScaleInvalidation, clearStats } from "./colorScales"
+import { sanitizeState, serializeState } from "./colorScales/overrides"
 
 import "@fontsource/source-sans-pro"
 import "./AgGrid.css"
@@ -188,13 +193,22 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
   // multipleColumns auto-group columns in row-group order (registered in
   // onGridReady). Held in a ref so the unmount effect can tear it down.
   const rowGroupOrderCleanupRef = useRef<(() => void) | null>(null)
-  // Set by the config-update effect to ask for one more row redraw once the
-  // column layout has settled; consumed by the debounced
-  // `displayedColumnsChanged` listener registered in onGridReady. A ref, not
-  // state, so setting it never triggers a React render.
-  const redrawPendingRef = useRef(false)
-  // Cleanup for that listener, torn down on unmount alongside the others.
-  const redrawSettleCleanupRef = useRef<(() => void) | null>(null)
+
+  // The reader's per-column colour-scale choices, and the hook a menu action
+  // reports to. One object per mount, created on first render: `parseGridOptions`
+  // injects this same map into every `context` it builds, so a choice outlives
+  // `updateGridOptions`. Seeded from `color_scale_state`, which is therefore
+  // read at mount only — a live prop would inherit the capture<->prop lag that
+  // `columns_state` has (two quick clicks, and the rerun from the first writes
+  // the prop back over the second). A view switch remounts by `key` anyway.
+  const colorScaleChangeRef = useRef<(colId: string) => void>(() => {})
+  const colorScaleRuntimeRef = useRef<ColorScaleRuntime | null>(null)
+  if (colorScaleRuntimeRef.current === null) {
+    colorScaleRuntimeRef.current = {
+      overrides: sanitizeState(data.color_scale_state),
+      onChange: (colId) => colorScaleChangeRef.current(colId),
+    }
+  }
 
   const debug = data.debug || false
 
@@ -397,7 +411,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
-    const go = parseGridOptions(data, streamlitTheme)
+    const go = parseGridOptions(data, streamlitTheme, colorScaleRuntimeRef.current ?? undefined)
     // Defensive: strip any rowData that may have been carried over so the
     // separate <AgGridReact rowData> prop is the single source of truth.
     delete (go as any).rowData
@@ -453,6 +467,18 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     [data.update_on]
   )
 
+  // `stGetColorScaleState` in `collect` reads the live map. Stable for the
+  // mount: the runtime object never changes identity.
+  const extraCollectors = useMemo<ExtraCollectors>(
+    () => ({
+      stGetColorScaleState: {
+        key: "colorScaleState",
+        read: () => serializeState(colorScaleRuntimeRef.current!.overrides),
+      },
+    }),
+    []
+  )
+
   // Auto-collect hook — needs a stable `gridApi` value that changes exactly
   // once the grid becomes ready, so `useState` (not the ref) is the source.
   // The returned collector is what the two grid-creation callbacks below use:
@@ -463,6 +489,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     updateOn,
     setStateValue,
     debug,
+    extraCollectors,
   })
 
   // Which lifecycle triggers this grid asked for. Derived once from `updateOn`
@@ -475,6 +502,24 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
     return names
   }, [updateOn])
+
+  // A menu action reports here. `stColorScaleChanged` is the component's own
+  // event, so nothing subscribes to it: when `update_on` names it, the
+  // collector is called directly — the same route `gridReady` takes. The
+  // `source` must not start with "api", which the collector drops as
+  // programmatic. Assigned during render, like `notesEditableRef`, so the
+  // menu closure built at grid creation always reaches the current collector.
+  const colorScaleEventWanted = useMemo(
+    () =>
+      updateOn.some(
+        (entry) => (Array.isArray(entry) ? entry[0] : entry) === "stColorScaleChanged"
+      ),
+    [updateOn]
+  )
+  colorScaleChangeRef.current = (colId: string) => {
+    if (!colorScaleEventWanted) return
+    collectNow("stColorScaleChanged", { colId, source: "uiColorScaleMenu" })
+  }
 
   // Explicit API call hook
   useExplicitApiCall({
@@ -504,7 +549,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     const prevGo = omit(prevData.gridOptions, "rowData")
     const currGo = omit(data.gridOptions, "rowData")
     if (!isEqual(prevGo, currGo)) {
-      const go = parseGridOptions(data)
+      const go = parseGridOptions(data, undefined, colorScaleRuntimeRef.current ?? undefined)
       delete (go as any).rowData
 
       // Snapshot the live sort before updateGridOptions. Re-processing
@@ -636,20 +681,6 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       // computed under the old declaration. Clear it explicitly first.
       clearStats(gridApiRef.current)
       gridApiRef.current.redrawRows()
-
-      // ...and arm a second redraw for once the columns have settled. From
-      // AG-Grid 36 a changed column set keeps moving after this effect returns,
-      // so with the grid scrolled horizontally the redraw above paints rows
-      // against a layout still in flight, leaving two live columns at the same
-      // offset with their cells drawn on top of one another (measured on a
-      // pivot grid gaining a value column; see test/test_grid_cohort_pivot.py).
-      //
-      // The trigger has to be a later `displayedColumnsChanged`, not a delay
-      // measured from here: a redraw deferred from this point by a microtask, a
-      // frame, or a timeout of any length was measured to still land too early,
-      // while one fired after the last such event repaints correctly. Scroll
-      // position is preserved.
-      redrawPendingRef.current = true
 
       // Re-open the tool panel the config update collapsed. Guarded on a
       // non-null snapshot (a panel the user had closed stays closed) and on the
@@ -806,8 +837,6 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       colorScaleCleanupRef.current = null
       rowGroupOrderCleanupRef.current?.()
       rowGroupOrderCleanupRef.current = null
-      redrawSettleCleanupRef.current?.()
-      redrawSettleCleanupRef.current = null
     }
   }, [])
 
@@ -867,42 +896,6 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
           event.api.removeEventListener(
             "columnRowGroupChanged",
             onColumnRowGroupChanged
-          )
-        }
-      }
-
-      // Repaint rows once a config update's column layout has settled. Armed by
-      // the config-update effect (`redrawPendingRef`) and fired from
-      // `displayedColumnsChanged`, because that is the signal that the columns
-      // moved — see the comment at the arming site for why no delay measured
-      // from the effect is late enough. Debounced so a burst of column changes
-      // costs one redraw, and a no-op unless a config update armed it, so
-      // ordinary user column moves don't pay for it.
-      const debouncedSettledRedraw = debounce(
-        () => {
-          if (!redrawPendingRef.current) return
-          const api = gridApiRef.current
-          if (!api || api.isDestroyed()) return
-          redrawPendingRef.current = false
-          // Same reason as the first redraw in the config-update effect:
-          // `redrawRows` re-evaluates `cellStyle` without raising
-          // `modelUpdated`, so the invalidation listener never sees it.
-          clearStats(api)
-          api.redrawRows()
-          if (debug) {
-            console.log("[AgGridComponent] Redrew rows after columns settled")
-          }
-        },
-        50,
-        { leading: false, trailing: true, maxWait: 300 }
-      )
-      event.api.addEventListener("displayedColumnsChanged", debouncedSettledRedraw)
-      redrawSettleCleanupRef.current = () => {
-        debouncedSettledRedraw.cancel()
-        if (!event.api.isDestroyed()) {
-          event.api.removeEventListener(
-            "displayedColumnsChanged",
-            debouncedSettledRedraw
           )
         }
       }

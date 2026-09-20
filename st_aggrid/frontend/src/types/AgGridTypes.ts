@@ -12,6 +12,7 @@ export interface AgGridData {
   columns_state?: any
   columns_state_mode?: "replace" | "merge"
   initial_state?: any
+  color_scale_state?: unknown
   theme: any
   custom_css?: { [key: string]: { [key: string]: string } }
   show_toolbar: boolean

@@ -97,3 +97,21 @@ def test_get_and_getitem():
         pass
     else:
         raise AssertionError("expected KeyError for a missing key")
+
+
+def test_color_scale_state_reads_the_fork_owned_collect_key():
+    component = _component_result(
+        grid_state={"colorScaleState": {"cpi": {"scheme": "diverging"}, "cpm": False}}
+    )
+    result = AgGridResult(component_result=component, original_data=None)
+    assert result.color_scale_state == {"cpi": {"scheme": "diverging"}, "cpm": False}
+
+
+def test_color_scale_state_is_none_until_collected():
+    result = AgGridResult(component_result=_component_result(), original_data=None)
+    assert result.color_scale_state is None
+    result = AgGridResult(
+        component_result=_component_result(grid_state={"columnState": []}),
+        original_data=None,
+    )
+    assert result.color_scale_state is None

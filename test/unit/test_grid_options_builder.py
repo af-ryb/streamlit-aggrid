@@ -217,3 +217,18 @@ def test_configure_color_scale_keeps_scheme_positional():
         "mode": "minmax",
         "skip_non_positive": False,
     }
+
+
+def test_configure_color_scale_writes_interactive():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(scheme="neutral", interactive=True)
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {
+        "scheme": "neutral",
+        "interactive": True,
+    }
+
+
+def test_configure_color_scale_interactive_alone():
+    gb = GridOptionsBuilder()
+    gb.configure_color_scale(interactive=True)
+    assert gb.build()["context"][COLOR_SCALE_CONTEXT_KEY] == {"interactive": True}

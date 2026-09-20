@@ -16,10 +16,13 @@ import pytest
 from st_aggrid.color_scale import (
     COLOR_SCALE_CONTEXT_KEY,
     COLOR_SCALE_MODES,
+    COLOR_SCALE_OVERRIDES_CONTEXT_KEY,
     COLOR_SCALE_SCHEMES,
     COLOR_SCALE_SCOPES,
+    COLOR_SCALE_STATE_KEYS,
     _merge_declaration,
     validate_color_scale_columns,
+    validate_color_scale_state,
 )
 
 
@@ -324,3 +327,90 @@ def test_merge_an_empty_column_declaration_yields_the_grid_defaults_unchanged():
 def test_merge_a_none_grid_declaration_yields_the_column_s_own_dict():
     own = {"scheme": "neutral"}
     assert _merge_declaration(None, own) == own
+
+
+# ---------------------------------------------------------------------------
+# `interactive` — the grid-level opt-in for the reader's picker
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_alone_is_a_complete_grid_level_declaration():
+    validate_color_scale_columns(grid_options(None, {"interactive": True}))
+
+
+def test_interactive_sits_beside_other_grid_level_defaults():
+    validate_color_scale_columns(
+        grid_options(True, {"scheme": "neutral", "interactive": True})
+    )
+
+
+@pytest.mark.parametrize("value", [1, "yes", None])
+def test_interactive_must_be_a_bool(value):
+    with pytest.raises(ValueError, match="'interactive'.*must be a bool"):
+        validate_color_scale_columns(grid_options(None, {"interactive": value}))
+
+
+def test_interactive_is_rejected_at_column_level():
+    with pytest.raises(ValueError, match="grid-level key"):
+        validate_color_scale_columns(
+            grid_options({"scheme": "neutral", "interactive": True})
+        )
+
+
+def test_the_overrides_context_key_is_reserved():
+    options = grid_options(None, {"interactive": True})
+    options["context"][COLOR_SCALE_OVERRIDES_CONTEXT_KEY] = {}
+    with pytest.raises(ValueError, match="reserved"):
+        validate_color_scale_columns(options)
+
+
+# ---------------------------------------------------------------------------
+# `color_scale_state` — the reader's saved choice, fed back at mount
+# ---------------------------------------------------------------------------
+
+
+def test_state_constants_are_the_literals_the_frontend_uses():
+    assert COLOR_SCALE_OVERRIDES_CONTEXT_KEY == "stColorScaleOverrides"
+    assert COLOR_SCALE_STATE_KEYS == ("scheme", "mode", "reverse")
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        None,
+        {},
+        {"cpi": False},
+        {"cpi": {}},
+        {"cpi": {"scheme": "diverging"}},
+        {"cpi": {"scheme": "rank", "reverse": True}},
+        {"cpi": {"mode": "zscore"}},
+        # Well formed but unresolvable without an anchor/span lower down:
+        # the reader's history, not a programming error.
+        {"cpi": {"mode": "anchor"}},
+        # A column the page no longer has.
+        {"gone_column": {"scheme": "neutral"}},
+    ],
+)
+def test_well_formed_state_passes(state):
+    validate_color_scale_state(state)
+
+
+@pytest.mark.parametrize(
+    "state, message",
+    [
+        ([], "must be a dict"),
+        ("neutral", "must be a dict"),
+        ({1: False}, "keys must be column ids"),
+        ({"cpi": True}, "must be False or a dict"),
+        ({"cpi": "neutral"}, "must be False or a dict"),
+        ({"cpi": {"scope": "parent"}}, "unknown key"),
+        ({"cpi": {"anchor": 1.0}}, "unknown key"),
+        ({"cpi": {"scheme": "fill"}}, "'fill'"),
+        ({"cpi": {"scheme": "rainbow"}}, "must be one of"),
+        ({"cpi": {"mode": "linear"}}, "must be one of"),
+        ({"cpi": {"reverse": 1}}, "must be a bool"),
+    ],
+)
+def test_malformed_state_raises(state, message):
+    with pytest.raises(ValueError, match=message):
+        validate_color_scale_state(state)
