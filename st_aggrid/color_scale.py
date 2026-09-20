@@ -38,6 +38,16 @@ from st_aggrid._numbers import is_finite_number
 #: Where a declaration lives inside ``context``, at both levels.
 COLOR_SCALE_CONTEXT_KEY = "stColorScale"
 
+#: Reserved: the frontend stores the reader's live choices under this key of
+#: the grid ``context``. A caller-supplied value would be overwritten, so it is
+#: rejected instead. Matches ``colorScales/index.ts``'s
+#: ``ST_COLOR_SCALE_OVERRIDES``.
+COLOR_SCALE_OVERRIDES_CONTEXT_KEY = "stColorScaleOverrides"
+
+#: The keys the reader's picker can set, and so the only keys an entry of
+#: ``color_scale_state`` may carry.
+COLOR_SCALE_STATE_KEYS = ("scheme", "mode", "reverse")
+
 #: Scheme names. The three ramps' colours live in
 #: ``frontend/src/colorScales/schemes.ts``; ``rank`` is a predicate (the best
 #: value in the population) and ``fill`` a constant colour. These strings
@@ -67,17 +77,30 @@ _KNOWN_KEYS = (
     "anchor",
     "span",
     "color",
+    "interactive",
 )
 
 
-def _validate_declaration(declaration: dict, where: str) -> None:
+def _validate_declaration(
+    declaration: dict, where: str, *, grid_level: bool = False
+) -> None:
     """The rules shared by the grid-level and the column-level declaration:
-    every present key has the right shape. Relevance is not checked here."""
+    every present key has the right shape. Relevance is not checked here.
+
+    ``interactive`` is the one key that belongs to a level: it switches the
+    reader's picker on for the whole grid, so a column cannot carry it."""
     unknown = sorted(key for key in declaration if key not in _KNOWN_KEYS)
     if unknown:
         raise ValueError(
             f"{where}: unknown key(s) {unknown} in the colour scale "
             f"declaration. Available: {list(_KNOWN_KEYS)}."
+        )
+
+    if "interactive" in declaration and not grid_level:
+        raise ValueError(
+            f"{where}['interactive'] is a grid-level key: it switches the "
+            f"reader's picker on for the whole grid. Set it with "
+            f"GridOptionsBuilder.configure_color_scale(interactive=True)."
         )
 
     for key, allowed in (
@@ -91,7 +114,7 @@ def _validate_declaration(declaration: dict, where: str) -> None:
                 f"{declaration[key]!r}."
             )
 
-    for flag in ("reverse", "skip_non_positive"):
+    for flag in ("reverse", "skip_non_positive", "interactive"):
         # Checked against `bool` specifically: `bool` is an `int` subclass, so
         # an `isinstance(..., int)` test would accept `1`. Same trap
         # `_numbers.is_number` guards from the other direction.
@@ -188,6 +211,14 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
 
     raw_grid_context = grid_options.get("context")
     grid_context = raw_grid_context if isinstance(raw_grid_context, dict) else {}
+
+    if COLOR_SCALE_OVERRIDES_CONTEXT_KEY in grid_context:
+        raise ValueError(
+            f"gridOptions context['{COLOR_SCALE_OVERRIDES_CONTEXT_KEY}'] is "
+            f"reserved: the component keeps the reader's colour-scale choices "
+            f"there. Pass a saved choice as AgGrid(color_scale_state=...)."
+        )
+
     grid_declaration = grid_context.get(COLOR_SCALE_CONTEXT_KEY)
 
     if grid_declaration is not None:
@@ -198,7 +229,9 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
                 f"carries defaults only; a column opts in with its own entry."
             )
         _validate_declaration(
-            grid_declaration, f"gridOptions context['{COLOR_SCALE_CONTEXT_KEY}']"
+            grid_declaration,
+            f"gridOptions context['{COLOR_SCALE_CONTEXT_KEY}']",
+            grid_level=True,
         )
 
     for column in iter_column_defs(grid_options.get("columnDefs")):
@@ -222,3 +255,50 @@ def validate_color_scale_columns(grid_options: Optional[dict]) -> None:
 
         _validate_declaration(own, where)
         _validate_resolution(_merge_declaration(grid_declaration, own), where)
+
+
+def validate_color_scale_state(state: Optional[dict]) -> None:
+    """Raise ``ValueError`` for a malformed ``color_scale_state``.
+
+    Shape only. The state is what a reader chose, possibly long ago and against
+    different page code: an entry for a column that no longer exists, or a
+    choice that no longer resolves (a saved ``mode: "anchor"`` on a column
+    that has since lost its ``anchor``), is history, not a bug — the frontend
+    ignores it. A value of the wrong *shape* can only come from the calling
+    code, and that is what raises here.
+    """
+    if state is None:
+        return
+    if not isinstance(state, dict):
+        raise ValueError(
+            f"color_scale_state must be a dict of column id -> False or a "
+            f"dict, got {type(state).__name__}."
+        )
+
+    for col_id, entry in state.items():
+        if not isinstance(col_id, str):
+            raise ValueError(
+                f"color_scale_state keys must be column ids (str), got "
+                f"{col_id!r}."
+            )
+        where = f"color_scale_state['{col_id}']"
+        if entry is False:
+            continue
+        # `True` is a bool, not a dict; it falls through to the same error.
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{where} must be False or a dict, got {entry!r}."
+            )
+
+        unknown = sorted(key for key in entry if key not in COLOR_SCALE_STATE_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{where}: unknown key(s) {unknown}. The reader's picker sets "
+                f"only {list(COLOR_SCALE_STATE_KEYS)}."
+            )
+        if entry.get("scheme") == "fill":
+            raise ValueError(
+                f"{where}['scheme'] cannot be 'fill': a fill needs a colour, "
+                f"which the picker does not offer."
+            )
+        _validate_declaration(entry, where)
