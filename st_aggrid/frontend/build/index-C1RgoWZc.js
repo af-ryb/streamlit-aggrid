@@ -197677,7 +197677,7 @@ function Hii({
       };
       for (const m of t)
         try {
-          const y = r == null ? void 0 : r[m];
+          const y = r && Object.prototype.hasOwnProperty.call(r, m) ? r[m] : void 0;
           if (y) {
             f[y.key] = y.read();
             continue;
@@ -203822,7 +203822,7 @@ function Gri(e, t, i, s) {
     return;
   }
   const n = e.get(t), r = n ? { ...n } : {};
-  i.kind === "scheme" ? r.scheme = i.scheme : i.kind === "mode" ? r.mode = i.mode : r.reverse = i.reverse, e.set(t, r);
+  i.kind === "scheme" ? r.scheme = i.scheme : i.kind === "mode" ? (r.mode = i.mode, i.scheme !== void 0 && (r.scheme = i.scheme)) : r.reverse = i.reverse, e.set(t, r);
 }
 function _ke(e, t, i) {
   if (t === !1 || i === !1) return [];
@@ -204007,63 +204007,72 @@ function Yri(e, t) {
   return s === !1 || ((o = MO(i, t)) == null ? void 0 : o.kind) === "fill" ? !1 : s != null || i.aggFunc != null || e.getAggFunc() != null || i.cellDataType === "number" ? !0 : (i.type == null ? [] : Array.isArray(i.type) ? i.type : [i.type]).includes("numericColumn");
 }
 function Xri(e, t, i) {
-  var S;
+  var M;
   const s = e.getGridOption("context"), n = v5(t.getColDef(), t);
   if (!n || !Yri(n, s)) return null;
-  const r = n.getColId(), o = n.getColDef(), a = (S = o.context) == null ? void 0 : S[xO], l = a != null, c = i.overrides.get(r), u = MO(o, s, c), h = _ri(o, s), d = Wce(h.anchor) && Wce(h.span) && h.span > 0, g = u === null || u.kind === "fill" ? null : u.kind === "rank" ? "rank" : u.scheme.name, p = (u == null ? void 0 : u.kind) === "ramp" ? u.mode : (u == null ? void 0 : u.kind) === "anchor" ? "anchor" : null, f = u !== null && u.kind !== "fill" && u.reverse, m = (u == null ? void 0 : u.kind) === "ramp" || (u == null ? void 0 : u.kind) === "anchor", y = (x) => {
-    Gri(i.overrides, r, x, l), GK(e);
-    const D = [...e.getColumns() ?? [], ...e.getPivotResultColumns() ?? []].filter((T) => v5(T.getColDef(), T) === n).map((T) => T.getColId());
-    e.refreshCells({ force: !0, columns: D }), i.onChange(r);
-  }, v = Kri.map(([x, M]) => ({
-    name: M,
-    checked: p === x,
-    action: () => y({ kind: "mode", mode: x })
+  const r = n.getColId(), o = n.getColDef(), a = (M = o.context) == null ? void 0 : M[xO], l = a != null, c = i.overrides.get(r), u = MO(o, s, c), h = _ri(o, s), d = Wce(h.anchor) && Wce(h.span) && h.span > 0, g = u === null || u.kind === "fill" ? null : u.kind === "rank" ? "rank" : u.scheme.name, p = (u == null ? void 0 : u.kind) === "ramp" ? u.mode : (u == null ? void 0 : u.kind) === "anchor" ? "anchor" : null, f = u !== null && u.kind !== "fill" && u.reverse, m = (u == null ? void 0 : u.kind) === "ramp" || (u == null ? void 0 : u.kind) === "anchor", y = c === void 0 || c === !1 ? void 0 : c.scheme, v = h.scheme === void 0 && y === void 0 && g !== null ? g : void 0, b = (D) => {
+    Gri(i.overrides, r, D, l), GK(e);
+    const R = [...e.getColumns() ?? [], ...e.getPivotResultColumns() ?? []].filter((E) => v5(E.getColDef(), E) === n).map((E) => E.getColId());
+    e.refreshCells({ force: !0, columns: R }), i.onChange(r);
+  }, S = Kri.map(([D, T]) => ({
+    name: T,
+    checked: p === D,
+    action: () => b({ kind: "mode", mode: D, scheme: v })
   }));
-  d && v.push({
+  d && S.push({
     name: "Anchor",
     checked: p === "anchor",
-    action: () => y({ kind: "mode", mode: "anchor" })
+    action: () => b({ kind: "mode", mode: "anchor", scheme: v })
   });
-  const b = [
-    { name: "None", checked: u === null, action: () => y({ kind: "none" }) },
+  const x = [
+    { name: "None", checked: u === null, action: () => b({ kind: "none" }) },
     ...jri.map(
-      ([x, M]) => ({
-        name: M,
-        checked: g === x,
-        action: () => y({ kind: "scheme", scheme: x })
+      ([D, T]) => ({
+        name: T,
+        checked: g === D,
+        action: () => b({ kind: "scheme", scheme: D })
       })
     ),
     "separator",
-    { name: "Mode", disabled: !m, subMenu: v },
+    { name: "Mode", disabled: !m, subMenu: S },
     {
       name: "Reverse",
       disabled: u === null,
       checked: f,
-      action: () => y({ kind: "reverse", reverse: !f })
+      action: () => b({ kind: "reverse", reverse: !f })
     }
   ];
-  return c !== void 0 && b.push("separator", {
+  return c !== void 0 && x.push("separator", {
     name: "Reset to default",
-    action: () => y({ kind: "reset" })
-  }), { name: "Colour scale", subMenu: b };
+    action: () => b({ kind: "reset" })
+  }), { name: "Colour scale", subMenu: x };
 }
-function c_(e, t, i, s) {
-  const n = e ?? [];
-  if (!i) return n;
-  const r = Xri(t, i, s);
-  return r ? [...n, "separator", r] : n;
+function c_(e, t, i) {
+  const s = [...e ?? t.defaultItems ?? []];
+  if (!t.column) return s;
+  const n = Xri(t.api, t.column, i);
+  return n ? s.length ? [...s, "separator", n] : [n] : s;
 }
 function qri(e, t) {
   const i = e.getColumnMenuItems, s = e.getMainMenuItems, n = e.getContextMenuItems;
   return e.getColumnMenuItems = (r) => {
+    var a, l;
     let o;
-    return typeof i == "function" ? o = i(r) : r.source === "columnMenu" && typeof s == "function" ? o = s(r) : o = r.defaultItems, c_(o, r.api, r.column, t);
+    if (typeof i == "function")
+      o = i(r);
+    else if (r.source === "columnMenu") {
+      const c = ((a = r.column) == null ? void 0 : a.getColDef()) ?? ((l = r.columnGroup) == null ? void 0 : l.getColGroupDef()), u = c == null ? void 0 : c.mainMenuItems;
+      if (Array.isArray(u)) return u;
+      if (typeof u == "function") return u(r);
+      o = typeof s == "function" ? s(r) : void 0;
+    }
+    return c_(o, r, t);
   }, e.getContextMenuItems = (r) => {
-    const o = typeof n == "function" ? n(r) : r.defaultItems;
+    const o = typeof n == "function" ? n(r) : void 0;
     return o && typeof o.then == "function" ? o.then(
       // As above: `MenuCallbackReturn<DefaultMenuItem>`.
-      (a) => c_(a, r.api, r.column, t)
-    ) : c_(o, r.api, r.column, t);
+      (a) => c_(a, r, t)
+    ) : c_(o, r, t);
   }, e;
 }
 function $ce(e, t, i) {

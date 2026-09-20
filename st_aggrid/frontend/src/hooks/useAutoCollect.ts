@@ -164,7 +164,13 @@ export function useAutoCollect({
 
       for (const method of collectConfig) {
         try {
-          const extra = extraCollectors?.[method]
+          // `hasOwnProperty`, not a plain lookup: `collect=["toString"]` (or
+          // any other `Object.prototype` name) would otherwise resolve to an
+          // inherited member and be called as a collector.
+          const extra =
+            extraCollectors && Object.prototype.hasOwnProperty.call(extraCollectors, method)
+              ? extraCollectors[method]
+              : undefined
           if (extra) {
             result[extra.key] = extra.read()
             continue

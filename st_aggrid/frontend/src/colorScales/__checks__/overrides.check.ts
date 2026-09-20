@@ -63,6 +63,31 @@ assert.deepEqual(map.get("m"), { scheme: "neutral", mode: "minmax", reverse: tru
 applyChoice(map, "m", { kind: "scheme", scheme: "diverging" }, false)
 assert.deepEqual(map.get("m"), { scheme: "diverging", mode: "minmax", reverse: true })
 
+// A mode may carry the scheme it was resolved against — what the menu does on
+// a column whose scheme exists only as `mode: "anchor"`'s implicit
+// `diverging`. It is the first candidate's only scheme, so the merge resolves.
+const ANCHOR_ONLY = { mode: "anchor", anchor: 1, span: 1 }
+applyChoice(map, "a", { kind: "mode", mode: "zscore", scheme: "diverging" }, true)
+assert.deepEqual(map.get("a"), { mode: "zscore", scheme: "diverging" })
+assert.deepEqual(declarationCandidates(ANCHOR_ONLY, true, map.get("a")), [
+  { mode: "zscore", anchor: 1, span: 1, scheme: "diverging" },
+  ANCHOR_ONLY,
+])
+// An omitted scheme never erases one already stored.
+applyChoice(map, "a", { kind: "mode", mode: "minmax" }, true)
+assert.deepEqual(map.get("a"), { mode: "minmax", scheme: "diverging" })
+// On a fresh entry it is simply not written — and then the first candidate
+// names no scheme, leaving the unchanged declaration as the only one that
+// resolves. That is the repaint-nothing defect the menu's scheme avoids.
+map.delete("a")
+applyChoice(map, "a", { kind: "mode", mode: "zscore" }, true)
+assert.deepEqual(map.get("a"), { mode: "zscore" })
+assert.deepEqual(declarationCandidates(ANCHOR_ONLY, true, map.get("a")), [
+  { mode: "zscore", anchor: 1, span: 1 },
+  ANCHOR_ONLY,
+])
+map.delete("a")
+
 // "none" on an undeclared column has nothing to switch off: the entry goes.
 applyChoice(map, "m", { kind: "none" }, false)
 assert.equal(map.has("m"), false)

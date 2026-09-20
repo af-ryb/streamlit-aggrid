@@ -11,13 +11,21 @@ Grids over `color_scale_fixture.py`, which also owns the expected colours:
      result column of a metric, from a header and from the panel.
   2  flat, NOT interactive — the same columns as the picker would touch. Must
      behave exactly as it did before the picker existed.
-  3  interactive, with a caller-supplied `getMainMenuItems` — the built-in
-     item is appended, the caller's is kept.
+  3  interactive, with caller-supplied menu hooks — a `getMainMenuItems` whose
+     items are kept and the built-in appended, a `getContextMenuItems` that
+     returns nothing (AG-Grid's "show the defaults"), and a column with its own
+     `mainMenuItems`, which owns its menu outright.
   4  interactive, state round trip — mounted with a saved choice, collects
      `stGetColorScaleState` on `stColorScaleChanged`, feeds the result back,
-     can be remounted (`remount`) and config-updated (`flip option`).
+     can be remounted (`remount`) and config-updated (`taller header`, whose
+     only job is to be visible in the DOM once the update has landed).
   5  pivot, interactive, mounted with a saved choice — the override layer in
      pivot mode with no menu involved.
+  6  flat, interactive, grid-level `mode="anchor"` with **no** scheme — the
+     "complete default set" whose scheme exists only as `anchor`'s implicit
+     `diverging`. Picking a mode has to carry that scheme with it.
+  7  flat, created NOT interactive, with a checkbox that switches the opt-in
+     on and off through a config update (same `key`, so no remount).
 
 Grids keep their indices; a new grid is always appended.
 
@@ -40,6 +48,9 @@ COMMON_OPTIONS = {
     "animateRows": False,
 }
 INTERACTIVE = {"stColorScale": {"interactive": True}}
+#: `ratio` straddles this anchor, so an anchored scale has both signs to show.
+#: No scheme: `mode="anchor"` supplies `diverging` on its own.
+ANCHOR = {"mode": "anchor", "anchor": 1.0, "span": 1.0}
 
 #: Flat grey, nothing a scheme would ever produce.
 OWN_STYLE = JsCode("function(params) { return {backgroundColor: 'rgb(1, 2, 3)'}; }")
@@ -50,6 +61,9 @@ CALLER_MENU = JsCode(
          return params.defaultItems.concat([{name: 'Caller item'}]);
        }"""
 )
+#: Returns nothing, which to AG-Grid means "show the defaults". The wrapper
+#: has to read it the same way.
+CALLER_SILENT_MENU = JsCode("function(params) { return undefined; }")
 
 st.session_state.runs = st.session_state.get("runs", 0) + 1
 st.text(f"runs={st.session_state.runs}")
@@ -123,14 +137,23 @@ AgGrid(
     key="picker_off",
 )
 
-st.subheader("3 interactive, caller getMainMenuItems")
+st.subheader("3 interactive, caller menu hooks")
 AgGrid(
     df,
     grid_options={
         **COMMON_OPTIONS,
         "context": INTERACTIVE,
         "getMainMenuItems": CALLER_MENU,
-        "columnDefs": flat_columns(),
+        "getContextMenuItems": CALLER_SILENT_MENU,
+        "columnDefs": [
+            *flat_columns(),
+            # AG-Grid's own resolver reaches a colDef `mainMenuItems` only
+            # when no grid-level `getColumnMenuItems` is installed — and the
+            # picker always installs one. Eligible in every other respect, so
+            # an item here would mean the wrapper had taken the column's menu
+            # over.
+            metric("metric_b", col_id="metric_b_own_menu", mainMenuItems=["autoSizeThis"]),
+        ],
     },
     height=300,
     allow_unsafe_jscode=True,
@@ -149,15 +172,17 @@ def _remount():
 
 
 st.button("remount", on_click=_remount)
-flip = st.checkbox("flip option")
+taller = st.checkbox("taller header")
 state_result = AgGrid(
     df,
     grid_options={
         **COMMON_OPTIONS,
         "context": INTERACTIVE,
         # Unrelated to colour: only here to send a rerun down the
-        # `updateGridOptions` path.
-        "suppressMovableColumns": bool(flip),
+        # `updateGridOptions` path. It has to be an option whose arrival the
+        # test can see, or the assertions that follow could still be reading
+        # pre-update pixels.
+        "headerHeight": 64 if taller else 32,
         "columnDefs": flat_columns(),
     },
     height=300,
@@ -184,4 +209,34 @@ AgGrid(
     color_scale_state={"metric_a": {"scheme": "diverging"}, "metric_b": {"scheme": "positive"}},
     enable_enterprise_modules=True,
     key="picker_pivot_saved",
+)
+
+st.subheader("6 interactive, grid-level anchor with no scheme")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "context": {"stColorScale": {**ANCHOR, "interactive": True}},
+        "columnDefs": [
+            {"colId": "country", "field": "country"},
+            metric("ratio", True),
+        ],
+    },
+    height=300,
+    enable_enterprise_modules=True,
+    key="picker_anchor",
+)
+
+st.subheader("7 not interactive at creation")
+live = st.checkbox("interactive on")
+AgGrid(
+    df,
+    grid_options={
+        **COMMON_OPTIONS,
+        "context": {"stColorScale": {"interactive": bool(live)}},
+        "columnDefs": flat_columns(),
+    },
+    height=300,
+    enable_enterprise_modules=True,
+    key="picker_live",
 )

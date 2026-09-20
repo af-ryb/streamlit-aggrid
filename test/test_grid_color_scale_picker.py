@@ -28,7 +28,13 @@ OFF_GRID = 2
 CALLER_GRID = 3
 STATE_GRID = 4
 PIVOT_SAVED_GRID = 5
-GRID_COUNT = 6
+ANCHOR_GRID = 6
+LIVE_GRID = 7
+GRID_COUNT = 8
+
+#: Grid 6's anchor reference, for `expected_rgba`. Written out here rather than
+#: imported from the app: importing that module would run a Streamlit script.
+ANCHOR_1 = dict(anchor=1.0, span=1.0)
 
 #: Body rows in fixture order: DE, FR, IT (EU) then CA, NY, TX (US). The pivot
 #: grids group by country, so they have the same six rows in the same order.
@@ -159,6 +165,12 @@ def has_option(page: Page, name: str) -> bool:
     return page.locator(f'.ag-menu-option-text:text-is("{name}")').count() > 0
 
 
+def option_names(page: Page) -> list[str]:
+    """Every visible menu item's label, in order. Separators carry no text
+    element and so do not appear."""
+    return [text.strip() for text in page.locator(".ag-menu-option-text").all_inner_texts()]
+
+
 def hover_submenu(page: Page, name: str) -> None:
     """Hover a sub-menu parent and wait until its sub menu is really open.
 
@@ -215,6 +227,27 @@ def close_menu(page: Page) -> None:
     menu.wait_for(state="hidden", timeout=5000)
 
 
+def toggle(page: Page, label: str) -> None:
+    """Click a checkbox and wait until the rerun it triggers has landed."""
+    runs = int(marker(page, "runs"))
+    page.get_by_text(label).click()
+    eventually(lambda: _assert_greater(int(marker(page, "runs")), runs))
+
+
+def header_menu_offers_the_item(page: Page, grid: int, col_id: str) -> bool:
+    open_header_menu(page, grid, col_id)
+    found = has_option(page, MENU_ITEM)
+    close_menu(page)
+    return found
+
+
+def cell_menu_offers_the_item(page: Page, grid: int, col_id: str) -> bool:
+    open_cell_menu(page, grid, col_id)
+    found = has_option(page, MENU_ITEM)
+    close_menu(page)
+    return found
+
+
 @pytest.fixture(autouse=True, scope="module")
 def streamlit_app():
     with StreamlitRunner(APP_FILE) as runner:
@@ -229,11 +262,20 @@ def go_to_app(page: Page, streamlit_app: StreamlitRunner):
         f"() => document.querySelectorAll('.ag-root-wrapper').length >= {GRID_COUNT}",
         timeout=60000,
     )
-    # The last grid is a pivot: wait until it has rendered its six group rows.
+    # Grid 5 is a pivot: wait until it has rendered its six group rows.
     page.wait_for_function(
         f"""() => {{
              const grid = document.querySelectorAll('.ag-root-wrapper')[{PIVOT_SAVED_GRID}];
              return !!grid && grid.querySelectorAll('.ag-cell[col-id^="pivot_"]').length >= 6;
+           }}""",
+        timeout=60000,
+    )
+    # …and the last grid until its body is up, so a test that opens a menu
+    # there is not racing the mount.
+    page.wait_for_function(
+        f"""() => {{
+             const grid = document.querySelectorAll('.ag-root-wrapper')[{LIVE_GRID}];
+             return !!grid && grid.querySelectorAll('.ag-cell[col-id="metric_b"]').length >= 6;
            }}""",
         timeout=60000,
     )
@@ -370,6 +412,30 @@ def test_a_grid_without_the_opt_in_offers_no_item(page: Page):
     close_menu(page)
 
 
+def test_a_mode_choice_keeps_an_anchor_only_scheme(page: Page):
+    """Grid 6 declares `mode="anchor"` and no scheme at all — a complete
+    default set, and the shape a dashboard's ratio columns take. Its scheme
+    exists only as `resolveMerged`'s implicit `diverging` for `mode="anchor"`,
+    so a choice that stored the mode alone would resolve to nothing and the
+    declaration-only fallback would repaint the column exactly as it was.
+    """
+    values = flat_values("ratio")
+    assert_column(page, ANCHOR_GRID, "ratio", "diverging", values, mode="anchor", **ANCHOR_1)
+
+    open_header_menu(page, ANCHOR_GRID, "ratio")
+    hover_submenu(page, MENU_ITEM)
+    hover_submenu(page, "Mode")
+    assert set(ticked(page)) == {"Diverging", "Anchor"}
+    pick(page, "Z-score")
+    assert_column(page, ANCHOR_GRID, "ratio", "diverging", values, mode="zscore")
+
+    open_header_menu(page, ANCHOR_GRID, "ratio")
+    hover_submenu(page, MENU_ITEM)
+    hover_submenu(page, "Mode")
+    assert set(ticked(page)) == {"Diverging", "Z-score"}
+    close_menu(page)
+
+
 def test_a_header_choice_repaints_every_pivot_result_column(page: Page):
     open_header_menu(page, PIVOT_GRID, "pivot_region_EU_metric_a")
     pick(page, MENU_ITEM, "Diverging")
@@ -406,6 +472,77 @@ def test_a_caller_supplied_main_menu_is_kept(page: Page):
     assert has_option(page, "Caller item")
     assert has_option(page, MENU_ITEM)
     close_menu(page)
+
+
+def test_a_caller_hook_that_returns_nothing_keeps_the_defaults(page: Page):
+    """Grid 3's `getContextMenuItems` returns `undefined`, which AG-Grid reads
+    as "show the defaults". The wrapper has to read it the same way, or the
+    column is left with the picker alone behind a leading separator."""
+    open_cell_menu(page, CALLER_GRID, "metric_a")
+    names = option_names(page)
+    assert "Copy" in names  # AG-Grid's own defaults, still there
+    assert names[-1] == MENU_ITEM  # …with the picker appended after them
+    close_menu(page)
+
+
+def test_a_col_def_main_menu_replaces_the_column_menu_picker_included(page: Page):
+    """A per-column `mainMenuItems` owns its column's menu outright.
+
+    AG-Grid's own resolver reaches `colDef.mainMenuItems` only when no
+    grid-level `getColumnMenuItems` is installed (`_resolveColumnMenuItems`,
+    `node_modules/ag-grid-enterprise/dist/package/main.cjs.js:18249`) — and the
+    picker always installs one, so the wrapper has to take that step itself.
+    The column is eligible in every other respect: on this interactive grid a
+    wrapper that simply appended would show the full defaults plus the picker
+    instead of the one item the page asked for.
+    """
+    open_header_menu(page, CALLER_GRID, "metric_b_own_menu")
+    assert option_names(page) == ["Autosize This Column"]
+    close_menu(page)
+
+
+def test_interactive_takes_effect_on_a_live_grid_in_both_directions(page: Page):
+    """The opt-in is not creation-only.
+
+    `getColumnMenuItems` carries an `@initial` tag in AG-Grid's typings, and
+    this branch first documented an asymmetry from it: the cell menu live, the
+    column menu only after a remount. The tag is typings-only — the key is not
+    in the runtime's `INITIAL_GRID_OPTION_KEYS`
+    (`ag-grid-community/dist/package/main.cjs.js:59993-60081`),
+    `updateGridOptions` writes every key it is handed (`:28000`), and
+    `_resolveColumnMenuItems` reads the callback through `gos.getCallback` on
+    every open (`ag-grid-enterprise/.../main.cjs.js:18259`). This test is the
+    measurement that settles it; the docs were rewritten from its result.
+    """
+    open_header_menu(page, LIVE_GRID, "metric_b")
+    assert has_option(page, "Sort Ascending")  # it is the real menu
+    assert not has_option(page, MENU_ITEM)
+    close_menu(page)
+    assert not cell_menu_offers_the_item(page, LIVE_GRID, "metric_b")
+
+    def offered():
+        assert header_menu_offers_the_item(page, LIVE_GRID, "metric_b")
+
+    def gone():
+        assert not header_menu_offers_the_item(page, LIVE_GRID, "metric_b")
+
+    toggle(page, "interactive on")
+    # The config update lands a beat after the rerun's DOM, so the first look
+    # can be early — but no remount happens, which is the whole point.
+    eventually(offered)
+    assert cell_menu_offers_the_item(page, LIVE_GRID, "metric_b")
+
+    # Offered and working, not merely rendered.
+    open_header_menu(page, LIVE_GRID, "metric_b")
+    pick(page, MENU_ITEM, "Positive")
+    assert_column(page, LIVE_GRID, "metric_b", "positive", flat_values("metric_b"))
+
+    toggle(page, "interactive on")
+    eventually(gone)
+    assert not cell_menu_offers_the_item(page, LIVE_GRID, "metric_b")
+    # The reader's layer goes with the opt-in; the page's own declaration stays.
+    assert_column_unpainted(page, LIVE_GRID, "metric_b", "positive")
+    assert_column(page, LIVE_GRID, "metric_a", "neutral", flat_values("metric_a"))
 
 
 # ---------------------------------------------------------------------------
@@ -447,14 +584,48 @@ def test_none_on_a_declared_column_is_reported_as_false(page: Page):
     eventually(reported)
 
 
+def header_row_height(page: Page, grid: int) -> float:
+    return page.evaluate(
+        """(grid) => document.querySelectorAll('.ag-root-wrapper')[grid]
+             .querySelector('.ag-header-row').getBoundingClientRect().height""",
+        grid,
+    )
+
+
 def test_a_choice_survives_a_config_update(page: Page):
+    """Every wait here is on something the update itself changed.
+
+    This grid reruns on `stColorScaleChanged`, so the pick has a rerun of its
+    own. Sampling `runs` straight after the immediate repaint and then waiting
+    for it to grow would be satisfied by that rerun, and the colour assertions
+    would run on pre-update pixels — the test would pass without a config
+    update ever having landed. So: wait for the reported state to show the
+    pick, then for the new `headerHeight` to reach the DOM, and only then look
+    at the colours.
+    """
     open_header_menu(page, STATE_GRID, "metric_a")
     pick(page, MENU_ITEM, "Positive")
+
+    def reported():
+        assert saved_state(page) == {
+            "metric_a": {"scheme": "positive"},
+            "metric_b": {"scheme": "diverging"},
+        }
+
+    eventually(reported)
     assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))
 
-    runs = int(marker(page, "runs"))
-    page.get_by_text("flip option").click()
-    eventually(lambda: _assert_greater(int(marker(page, "runs")), runs))
+    before = header_row_height(page, STATE_GRID)
+    toggle(page, "taller header")
+    page.wait_for_function(
+        """({grid, before}) => {
+             const row = document.querySelectorAll('.ag-root-wrapper')[grid]
+                           ?.querySelector('.ag-header-row');
+             return !!row && Math.abs(row.getBoundingClientRect().height - before) > 1;
+           }""",
+        arg={"grid": STATE_GRID, "before": before},
+        timeout=15000,
+    )
     # `updateGridOptions` installed fresh colDefs and a fresh `context`; the
     # same map rode along.
     assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))

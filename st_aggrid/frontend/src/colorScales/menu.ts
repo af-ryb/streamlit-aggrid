@@ -44,8 +44,9 @@ function isFiniteNumber(value: unknown): value is number {
  * covers a caller's `cellStyle` from any of its three sources, the auto-group
  * column (never walked by `eachColDef`), and a column `registerColorScales`
  * skipped. The live `isInteractive` check is what takes the item away when a
- * config update switches the opt-in off on a grid whose column-menu hook —
- * `@initial` in AG-Grid — can no longer be removed.
+ * config update switches the opt-in off: the hooks stay installed on the grid
+ * for as long as it lives — `updateGridOptions` writes the keys it is given
+ * and cannot clear one it is not — while the flag under them can change.
  */
 export function isEligible(source: Column, gridContext: unknown): boolean {
   if (!isInteractive(gridContext)) return false
@@ -101,6 +102,17 @@ function colorScaleItem(
   const reverse = resolved !== null && resolved.kind !== "fill" && resolved.reverse
   const isRamp = resolved?.kind === "ramp" || resolved?.kind === "anchor"
 
+  // A mode alone does not always name a scale: `mode: "anchor"` and nothing
+  // else resolves to `diverging`, and storing another mode over it would leave
+  // the merge schemeless. So the mode items carry the resolved scheme whenever
+  // neither lower layer spells one out and the reader has not already picked
+  // one. See `Choice` in `overrides.ts`.
+  const overrideScheme = override === undefined || override === false ? undefined : override.scheme
+  const modeScheme =
+    lower.scheme === undefined && overrideScheme === undefined && scheme !== null
+      ? scheme
+      : undefined
+
   const apply = (choice: Choice) => {
     applyChoice(runtime.overrides, colId, choice, hasOwn)
     // A different scheme can change the skip rule, hence the population.
@@ -116,13 +128,13 @@ function colorScaleItem(
   const modeItems: MenuItemDef[] = MODE_ITEMS.map(([value, name]) => ({
     name,
     checked: mode === value,
-    action: () => apply({ kind: "mode", mode: value }),
+    action: () => apply({ kind: "mode", mode: value, scheme: modeScheme }),
   }))
   if (anchorAvailable) {
     modeItems.push({
       name: "Anchor",
       checked: mode === "anchor",
-      action: () => apply({ kind: "mode", mode: "anchor" }),
+      action: () => apply({ kind: "mode", mode: "anchor", scheme: modeScheme }),
     })
   }
 
@@ -154,35 +166,60 @@ function colorScaleItem(
   return { name: "Colour scale", subMenu }
 }
 
+/** The three fields both hooks' params share, and all `withColorScale` reads. */
+interface MenuParams {
+  api: GridApi
+  column: Column | null
+  defaultItems?: readonly (string | MenuItemDef)[]
+}
+
+/**
+ * Append the picker to whatever the caller's hook produced.
+ *
+ * A hook that returns nothing means "show the defaults" to AG-Grid, so the
+ * defaults — not an empty menu — are the fallback here too. And a separator
+ * only separates: with nothing above it, it would be a rule across the top of
+ * the menu.
+ */
 function withColorScale(
   items: Items | null | undefined,
-  api: GridApi,
-  column: Column | null | undefined,
+  params: MenuParams,
   runtime: ColorScaleRuntime
 ): Items {
-  const base = items ?? []
-  if (!column) return base
-  const item = colorScaleItem(api, column, runtime)
-  return item ? [...base, "separator", item] : base
+  const base: Items = [...(items ?? params.defaultItems ?? [])]
+  if (!params.column) return base
+  const item = colorScaleItem(params.api, params.column, runtime)
+  if (!item) return base
+  return base.length ? [...base, "separator", item] : [item]
 }
 
 /**
  * Install the picker on the grid's menus. Called only for parsed options that
  * are interactive, so a grid that never opts in gets no wrapper around its
- * menus at all. `getColumnMenuItems` is an `@initial` grid option — AG-Grid
- * reads it at creation only — while `getContextMenuItems` is re-applied by
- * `updateGridOptions`. Hence the asymmetry when `interactive` is switched on
- * for a live grid: the cell menu gains the item at once, the column menu and
- * the Columns panel only after a remount. Switching it off needs neither:
- * every open re-checks the live flag (`isEligible`).
+ * menus at all.
+ *
+ * Both hooks reach a live grid through `updateGridOptions`, in both
+ * directions. `getColumnMenuItems` carries an `@initial` tag in AG-Grid's
+ * typings, but that tag is typings-only: the key is not in the runtime's
+ * `INITIAL_GRID_OPTION_KEYS`, `updateGridOptions` writes every key it is
+ * handed, and `_resolveColumnMenuItems` reads the callback through
+ * `gos.getCallback` on every open (measured against the shipped 36.1.0
+ * bundles, and pinned by the e2e test
+ * `test_interactive_takes_effect_on_a_live_grid_in_both_directions`).
+ * Switching the opt-in *off* is the case the live re-check in `isEligible`
+ * serves: a wrapper already installed cannot be taken off again — an absent
+ * key is not written, so `updateGridOptions` cannot clear it — and the flag it
+ * was installed for can change underneath it.
  *
  * `getColumnMenuItems` (AG-Grid 36.1) serves the column menu, the Columns tool
- * panel and the Column Chooser. It takes precedence over `getMainMenuItems`
- * for the column menu, so a caller's `getMainMenuItems` is delegated to here
- * or it would be shadowed. Whatever the caller supplied is kept and the item
- * appended — a built-in is a default, not a reservation. A colDef-level
- * `mainMenuItems`/`contextMenuItems` overrides these grid-level hooks for its
- * column and is left alone.
+ * panel and the Column Chooser. Whatever the caller supplied is kept and the
+ * item appended — a built-in is a default, not a reservation. It sits ahead of
+ * two things in AG-Grid's own resolution order, and installing one
+ * unconditionally would swallow both, so the wrapper reproduces them: the
+ * caller's grid-level `getMainMenuItems`, and a colDef-level `mainMenuItems`.
+ * A colDef-level `columnMenuItems` (36.1) and `contextMenuItems` need no such
+ * care — AG-Grid resolves both *before* the grid-level hook, so the wrapper
+ * never runs for that column at all.
  */
 export function registerColorScaleMenu(
   gridOptions: GridOptions,
@@ -193,33 +230,44 @@ export function registerColorScaleMenu(
   const callerContext = gridOptions.getContextMenuItems
 
   gridOptions.getColumnMenuItems = (params: GetColumnMenuItemsParams) => {
-    let items: Items
+    // `undefined` and an empty array are not the same answer: the first means
+    // "whatever AG-Grid would have shown", the second an empty menu.
+    let items: Items | null | undefined
     if (typeof callerColumn === "function") {
       items = callerColumn(params) as Items
-    } else if (params.source === "columnMenu" && typeof callerMain === "function") {
+    } else if (params.source === "columnMenu") {
+      // The two steps AG-Grid's `_resolveColumnMenuItems` would have taken
+      // next had no grid-level `getColumnMenuItems` been installed. The
+      // colDef's own menu is returned as AG-Grid would have shown it, picker
+      // and all defaults left out: a per-column `mainMenuItems` replaces its
+      // column's menu, and appending to it would be taking the column over.
+      const ownDef = params.column?.getColDef() ?? params.columnGroup?.getColGroupDef()
+      const ownItems = ownDef?.mainMenuItems
+      if (Array.isArray(ownItems)) return ownItems as any
       // `GetMainMenuItemsParams` differs only in the token union of
       // `defaultItems`, which a caller reads and never constructs.
-      items = callerMain(params as any) as Items
-    } else {
-      items = params.defaultItems as Items
+      if (typeof ownItems === "function") return ownItems(params as any) as any
+      items = typeof callerMain === "function" ? (callerMain(params as any) as Items) : undefined
     }
+    // Anything else — the Columns panel and the Column Chooser — leaves
+    // `items` undefined, i.e. `params.defaultItems`.
+    //
     // `MenuCallbackReturn<DefaultColumnMenuItem>` is narrower than `Items`:
     // its strings are the built-in tokens, and a caller's arbitrary string is
     // not in that union.
-    return withColorScale(items, params.api, params.column, runtime) as any
+    return withColorScale(items, params, runtime) as any
   }
 
   gridOptions.getContextMenuItems = (params: GetContextMenuItemsParams) => {
-    const result: unknown =
-      typeof callerContext === "function" ? callerContext(params) : params.defaultItems
+    const result: unknown = typeof callerContext === "function" ? callerContext(params) : undefined
     // A caller's hook may be async (`gridOptions.d.ts:2728`).
     if (result && typeof (result as Promise<Items>).then === "function") {
       return (result as Promise<Items>).then(
         // As above: `MenuCallbackReturn<DefaultMenuItem>`.
-        (items) => withColorScale(items, params.api, params.column, runtime) as any
+        (items) => withColorScale(items, params, runtime) as any
       )
     }
-    return withColorScale(result as Items, params.api, params.column, runtime) as any
+    return withColorScale(result as Items | null | undefined, params, runtime) as any
   }
 
   return gridOptions

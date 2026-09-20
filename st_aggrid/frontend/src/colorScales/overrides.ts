@@ -17,12 +17,22 @@
  * key over the two lower layers; activates a column with no declaration. */
 export type Override = false | { scheme?: string; mode?: string; reverse?: boolean }
 
-/** One menu action. */
+/**
+ * One menu action.
+ *
+ * The mode variant carries an optional `scheme` because a mode on its own does
+ * not always name a scale. A declaration of `mode: "anchor"` and nothing else
+ * is complete — `index.ts` resolves it to `diverging` — but store `{mode:
+ * "zscore"}` over it and the merge names no scheme at all, resolves to
+ * nothing, and the declaration-only fallback repaints the column exactly as it
+ * was. The menu therefore passes the scheme it resolved with whenever the
+ * lower layers do not spell one out.
+ */
 export type Choice =
   | { kind: "none" }
   | { kind: "reset" }
   | { kind: "scheme"; scheme: string }
-  | { kind: "mode"; mode: string }
+  | { kind: "mode"; mode: string; scheme?: string }
   | { kind: "reverse"; reverse: boolean }
 
 /** `fill` is absent on purpose: it needs a colour, which no menu offers. */
@@ -102,8 +112,11 @@ export function applyChoice(
   const current = map.get(colId)
   const next: Exclude<Override, false> = current ? { ...current } : {}
   if (choice.kind === "scheme") next.scheme = choice.scheme
-  else if (choice.kind === "mode") next.mode = choice.mode
-  else next.reverse = choice.reverse
+  else if (choice.kind === "mode") {
+    next.mode = choice.mode
+    // Pinning the scheme the mode was chosen against; see `Choice`.
+    if (choice.scheme !== undefined) next.scheme = choice.scheme
+  } else next.reverse = choice.reverse
   map.set(colId, next)
 }
 
