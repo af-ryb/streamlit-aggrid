@@ -14,6 +14,7 @@ import {
   isInteractive,
   registerColorScales,
 } from "../colorScales"
+import { registerColorScaleMenu } from "../colorScales/menu"
 
 export function parseGridOptions(
   data: AgGridData,
@@ -61,6 +62,16 @@ export function parseGridOptions(
   // `context` is known to be an object here: `isInteractive` read it.
   if (colorScaleRuntime && isInteractive(gridOptions.context)) {
     gridOptions.context[ST_COLOR_SCALE_OVERRIDES] = colorScaleRuntime.overrides
+    // The menus are enterprise modules. Without them the opt-in still fills
+    // the slots and still honours a saved state; it just offers no picker.
+    if (data.enable_enterprise_modules) {
+      registerColorScaleMenu(gridOptions, colorScaleRuntime)
+    } else if (data.debug === true) {
+      console.log(
+        "[st_aggrid] colour-scale picker: no menu on a community grid " +
+          "(needs enable_enterprise_modules)."
+      )
+    }
   }
 
   // Process theming — prefer the live theme read from host CSS variables

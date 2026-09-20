@@ -11,9 +11,10 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from color_scale_dom import assert_painted, assert_unpainted
-from color_scale_fixture import column_values, expected_rgba, region_values
+from color_scale_fixture import RANK_RGBA, column_values, expected_rgba, region_values
 from e2e_utils import StreamlitRunner
 from grid_dom import cell_backgrounds
 
@@ -105,6 +106,114 @@ def marker(page: Page, prefix: str) -> str:
     return text.split("=", 1)[1]
 
 
+MENU_ITEM = "Colour scale"
+
+
+def grid_locator(page: Page, grid: int):
+    return page.locator(".ag-root-wrapper").nth(grid)
+
+
+def open_header_menu(page: Page, grid: int, col_id: str) -> None:
+    header = grid_locator(page, grid).locator(f'.ag-header-cell[col-id="{col_id}"]')
+    header.scroll_into_view_if_needed()
+    header.hover()
+    header.locator(".ag-header-cell-menu-button").first.click()
+    page.locator(".ag-menu-option").first.wait_for(state="visible")
+
+
+def open_cell_menu(page: Page, grid: int, col_id: str, row_index: int = 1) -> None:
+    cell = grid_locator(page, grid).locator(
+        f'.ag-row[row-index="{row_index}"] .ag-cell[col-id="{col_id}"]'
+    )
+    cell.scroll_into_view_if_needed()
+    cell.click(button="right")
+    page.locator(".ag-menu-option").first.wait_for(state="visible")
+
+
+def open_panel_menu(page: Page, grid: int, label: str) -> None:
+    """Right-click a column's row in the Columns tool panel.
+
+    The right-click target is the virtual-list item, not the
+    `.ag-column-select-column` inside it: on a pivot grid that inner element
+    renders `…-readonly` and takes no pointer events, so a click aimed at its
+    centre is hit-tested to its parent and Playwright refuses it.
+    """
+    row = (
+        grid_locator(page, grid)
+        .locator(".ag-column-select-virtual-list-item", has_text=label)
+        .first
+    )
+    row.scroll_into_view_if_needed()
+    row.click(button="right")
+    page.locator(".ag-menu-option").first.wait_for(state="visible")
+
+
+def option(page: Page, name: str):
+    return page.locator(
+        ".ag-menu-option", has=page.locator(f'.ag-menu-option-text:text-is("{name}")')
+    ).last
+
+
+def has_option(page: Page, name: str) -> bool:
+    return page.locator(f'.ag-menu-option-text:text-is("{name}")').count() > 0
+
+
+def hover_submenu(page: Page, name: str) -> None:
+    """Hover a sub-menu parent and wait until its sub menu is really open.
+
+    AG-Grid opens a sub menu a beat after the pointer lands, so anything read
+    straight after `hover()` — the ticks, above all — is read off a menu that
+    is not on screen yet. `aria-expanded` is the item's own record of its sub
+    menu being open, so the wait is on state rather than on a sleep.
+    """
+    option(page, name).hover()
+    page.locator(
+        f'.ag-menu-option[aria-expanded="true"]:has(.ag-menu-option-text:text-is("{name}"))'
+    ).wait_for(state="visible")
+
+
+def pick(page: Page, *path: str) -> None:
+    """Walk an open menu by visible names; hovering opens a sub menu, the
+    last name is clicked."""
+    for index, name in enumerate(path):
+        target = option(page, name)
+        target.wait_for(state="visible")
+        if index < len(path) - 1:
+            target.hover()
+        else:
+            target.click()
+
+
+def ticked(page: Page) -> list[str]:
+    return page.evaluate(
+        """() => [...document.querySelectorAll('.ag-menu-option')]
+             .filter(o => o.querySelector('.ag-menu-option-icon .ag-icon-tick'))
+             .map(o => o.querySelector('.ag-menu-option-text').textContent.trim())"""
+    )
+
+
+def close_menu(page: Page) -> None:
+    """Close whatever menu is open, and wait until it is really gone.
+
+    Escape alone is not enough: a menu opened with the mouse does not always
+    hold keyboard focus, and the key then goes to the document, which leaves
+    the menu standing. A click outside every popup is what AG-Grid always
+    honours, so it is the fallback — and both waits are on the menu's own
+    state, never on a sleep.
+    """
+    menu = page.locator(".ag-menu").first
+    page.keyboard.press("Escape")
+    try:
+        menu.wait_for(state="hidden", timeout=1000)
+        return
+    except PlaywrightTimeoutError:
+        pass
+    # Top-left of the viewport: the Streamlit header's empty side, outside
+    # every grid and every popup.
+    page.mouse.click(2, 2)
+    menu.wait_for(state="hidden", timeout=5000)
+
+
 @pytest.fixture(autouse=True, scope="module")
 def streamlit_app():
     with StreamlitRunner(APP_FILE) as runner:
@@ -166,3 +275,133 @@ def test_an_interactive_grid_paints_its_declarations_as_before(page: Page):
 def test_a_grid_without_the_opt_in_is_unchanged(page: Page):
     assert_column(page, OFF_GRID, "metric_a", "neutral", flat_values("metric_a"))
     assert_column_unpainted(page, OFF_GRID, "metric_b", "neutral", "positive", "diverging")
+
+
+# ---------------------------------------------------------------------------
+# The menu
+# ---------------------------------------------------------------------------
+
+
+def test_header_menu_paints_an_undeclared_column_without_a_rerun(page: Page):
+    runs = marker(page, "runs")
+    open_header_menu(page, FLAT_GRID, "metric_b")
+    pick(page, MENU_ITEM, "Diverging")
+    assert_column(page, FLAT_GRID, "metric_b", "diverging", flat_values("metric_b"))
+    # `stColorScaleChanged` is not in this grid's `update_on`.
+    assert marker(page, "runs") == runs
+
+
+def test_cell_menu_ticks_the_current_value_and_changes_mode_and_direction(page: Page):
+    values = flat_values("metric_a")
+
+    open_cell_menu(page, FLAT_GRID, "metric_a")
+    hover_submenu(page, MENU_ITEM)
+    hover_submenu(page, "Mode")
+    assert set(ticked(page)) == {"Neutral", "Z-score"}
+    pick(page, "Min–max")
+    assert_column(page, FLAT_GRID, "metric_a", "neutral", values, mode="minmax")
+
+    open_cell_menu(page, FLAT_GRID, "metric_a")
+    pick(page, MENU_ITEM, "Reverse")
+    assert_column(page, FLAT_GRID, "metric_a", "neutral", values, mode="minmax", reverse=True)
+
+    open_cell_menu(page, FLAT_GRID, "metric_a")
+    hover_submenu(page, MENU_ITEM)
+    hover_submenu(page, "Mode")
+    assert set(ticked(page)) == {"Neutral", "Min–max", "Reverse"}
+    close_menu(page)
+
+
+def test_rank_is_offered_and_disables_mode(page: Page):
+    open_header_menu(page, FLAT_GRID, "metric_a")
+    pick(page, MENU_ITEM, "Rank")
+
+    def best_is_marked():
+        backgrounds = cell_backgrounds(page, FLAT_GRID)
+        assert_painted(backgrounds["body:5"]["metric_a"], RANK_RGBA, "rank winner")
+        assert_unpainted(backgrounds["body:0"]["metric_a"], "neutral", "rank loser")
+
+    eventually(best_is_marked)
+
+    open_header_menu(page, FLAT_GRID, "metric_a")
+    hover_submenu(page, MENU_ITEM)
+    assert "ag-menu-option-disabled" in (option(page, "Mode").get_attribute("class") or "")
+    close_menu(page)
+
+
+def test_none_clears_the_colour_and_reset_restores_the_declaration(page: Page):
+    open_header_menu(page, FLAT_GRID, "metric_a")
+    pick(page, MENU_ITEM, "None")
+    # The regression this guards: `cellStyle` returning `null` would leave the
+    # old colour on the cell.
+    assert_column_unpainted(page, FLAT_GRID, "metric_a", "neutral")
+
+    open_header_menu(page, FLAT_GRID, "metric_a")
+    hover_submenu(page, MENU_ITEM)
+    assert ticked(page) == ["None"]
+    pick(page, "Reset to default")
+    assert_column(page, FLAT_GRID, "metric_a", "neutral", flat_values("metric_a"))
+
+    open_header_menu(page, FLAT_GRID, "metric_a")
+    hover_submenu(page, MENU_ITEM)
+    assert not has_option(page, "Reset to default")
+    close_menu(page)
+
+
+@pytest.mark.parametrize("col_id", ["region", "metric_c", "ratio_own", "ratio_off"])
+def test_ineligible_columns_offer_no_item(page: Page, col_id: str):
+    """Text, `fill`, a caller's `cellStyle`, and the page author's `False`."""
+    open_header_menu(page, FLAT_GRID, col_id)
+    assert not has_option(page, MENU_ITEM)
+    close_menu(page)
+    open_cell_menu(page, FLAT_GRID, col_id)
+    assert not has_option(page, MENU_ITEM)
+    close_menu(page)
+
+
+def test_a_grid_without_the_opt_in_offers_no_item(page: Page):
+    open_header_menu(page, OFF_GRID, "metric_a")
+    assert has_option(page, "Sort Ascending")  # it is the real menu
+    assert not has_option(page, MENU_ITEM)
+    close_menu(page)
+    open_cell_menu(page, OFF_GRID, "metric_a")
+    assert not has_option(page, MENU_ITEM)
+    close_menu(page)
+
+
+def test_a_header_choice_repaints_every_pivot_result_column(page: Page):
+    open_header_menu(page, PIVOT_GRID, "pivot_region_EU_metric_a")
+    pick(page, MENU_ITEM, "Diverging")
+    for region in ("EU", "US"):
+        assert_column(
+            page,
+            PIVOT_GRID,
+            f"pivot_region_{region}_metric_a",
+            "diverging",
+            pivot_values(region, "metric_a"),
+        )
+
+
+def test_the_columns_panel_offers_the_same_menu(page: Page):
+    open_panel_menu(page, PIVOT_GRID, "Metric_b")
+    pick(page, MENU_ITEM, "Positive")
+    for region in ("EU", "US"):
+        assert_column(
+            page,
+            PIVOT_GRID,
+            f"pivot_region_{region}_metric_b",
+            "positive",
+            pivot_values(region, "metric_b"),
+        )
+    # Reopened from the panel, the tick reflects the choice just made.
+    open_panel_menu(page, PIVOT_GRID, "Metric_b")
+    hover_submenu(page, MENU_ITEM)
+    assert ticked(page) == ["Positive"]
+    close_menu(page)
+
+
+def test_a_caller_supplied_main_menu_is_kept(page: Page):
+    open_header_menu(page, CALLER_GRID, "metric_a")
+    assert has_option(page, "Caller item")
+    assert has_option(page, MENU_ITEM)
+    close_menu(page)
