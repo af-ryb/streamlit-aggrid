@@ -205,7 +205,9 @@ on these keys is typings-only — `getColumnMenuItems` is absent from
 (`ag-grid-enterprise/dist/package/main.cjs.js`) reads the callback through
 `gos.getCallback` on every open. There is no asymmetry, and the e2e test
 `test_interactive_takes_effect_on_a_live_grid_in_both_directions` now pins the
-behaviour.*
+behaviour for the column menu and the cell menu. The Columns panel goes through
+the same `getColumnMenuItems` hook and the same live re-check, so it follows by
+construction; it is not toggled live by any test.*
 
 ### The override layer
 
@@ -500,8 +502,15 @@ Grids, appended in order: (0) flat interactive, with a declared column, an
 undeclared numeric column, a text column, a `fill` column and a column with
 its own `cellStyle`; (1) pivot interactive with the Columns side bar; (2) flat,
 **not** interactive; (3) interactive with a caller `getMainMenuItems`
-(`JsCode`); (4) interactive, mounted with `color_scale_state`, showing
-`result.color_scale_state` and a button that bumps the grid's `key`.
+(`JsCode`), one whose hook returns nothing, and a column with its own
+colDef-level `mainMenuItems`; (4) interactive, mounted with
+`color_scale_state`, showing `result.color_scale_state`, with a button that
+bumps the grid's `key` and a checkbox that changes `headerHeight`; (5) pivot,
+mounted with a saved state; (6) a grid-level `mode: "anchor"` default with a
+column declared `True` — no scheme at either level; (7) a grid whose
+`interactive` flag is driven by a checkbox under one `key`. Grids 5-7 and the
+extra columns of grid 3 were added during implementation and the final review
+(as built: `test/grid_color_scale_picker.py`'s docstring is the authority).
 
 * header ⋮: pick a scheme on the undeclared column — painted, no rerun
   happened (a rerun counter in the app stays put when `stColorScaleChanged` is

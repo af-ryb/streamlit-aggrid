@@ -612,9 +612,10 @@ default. The grid repaints at once, without a rerun.
   config update, in both directions, with no remount: turn it on and the item
   appears in the column menu, the cell menu and the Columns panel at once; turn
   it off and it is gone from all three, along with the reader's layer. Measured
-  on AG-Grid 36.1.0 and pinned by
+  on AG-Grid 36.1.0 for the column menu and the cell menu, and pinned by
   `test_interactive_takes_effect_on_a_live_grid_in_both_directions` in
-  `test/test_grid_color_scale_picker.py`.
+  `test/test_grid_color_scale_picker.py`; the Columns panel is served by the
+  same hook as the column menu, so it follows, but no test toggles it live.
 * The menus are enterprise modules. On a community grid the saved state is
   still honoured; there is just no picker.
 * A caller-supplied `getColumnMenuItems`, `getMainMenuItems` or

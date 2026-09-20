@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-color-scale-picker-design.md`
 
+> **Superseded in part (2026-09-20, after the final review).** This plan's text about
+> `@initial` menu hooks and a remount being needed after a live opt-in is wrong: the
+> shipped AG-Grid 36.1.0 runtime applies both hooks on `updateGridOptions`. The spec and
+> the code are the authority; see the spec's "Toggling `interactive` on a live grid".
+> The plan is kept as the historical record of what was executed.
+
 ## Global Constraints
 
 - Branch is `feature/color-scale-picker`. **Never commit to `main`.**
