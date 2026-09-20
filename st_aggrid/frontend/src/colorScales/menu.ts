@@ -44,8 +44,8 @@ function isFiniteNumber(value: unknown): value is number {
  * covers a caller's `cellStyle` from any of its three sources, the auto-group
  * column (never walked by `eachColDef`), and a column `registerColorScales`
  * skipped. The live `isInteractive` check is what takes the item away when a
- * config update switches the opt-in off on a grid whose hooks — `@initial` in
- * AG-Grid — can no longer be removed.
+ * config update switches the opt-in off on a grid whose column-menu hook —
+ * `@initial` in AG-Grid — can no longer be removed.
  */
 export function isEligible(source: Column, gridContext: unknown): boolean {
   if (!isInteractive(gridContext)) return false
@@ -167,10 +167,14 @@ function withColorScale(
 }
 
 /**
- * Install the picker on the grid's menus. Call only for a grid that is
- * interactive **at creation**: both hooks are `@initial` grid options, so they
- * cannot be added or removed later, and a grid that never opts in must not get
- * a wrapper around its menus at all.
+ * Install the picker on the grid's menus. Called only for parsed options that
+ * are interactive, so a grid that never opts in gets no wrapper around its
+ * menus at all. `getColumnMenuItems` is an `@initial` grid option — AG-Grid
+ * reads it at creation only — while `getContextMenuItems` is re-applied by
+ * `updateGridOptions`. Hence the asymmetry when `interactive` is switched on
+ * for a live grid: the cell menu gains the item at once, the column menu and
+ * the Columns panel only after a remount. Switching it off needs neither:
+ * every open re-checks the live flag (`isEligible`).
  *
  * `getColumnMenuItems` (AG-Grid 36.1) serves the column menu, the Columns tool
  * panel and the Column Chooser. It takes precedence over `getMainMenuItems`

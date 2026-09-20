@@ -107,6 +107,11 @@ That is the only check. `update_on` is otherwise unchecked — AG-Grid's event s
 moves with every release and this package keeps no copy of it, so a misspelled
 event name is still a silent no-op.
 
+Two names in these lists belong to the component rather than to AG-Grid:
+`"stGetColorScaleState"` in `collect` (returned as `result.color_scale_state`)
+and `"stColorScaleChanged"` in `update_on`. See "Letting the reader choose a
+colour scale".
+
 **Caveat for auto-sized columns.** AG-Grid runs `autoSizeStrategy` at grid
 initialisation, but for `fitGridWidth` and `fitProvidedWidth` the actual fit
 is deferred behind a timer, so a `gridReady` collect of `getColumnState`
@@ -562,6 +567,59 @@ and a grid-wide `defaultColDef.cellStyle` that disables the scale entirely;
 `test/test_grid_color_scale.py` asserts what each one paints, against the
 reference arithmetic in `test/color_scale_fixture.py`.
 
+#### Letting the reader choose a colour scale
+
+```python
+gb.configure_color_scale(scheme="neutral", interactive=True)
+
+result = AgGrid(
+    df,
+    grid_options=gb.build(),
+    enable_enterprise_modules=True,
+    collect=["getColumnState", "stGetColorScaleState"],
+    update_on=["columnMoved", "stColorScaleChanged"],
+    color_scale_state=st.session_state.get("colors"),
+    key="grid",
+)
+if result.color_scale_state is not None:
+    st.session_state["colors"] = result.color_scale_state
+```
+
+`interactive=True` adds **Colour scale ▸** to the column menu (⋮), the cell
+right-click menu and the Columns tool panel's right-click menu: None, Neutral,
+Positive, Diverging, Rank, a Mode sub menu (Min–max, Z-score, and Anchor where
+the column already declares `anchor` and `span`), Reverse, and Reset to
+default. The grid repaints at once, without a rerun.
+
+* **Which columns.** Numeric or aggregated columns, and any column with a
+  declaration, provided the built-in owns the `cellStyle` slot. Not offered on a
+  column with its own `cellStyle`, on a `fill` column, or on a column the page
+  switched off with `color_scale=False` — that is the opt-out. In pivot mode a
+  choice made on any result column applies to every result column of that
+  metric.
+* **The choice is a layer**, over the column's declaration, which is over the
+  grid-level defaults. Only what the reader touched is stored, so changing a
+  default in code still reaches every column they left alone.
+* **Getting it out.** Add `"stGetColorScaleState"` to `collect` and read
+  `result.color_scale_state` (`{col_id: False | {"scheme", "mode",
+  "reverse"}}`). Add `"stColorScaleChanged"` to `update_on` to rerun when the
+  reader picks something; it cannot be debounced.
+* **Putting it back.** `color_scale_state=` is read **once, when the grid
+  mounts** — change `key` to apply a different one. A malformed value raises;
+  a stale one (a column that is gone, a choice that no longer resolves) is
+  ignored and never blanks a declared column.
+* **Set `interactive` when the grid is created.** AG-Grid reads the column-menu
+  hook at creation only. Switching `interactive` off later removes the item
+  everywhere at once; switching it on for a grid created without it adds the
+  item to the cell menu at once, but the column menu and the Columns panel need
+  a remount (a changed `key`).
+* The menus are enterprise modules. On a community grid the saved state is
+  still honoured; there is just no picker.
+* A caller-supplied `getColumnMenuItems`, `getMainMenuItems` or
+  `getContextMenuItems` is kept and the item appended. A colDef-level
+  `mainMenuItems`/`contextMenuItems` replaces the menu for its column, picker
+  included.
+
 ### Export and clipboard
 
 A group row's aggregated cell — for `stRatio`, `stRatioOfRatios` and
@@ -661,6 +719,7 @@ AgGrid(
 | `enable_enterprise_modules` | bool/str | False | Enable enterprise features |
 | `license_key` | str | None | AG-Grid license key |
 | `columns_state` | dict | None | Initial column state |
+| `color_scale_state` | dict | None | Reader's saved per-column colour-scale choices, as returned by `AgGridResult.color_scale_state`. Read once, at mount. Ignored unless the grid is interactive |
 | `theme` | str/StAggridTheme | "streamlit" | Grid theme |
 | `custom_css` | dict | None | Custom CSS rules |
 | `key` | str | None | Streamlit widget key |
@@ -681,6 +740,7 @@ AgGrid(
 | `.grid_state` | dict / None | Full grid state |
 | `.event_name` | str / None | Triggering event or action name |
 | `.event_data` | dict / None | Serialized event data |
+| `.color_scale_state` | dict / None | Reader's per-column colour-scale choices, or None until a collect that included `"stGetColorScaleState"` has run |
 | `.api_response` | dict / None | Explicit API call response |
 | `.data` | DataFrame / None | Original input data |
 | `.get(key, default)` | Any | Access any collected value |

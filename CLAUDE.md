@@ -40,7 +40,9 @@ st_aggrid/                   # Python package
     │   ├── colorScales/normalize.ts   # popStats, min-max / z-score gates
     │   ├── colorScales/schemes.ts     # the three palettes and their alpha ramps
     │   ├── colorScales/population.ts  # level-scoped population + memoised stats
-    │   ├── colorScales/index.ts       # declaration resolution, cellStyle, registration
+    │   ├── colorScales/overrides.ts   # the reader's layer: sanitise, apply a choice, candidate order (pure)
+    │   ├── colorScales/menu.ts        # eligibility, the Colour scale ▸ item, the two menu-hook wrappers
+    │   ├── colorScales/index.ts       # declaration resolution (three layers), cellStyle, registration
     │   ├── hooks/useAutoCollect.ts   # Auto-collect hook
     │   ├── hooks/useExplicitApiCall.ts
     │   ├── components/GridToolBar.tsx
@@ -131,6 +133,18 @@ Python build: **hatchling** (via `uv build`).
   either way (`colorScales/population.ts`). A caller-supplied `cellStyle`
   wins over the built-in, as with the aggregators. See the README's
   "Declarative colour scales without JavaScript".
+  With `interactive: true` at grid level the reader picks scheme, mode and
+  direction per column from the column menu, the cell menu and the Columns
+  panel. The choice is a third layer — a `Map` keyed by the *source* colId,
+  held by `AgGridComponent` and injected into the grid `context` on every
+  parse — never a `colDef.context` mutation: `updateGridOptions` replaces
+  colDefs, and a pivot result column's `context` is a copy. It leaves through
+  the fork-owned collect method `stGetColorScaleState` and the synthetic
+  `update_on` event `stColorScaleChanged` (no listener — the menu calls
+  `collectNow`), and returns through the mount-only `color_scale_state` prop.
+  `getColumnMenuItems` is `@initial` (`getContextMenuItems` is not), so a grid
+  switched to interactive after creation gets the cell-menu item at once and
+  the column-menu/Columns-panel item only after a remount.
 
 ## Packaging & asset delivery
 
@@ -167,8 +181,8 @@ Python build: **hatchling** (via `uv build`).
   `test/conftest.py`.
 - Ratio tests never hand-type an expected number: `test/ratio_fixture.py` owns
   the data and the arithmetic, and declares the nodes it cannot discriminate.
-- The two pure colour-scale modules (`colorScales/normalize.ts`,
-  `colorScales/schemes.ts`) import nothing and are exercised by
+- The three pure colour-scale modules (`normalize.ts`, `schemes.ts`,
+  `overrides.ts`) import nothing and are exercised by
   `src/colorScales/__checks__/*.check.ts`, run with plain
   `node <path>.check.ts` — Node 22 strips the types, so the arithmetic has a
   fast test cycle without a JS test runner in a package that ships to the
