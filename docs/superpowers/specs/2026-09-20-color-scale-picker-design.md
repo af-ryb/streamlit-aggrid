@@ -183,6 +183,16 @@ The menu needs the enterprise bundle (`ColumnMenuModule`,
 `ContextMenuModule`). On a community grid the opt-in still fills the slots and
 still honours `color_scale_state`, but adds no menu; logged under `debug`.
 
+**Toggling `interactive` on a live grid.** `getColumnMenuItems` and
+`getContextMenuItems` are `@initial` grid options
+(`gridOptions.d.ts:1925-1939`): AG-Grid reads them at creation only. The hooks
+are therefore installed only when the grid is *created* interactive — a grid
+that never opts in never gets a wrapper around its menus — and they re-check
+the live flag on every open, so switching `interactive` **off** by a config
+update removes the item at once. Switching it **on** for a grid created
+without it fills the slots and honours `color_scale_state`, but the menu
+appears only after a remount (a changed `key`). The README states this.
+
 ### The override layer
 
 Resolution gains a third layer, the reader's:
@@ -313,7 +323,8 @@ the caller supplied and appends — a built-in is a default, not a reservation:
 **Eligibility.** With `source = colDef.pivotValueColumn ?? params.column`, the
 item is appended iff all of:
 
-1. `params.column` is non-null;
+1. `params.column` is non-null and the grid's live `context` is still
+   interactive;
 2. `source.getColDef().cellStyle === stColorScaleCellStyle` — the slot is
    ours. This one identity check covers a caller's `cellStyle` from any of the
    three sources, the auto-group column (never walked by `eachColDef`), and a
@@ -436,6 +447,8 @@ What the consumer spec may rely on, and nothing more:
   (`web_app/src/bi_core/charts/grid_state.py:62-86`): that overlay is owned by
   the page's controls and recomputed every rerun; this one is owned by the
   reader and changes rarely.
+* Turning `interactive` on for a grid that was created without it needs a
+  remount before the menu appears; turning it off does not.
 * `show_color_scale` stays the block-level switch. Off means no declarations,
   no `interactive`, no `color_scale_state` passed; the saved choice stays in
   `settings` and returns when the switch does.
