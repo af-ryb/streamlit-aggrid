@@ -18,7 +18,11 @@ import omit from "lodash/omit"
 import debounce from "lodash/debounce"
 import cloneDeep from "lodash/cloneDeep"
 
-import { LIFECYCLE_EVENTS, useAutoCollect } from "./hooks/useAutoCollect"
+import {
+  LIFECYCLE_EVENTS,
+  ExtraCollectors,
+  useAutoCollect,
+} from "./hooks/useAutoCollect"
 import { useExplicitApiCall } from "./hooks/useExplicitApiCall"
 import { useStreamlitTheme } from "./hooks/useStreamlitTheme"
 import { ThemeParser } from "./ThemeParser"
@@ -37,7 +41,7 @@ import {
 import { parseGridOptions, parseData } from "./utils/parsers"
 import type { AgGridData } from "./types/AgGridTypes"
 import { ColorScaleRuntime, attachColorScaleInvalidation, clearStats } from "./colorScales"
-import { sanitizeState } from "./colorScales/overrides"
+import { sanitizeState, serializeState } from "./colorScales/overrides"
 
 import "@fontsource/source-sans-pro"
 import "./AgGrid.css"
@@ -463,6 +467,18 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     [data.update_on]
   )
 
+  // `stGetColorScaleState` in `collect` reads the live map. Stable for the
+  // mount: the runtime object never changes identity.
+  const extraCollectors = useMemo<ExtraCollectors>(
+    () => ({
+      stGetColorScaleState: {
+        key: "colorScaleState",
+        read: () => serializeState(colorScaleRuntimeRef.current!.overrides),
+      },
+    }),
+    []
+  )
+
   // Auto-collect hook — needs a stable `gridApi` value that changes exactly
   // once the grid becomes ready, so `useState` (not the ref) is the source.
   // The returned collector is what the two grid-creation callbacks below use:
@@ -473,6 +489,7 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     updateOn,
     setStateValue,
     debug,
+    extraCollectors,
   })
 
   // Which lifecycle triggers this grid asked for. Derived once from `updateOn`
@@ -485,6 +502,24 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
     return names
   }, [updateOn])
+
+  // A menu action reports here. `stColorScaleChanged` is the component's own
+  // event, so nothing subscribes to it: when `update_on` names it, the
+  // collector is called directly — the same route `gridReady` takes. The
+  // `source` must not start with "api", which the collector drops as
+  // programmatic. Assigned during render, like `notesEditableRef`, so the
+  // menu closure built at grid creation always reaches the current collector.
+  const colorScaleEventWanted = useMemo(
+    () =>
+      updateOn.some(
+        (entry) => (Array.isArray(entry) ? entry[0] : entry) === "stColorScaleChanged"
+      ),
+    [updateOn]
+  )
+  colorScaleChangeRef.current = (colId: string) => {
+    if (!colorScaleEventWanted) return
+    collectNow("stColorScaleChanged", { colId, source: "uiColorScaleMenu" })
+  }
 
   // Explicit API call hook
   useExplicitApiCall({

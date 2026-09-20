@@ -21,6 +21,24 @@ export const LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * Events the component raises itself. AG-Grid never emits them, so a listener
+ * attached below would simply never fire; the owner of each event calls the
+ * collector directly instead (`collectNow`). Mirrors
+ * `SYNTHETIC_UPDATE_ON_EVENTS` in `st_aggrid/aggrid.py`.
+ */
+export const SYNTHETIC_EVENTS: ReadonlySet<string> = new Set([
+  "stColorScaleChanged",
+])
+
+/**
+ * Collect methods the fork owns, looked up by name before the `GridApi`. They
+ * keep `collect=[...]` one flat list of names without patching AG-Grid's api
+ * object, whose extensibility is not a documented guarantee. `key` is explicit
+ * because `toKey` only strips a leading `get`.
+ */
+export type ExtraCollectors = Record<string, { key: string; read: () => unknown }>
+
+/**
  * Run one auto-collect under `eventName` and post the result to the host.
  *
  * `api` overrides the hook's own grid API. That is what lets a grid-creation
@@ -84,6 +102,7 @@ interface UseAutoCollectOptions {
   updateOn: (string | [string, number])[]
   setStateValue: (key: string, value: any) => void
   debug: boolean
+  extraCollectors?: ExtraCollectors
 }
 
 export function useAutoCollect({
@@ -92,6 +111,7 @@ export function useAutoCollect({
   updateOn,
   setStateValue,
   debug,
+  extraCollectors,
 }: UseAutoCollectOptions): CollectNow {
   const cleanupRef = useRef<(() => void)[]>([])
   // Live grid API, read at call time so `collectNow` stays referentially
@@ -144,6 +164,11 @@ export function useAutoCollect({
 
       for (const method of collectConfig) {
         try {
+          const extra = extraCollectors?.[method]
+          if (extra) {
+            result[extra.key] = extra.read()
+            continue
+          }
           const fn = (target as any)[method]
           if (typeof fn === "function") {
             const value = fn.call(target)
@@ -164,7 +189,7 @@ export function useAutoCollect({
 
       setStateValue("grid_state", result)
     },
-    [collectConfig, setStateValue, debug]
+    [collectConfig, setStateValue, debug, extraCollectors]
   )
 
   useEffect(() => {
@@ -185,6 +210,15 @@ export function useAutoCollect({
           console.log(
             `[useAutoCollect] Lifecycle trigger, no listener: ${name}`
           )
+        }
+        continue
+      }
+
+      // Raised by the component itself, never by AG-Grid: the owner calls
+      // `collectNow` directly, so a listener here would only ever be dead.
+      if (SYNTHETIC_EVENTS.has(name)) {
+        if (debug) {
+          console.log(`[useAutoCollect] Synthetic trigger, no listener: ${name}`)
         }
         continue
       }

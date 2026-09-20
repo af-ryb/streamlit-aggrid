@@ -5,6 +5,7 @@ from a number typed here. Rows are addressed by `row-index`, never by document
 order (`grid_dom.py` says why).
 """
 
+import json
 import re
 import time
 from pathlib import Path
@@ -405,3 +406,60 @@ def test_a_caller_supplied_main_menu_is_kept(page: Page):
     assert has_option(page, "Caller item")
     assert has_option(page, MENU_ITEM)
     close_menu(page)
+
+
+# ---------------------------------------------------------------------------
+# State out, and back in
+# ---------------------------------------------------------------------------
+
+
+def saved_state(page: Page) -> dict | None:
+    return json.loads(marker(page, "state"))
+
+
+def test_a_choice_is_reported_and_survives_a_remount(page: Page):
+    open_header_menu(page, STATE_GRID, "metric_a")
+    pick(page, MENU_ITEM, "Positive")
+
+    def reported():
+        assert saved_state(page) == {
+            "metric_a": {"scheme": "positive"},
+            "metric_b": {"scheme": "diverging"},
+        }
+
+    eventually(reported)
+    # The rerun that reported it must not have disturbed the picture.
+    assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))
+
+    page.get_by_role("button", name="remount").click()
+    # A fresh grid instance, fed only from what Python saved.
+    assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))
+    assert_column(page, STATE_GRID, "metric_b", "diverging", flat_values("metric_b"))
+
+
+def test_none_on_a_declared_column_is_reported_as_false(page: Page):
+    open_header_menu(page, STATE_GRID, "metric_a")
+    pick(page, MENU_ITEM, "None")
+
+    def reported():
+        assert saved_state(page) == {"metric_a": False, "metric_b": {"scheme": "diverging"}}
+
+    eventually(reported)
+
+
+def test_a_choice_survives_a_config_update(page: Page):
+    open_header_menu(page, STATE_GRID, "metric_a")
+    pick(page, MENU_ITEM, "Positive")
+    assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))
+
+    runs = int(marker(page, "runs"))
+    page.get_by_text("flip option").click()
+    eventually(lambda: _assert_greater(int(marker(page, "runs")), runs))
+    # `updateGridOptions` installed fresh colDefs and a fresh `context`; the
+    # same map rode along.
+    assert_column(page, STATE_GRID, "metric_a", "positive", flat_values("metric_a"))
+    assert_column(page, STATE_GRID, "metric_b", "diverging", flat_values("metric_b"))
+
+
+def _assert_greater(actual: int, floor: int) -> None:
+    assert actual > floor
