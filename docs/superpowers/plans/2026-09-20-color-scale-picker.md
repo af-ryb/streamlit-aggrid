@@ -4,7 +4,7 @@
 
 **Goal:** Let a reader choose scheme, mode and direction of one column's colour scale from the grid's own menus, with the choice reported to Python and restorable at mount — and, first, delete the obsolete "settled redraw" from the config-update effect.
 
-**Architecture:** The reader's choice is a third resolution layer — a `Map<sourceColId, Override>` owned by the React component and injected into the grid `context` under a reserved key, so it survives `updateGridOptions` and is visible to `cellStyle` before first paint. Menus come from two `@initial` AG-Grid hooks (`getColumnMenuItems` for the ⋮ menu, the Columns tool panel and the Column Chooser; `getContextMenuItems` for cells) that wrap whatever the caller supplied. State leaves through a fork-owned collect method and a synthetic `update_on` event that calls the collector directly; it returns through a mount-only `color_scale_state` prop.
+**Architecture:** The reader's choice is a third resolution layer — a `Map<sourceColId, Override>` owned by the React component and injected into the grid `context` under a reserved key, so it survives `updateGridOptions` and is visible to `cellStyle` before first paint. Menus come from two AG-Grid hooks (`getColumnMenuItems` for the ⋮ menu, the Columns tool panel and the Column Chooser; `getContextMenuItems` for cells) that wrap whatever the caller supplied. State leaves through a fork-owned collect method and a synthetic `update_on` event that calls the collector directly; it returns through a mount-only `color_scale_state` prop.
 
 **Tech Stack:** React 18 + TypeScript (Vite lib build), AG-Grid 36.1.0 Enterprise, Streamlit Custom Components v2, Python 3 + pytest + Playwright, Node 22 (type-stripping) for the pure checks.
 
@@ -2333,9 +2333,11 @@ default. The grid repaints at once, without a rerun.
   mounts** — change `key` to apply a different one. A malformed value raises;
   a stale one (a column that is gone, a choice that no longer resolves) is
   ignored and never blanks a declared column.
-* **Set `interactive` when the grid is created.** AG-Grid reads the menu hooks
-  at creation only: switching it off later removes the item at once, switching
-  it on for a grid created without it needs a remount before the menu appears.
+* **Set `interactive` when the grid is created.** AG-Grid reads the column-menu
+  hook at creation only. Switching `interactive` off later removes the item
+  everywhere at once; switching it on for a grid created without it adds the
+  item to the cell menu at once, but the column menu and the Columns panel need
+  a remount (a changed `key`).
 * The menus are enterprise modules. On a community grid the saved state is
   still honoured; there is just no picker.
 * A caller-supplied `getColumnMenuItems`, `getMainMenuItems` or
@@ -2354,6 +2356,23 @@ colour scale".
 ```
 
 Add `color_scale_state` to the `AgGrid()` parameter table and `color_scale_state` to the `AgGridResult` table, in the wording of their docstrings. Update the version references the README carries for the package (search `2.4.3`).
+
+- [ ] **Step 1b: Correct the `@initial` claim in `colorScales/menu.ts`**
+
+`registerColorScaleMenu`'s doc comment says both hooks are `@initial`. Only `getColumnMenuItems` is (`gridOptions.d.ts:1932-1939`); `getContextMenuItems` (`:1921-1925`) is re-applied by `updateGridOptions`. Replace the comment's first paragraph with:
+
+```ts
+ * Install the picker on the grid's menus. Called only for parsed options that
+ * are interactive, so a grid that never opts in gets no wrapper around its
+ * menus at all. `getColumnMenuItems` is an `@initial` grid option — AG-Grid
+ * reads it at creation only — while `getContextMenuItems` is re-applied by
+ * `updateGridOptions`. Hence the asymmetry when `interactive` is switched on
+ * for a live grid: the cell menu gains the item at once, the column menu and
+ * the Columns panel only after a remount. Switching it off needs neither:
+ * every open re-checks the live flag (`isEligible`).
+```
+
+Apply the same correction to `isEligible`'s doc comment where it calls the hooks `@initial`: say "whose column-menu hook — `@initial` in AG-Grid — can no longer be removed". No runtime change.
 
 - [ ] **Step 2: CLAUDE.md**
 
@@ -2378,8 +2397,9 @@ Append to the "Five built-in colour schemes" bullet under Key Design Decisions:
   the fork-owned collect method `stGetColorScaleState` and the synthetic
   `update_on` event `stColorScaleChanged` (no listener — the menu calls
   `collectNow`), and returns through the mount-only `color_scale_state` prop.
-  Both menu hooks are `@initial`, so they are installed only on a grid created
-  interactive.
+  `getColumnMenuItems` is `@initial` (`getContextMenuItems` is not), so a grid
+  switched to interactive after creation gets the cell-menu item at once and
+  the column-menu/Columns-panel item only after a remount.
 ```
 
 In "Conventions", extend the pure-module sentence: "The three pure colour-scale modules (`normalize.ts`, `schemes.ts`, `overrides.ts`) import nothing …".

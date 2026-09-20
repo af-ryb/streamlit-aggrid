@@ -183,15 +183,23 @@ The menu needs the enterprise bundle (`ColumnMenuModule`,
 `ContextMenuModule`). On a community grid the opt-in still fills the slots and
 still honours `color_scale_state`, but adds no menu; logged under `debug`.
 
-**Toggling `interactive` on a live grid.** `getColumnMenuItems` and
-`getContextMenuItems` are `@initial` grid options
-(`gridOptions.d.ts:1925-1939`): AG-Grid reads them at creation only. The hooks
-are therefore installed only when the grid is *created* interactive — a grid
-that never opts in never gets a wrapper around its menus — and they re-check
-the live flag on every open, so switching `interactive` **off** by a config
-update removes the item at once. Switching it **on** for a grid created
-without it fills the slots and honours `color_scale_state`, but the menu
-appears only after a remount (a changed `key`). The README states this.
+**Toggling `interactive` on a live grid.** `getColumnMenuItems` is an
+`@initial` grid option (`gridOptions.d.ts:1932-1939`): AG-Grid reads it at
+creation only. `getContextMenuItems` (`:1921-1925`) is not, and is re-applied
+by `updateGridOptions`. The hooks are therefore installed only when the parsed
+options are interactive — a grid that never opts in never gets a wrapper around
+its menus — and they re-check the live flag on every open, so switching
+`interactive` **off** by a config update removes the item from every surface
+at once. Switching it **on** for a grid created without it fills the slots,
+honours `color_scale_state` and adds the item to the **cell** menu at once;
+the column menu and the Columns panel gain it only after a remount (a changed
+`key`). The README states this.
+
+*Corrected 2026-09-20 during implementation: this section first claimed both
+hooks were `@initial`. Task 6's reviewer checked the typings — only the column
+hook is. The behaviour was kept and the asymmetry documented rather than
+engineered away: making the cell menu wait for a remount too would mean
+withholding a working hook for the sake of symmetry.*
 
 ### The override layer
 
@@ -447,8 +455,9 @@ What the consumer spec may rely on, and nothing more:
   (`web_app/src/bi_core/charts/grid_state.py:62-86`): that overlay is owned by
   the page's controls and recomputed every rerun; this one is owned by the
   reader and changes rarely.
-* Turning `interactive` on for a grid that was created without it needs a
-  remount before the menu appears; turning it off does not.
+* Turning `interactive` on for a grid that was created without it adds the
+  item to the cell menu at once, but the column menu and the Columns panel need
+  a remount; turning it off takes effect everywhere at once.
 * `show_color_scale` stays the block-level switch. Off means no declarations,
   no `interactive`, no `color_scale_state` passed; the saved choice stays in
   `settings` and returns when the switch does.
