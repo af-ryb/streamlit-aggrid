@@ -81,6 +81,15 @@ class AgGridResult:
         return None
 
     @property
+    def color_scale_state(self) -> Optional[Dict]:
+        """The reader's per-column colour-scale choices, or ``None`` until a
+        collect that included ``"stGetColorScaleState"`` has run. Feed it back
+        as ``AgGrid(color_scale_state=...)``."""
+        if self._grid_state:
+            return self._grid_state.get("colorScaleState")
+        return None
+
+    @property
     def displayed_row_count(self) -> Optional[int]:
         """Number of displayed rows (if collected)."""
         if self._grid_state:

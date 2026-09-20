@@ -177,13 +177,14 @@ class GridOptionsBuilder:
         anchor: Optional[float] = None,
         span: Optional[float] = None,
         color: Optional[str] = None,
+        interactive: Optional[bool] = None,
     ):
         """Grid-level defaults for the built-in colour scales.
 
-        This activates nothing on its own — a column is painted only when it
-        carries its own `color_scale=` opt-in. What it does is let that opt-in
-        be a bare `True` instead of repeating the scheme on every one of a
-        dashboard's metric columns.
+        Apart from `interactive`, this activates nothing on its own — a column
+        is painted only when it carries its own `color_scale=` opt-in. What it
+        does is let that opt-in be a bare `True` instead of repeating the
+        scheme on every one of a dashboard's metric columns.
 
         Args:
             scheme (str, optional): "neutral", "positive", "diverging",
@@ -204,6 +205,11 @@ class GridOptionsBuilder:
                 full intensity; must be greater than zero.
             color (str, optional): `scheme="fill"`'s colour, any CSS colour
                 string, e.g. "var(--secondary-background-color)".
+            interactive (bool, optional): let the reader choose scheme, mode
+                and direction per column from the grid's menus (⋮, cell
+                right-click, Columns panel). Needs the enterprise bundle for
+                the menus. Must be set when the grid is created: switching it
+                on later needs a remount (a changed `key`).
         """
         declaration = {}
         # An unset key is omitted rather than written as None: the scheme's own
@@ -217,6 +223,7 @@ class GridOptionsBuilder:
             ("anchor", anchor),
             ("span", span),
             ("color", color),
+            ("interactive", interactive),
         ):
             if value is not None:
                 declaration[key] = value

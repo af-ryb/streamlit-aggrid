@@ -11,7 +11,11 @@ and the README's Auto-Collect section for the user-facing version.
 
 import pytest
 
-from st_aggrid.aggrid import LIFECYCLE_UPDATE_ON_EVENTS, validate_update_on
+from st_aggrid.aggrid import (
+    LIFECYCLE_UPDATE_ON_EVENTS,
+    SYNTHETIC_UPDATE_ON_EVENTS,
+    validate_update_on,
+)
 
 
 def test_ordinary_events_pass():
@@ -73,3 +77,16 @@ def test_unknown_names_are_not_rejected():
     this package has no truthful copy of it, so a name that is merely
     misspelled still fails silently — a known, separate gap."""
     validate_update_on(["thisIsNotAnAgGridEvent", ("alsoNotAnEvent", 200)])
+
+
+def test_the_synthetic_colour_scale_event_passes_as_a_bare_name():
+    validate_update_on(["sortChanged", "stColorScaleChanged"])
+
+
+def test_the_synthetic_colour_scale_event_cannot_be_debounced():
+    with pytest.raises(ValueError, match="raised by the component itself"):
+        validate_update_on([("stColorScaleChanged", 300)])
+
+
+def test_synthetic_events_are_the_literals_the_frontend_uses():
+    assert SYNTHETIC_UPDATE_ON_EVENTS == frozenset({"stColorScaleChanged"})

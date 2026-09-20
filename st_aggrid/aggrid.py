@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from st_aggrid.aggrid_utils import _parse_data_and_grid_options
-from st_aggrid.color_scale import validate_color_scale_columns
+from st_aggrid.color_scale import validate_color_scale_columns, validate_color_scale_state
 from st_aggrid.component import get_aggrid_component
 from st_aggrid.ratio import validate_ratio_columns
 from st_aggrid.result import AgGridResult
@@ -29,6 +29,11 @@ LIFECYCLE_UPDATE_ON_EVENTS: frozenset = frozenset(
     {"gridReady", "firstDataRendered"}
 )
 
+#: Events the component raises itself rather than AG-Grid. They never reach
+#: ``addEventListener``; the frontend calls the collector directly. Mirrors
+#: ``SYNTHETIC_EVENTS`` in ``frontend/src/hooks/useAutoCollect.ts``.
+SYNTHETIC_UPDATE_ON_EVENTS: frozenset = frozenset({"stColorScaleChanged"})
+
 
 def validate_update_on(update_on: Optional[List]) -> None:
     """Reject a debounce on an event that fires at most once.
@@ -38,7 +43,8 @@ def validate_update_on(update_on: Optional[List]) -> None:
     ``(name, debounce_ms)`` on either is a request the component cannot honour
     — and dropping it silently is the failure class this guard exists to
     prevent. Every offender is reported in one raise, so a caller who debounced
-    both fixes them in one pass.
+    both fixes them in one pass. The same goes for the component's own
+    synthetic events (:data:`SYNTHETIC_UPDATE_ON_EVENTS`).
 
     Args:
         update_on: The list as the caller passed it; ``None`` (meaning "use the
@@ -46,7 +52,8 @@ def validate_update_on(update_on: Optional[List]) -> None:
 
     Raises:
         ValueError: if any entry debounces an event in
-            :data:`LIFECYCLE_UPDATE_ON_EVENTS`.
+            :data:`LIFECYCLE_UPDATE_ON_EVENTS` or
+            :data:`SYNTHETIC_UPDATE_ON_EVENTS`.
     """
     if not update_on:
         return
@@ -58,16 +65,29 @@ def validate_update_on(update_on: Optional[List]) -> None:
         and entry
         and entry[0] in LIFECYCLE_UPDATE_ON_EVENTS
     ]
-    if not offenders:
-        return
+    if offenders:
+        raise ValueError(
+            f"update_on={offenders!r} cannot be debounced: these AG-Grid events are "
+            "emitted at most once per grid creation, so there is no burst of "
+            "firings for a debounce to coalesce. Pass the bare event name instead "
+            f"(e.g. {offenders[0]!r}), which collects exactly once as soon as the "
+            "grid is ready."
+        )
 
-    raise ValueError(
-        f"update_on={offenders!r} cannot be debounced: these AG-Grid events are "
-        "emitted at most once per grid creation, so there is no burst of "
-        "firings for a debounce to coalesce. Pass the bare event name instead "
-        f"(e.g. {offenders[0]!r}), which collects exactly once as soon as the "
-        "grid is ready."
-    )
+    synthetic = [
+        entry[0]
+        for entry in update_on
+        if isinstance(entry, (tuple, list))
+        and entry
+        and entry[0] in SYNTHETIC_UPDATE_ON_EVENTS
+    ]
+    if synthetic:
+        raise ValueError(
+            f"update_on={synthetic!r} cannot be debounced: these events are "
+            "raised by the component itself, once per reader action, not by "
+            "AG-Grid, so there is no burst of firings for a debounce to "
+            f"coalesce. Pass the bare event name instead (e.g. {synthetic[0]!r})."
+        )
 
 
 def _callback_wants_result(callback: Callable) -> bool:
@@ -162,6 +182,7 @@ def AgGrid(
     columns_state: Optional[Dict] = None,
     columns_state_mode: Literal["replace", "merge"] = "replace",
     initial_state: Optional[Dict] = None,
+    color_scale_state: Optional[Dict] = None,
     theme: Union[str, StAggridTheme, None] = "streamlit",
     custom_css: Optional[Dict] = None,
     key: Optional[str] = None,
@@ -210,6 +231,8 @@ def AgGrid(
         collect exactly once per grid creation; they cannot be debounced, and
         the tuple form raises ValueError for them. See
         LIFECYCLE_UPDATE_ON_EVENTS and the README's Auto-Collect section.
+        ``"stColorScaleChanged"`` is raised by the component when the reader
+        picks a colour scale from a menu; it cannot be debounced.
 
     allow_unsafe_jscode : bool, optional
         Allow JsCode injection in grid_options. Default: False.
@@ -242,6 +265,14 @@ def AgGrid(
         saved view. AG-Grid reads it only at creation, so switching views must
         remount the grid (change ``key``). Takes precedence over ``columns_state``
         for the pre-paint initial state.
+
+    color_scale_state : dict, optional
+        The reader's saved per-column colour-scale choices, as returned by
+        ``AgGridResult.color_scale_state``: ``{col_id: False | {"scheme",
+        "mode", "reverse"}}``. Read **once, at mount** — change ``key`` to
+        apply a different one. Ignored unless the grid is interactive
+        (``configure_color_scale(interactive=True)``). Entries for columns the
+        grid does not have are kept, not rejected.
 
     theme : str | StAggridTheme, optional
         Grid theme. Options: "streamlit", "alpine", "balham", "material",
@@ -421,6 +452,7 @@ def AgGrid(
     # the ratio check above this one needs no column set and runs for every
     # grid — including one built entirely from `grid_options["rowData"]`.
     validate_color_scale_columns(grid_options)
+    validate_color_scale_state(color_scale_state)
 
     custom_css = custom_css or {}
 
@@ -488,6 +520,7 @@ def AgGrid(
         "columns_state": columns_state,
         "columns_state_mode": columns_state_mode,
         "initial_state": initial_state,
+        "color_scale_state": color_scale_state,
         "theme": theme_obj,
         "custom_css": custom_css,
         "show_toolbar": show_toolbar,
