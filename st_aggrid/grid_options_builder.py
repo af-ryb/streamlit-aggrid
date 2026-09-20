@@ -208,8 +208,9 @@ class GridOptionsBuilder:
             interactive (bool, optional): let the reader choose scheme, mode
                 and direction per column from the grid's menus (⋮, cell
                 right-click, Columns panel). Needs the enterprise bundle for
-                the menus. Must be set when the grid is created: switching it
-                on later needs a remount (a changed `key`).
+                the menus. Can be switched on or off on a live grid: it takes
+                effect on the next config update, in both directions, with no
+                remount.
         """
         declaration = {}
         # An unset key is omitted rather than written as None: the scheme's own

@@ -142,9 +142,10 @@ Python build: **hatchling** (via `uv build`).
   the fork-owned collect method `stGetColorScaleState` and the synthetic
   `update_on` event `stColorScaleChanged` (no listener — the menu calls
   `collectNow`), and returns through the mount-only `color_scale_state` prop.
-  `getColumnMenuItems` is `@initial` (`getContextMenuItems` is not), so a grid
-  switched to interactive after creation gets the cell-menu item at once and
-  the column-menu/Columns-panel item only after a remount.
+  `interactive` can be switched on a live grid, in both directions, with no
+  remount: `@initial` on `getColumnMenuItems` is typings-only (the key is not
+  in the runtime's `INITIAL_GRID_OPTION_KEYS`), so `updateGridOptions` installs
+  the hook and the resolver reads it on every open.
 
 ## Packaging & asset delivery
 

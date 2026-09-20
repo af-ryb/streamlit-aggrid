@@ -183,23 +183,29 @@ The menu needs the enterprise bundle (`ColumnMenuModule`,
 `ContextMenuModule`). On a community grid the opt-in still fills the slots and
 still honours `color_scale_state`, but adds no menu; logged under `debug`.
 
-**Toggling `interactive` on a live grid.** `getColumnMenuItems` is an
-`@initial` grid option (`gridOptions.d.ts:1932-1939`): AG-Grid reads it at
-creation only. `getContextMenuItems` (`:1921-1925`) is not, and is re-applied
-by `updateGridOptions`. The hooks are therefore installed only when the parsed
-options are interactive — a grid that never opts in never gets a wrapper around
-its menus — and they re-check the live flag on every open, so switching
-`interactive` **off** by a config update removes the item from every surface
-at once. Switching it **on** for a grid created without it fills the slots,
-honours `color_scale_state` and adds the item to the **cell** menu at once;
-the column menu and the Columns panel gain it only after a remount (a changed
-`key`). The README states this.
+**Toggling `interactive` on a live grid.** It takes effect on the next config
+update, in both directions, with no remount. The hooks are installed only when
+the parsed options are interactive — a grid that never opts in never gets a
+wrapper around its menus — so switching `interactive` **on** installs them
+through `updateGridOptions`, fills the slots, honours `color_scale_state` and
+adds the item to the column menu, the cell menu and the Columns panel at once.
+Switching it **off** cannot take a wrapper away again (`updateGridOptions`
+writes the keys it is handed and never clears one it is not), which is why both
+hooks re-check the live flag on every open: the item then disappears from every
+surface at once. The README states this.
 
-*Corrected 2026-09-20 during implementation: this section first claimed both
-hooks were `@initial`. Task 6's reviewer checked the typings — only the column
-hook is. The behaviour was kept and the asymmetry documented rather than
-engineered away: making the cell menu wait for a remount too would mean
-withholding a working hook for the sake of symmetry.*
+*Corrected 2026-09-20 during implementation, twice. This section first claimed
+both hooks were `@initial` (`gridOptions.d.ts:1921-1939`) and so creation-only.
+Task 6's reviewer checked the typings and narrowed the claim to the column
+hook, and the resulting asymmetry was documented rather than engineered away.
+The final review measured the shipped runtime instead of the typings: `@initial`
+on these keys is typings-only — `getColumnMenuItems` is absent from
+`INITIAL_GRID_OPTION_KEYS` (`ag-grid-community/dist/package/main.cjs.js`),
+`updateGridOptions` writes every key it is given, and `_resolveColumnMenuItems`
+(`ag-grid-enterprise/dist/package/main.cjs.js`) reads the callback through
+`gos.getCallback` on every open. There is no asymmetry, and the e2e test
+`test_interactive_takes_effect_on_a_live_grid_in_both_directions` now pins the
+behaviour.*
 
 ### The override layer
 
@@ -319,14 +325,22 @@ and the Column Chooser; `getContextMenuItems` serves the cell. Each wraps what
 the caller supplied and appends — a built-in is a default, not a reservation:
 
 * `getColumnMenuItems`: call the caller's `getColumnMenuItems` if there is
-  one; else, for `source === "columnMenu"`, the caller's `getMainMenuItems`
-  if there is one (ours would otherwise shadow it, finding 8); else
-  `params.defaultItems`. Then append.
+  one; else, for `source === "columnMenu"`, this column's own
+  `mainMenuItems` if it has one (returned as is — see the third bullet), then
+  the caller's `getMainMenuItems` if there is one (ours would otherwise shadow
+  both, finding 8); else `params.defaultItems`. Then append.
 * `getContextMenuItems`: the caller's may return a `Promise`
   (`gridOptions.d.ts:2728`); append inside `.then` when it does.
-* A colDef-level `mainMenuItems`/`contextMenuItems` (`colDef.d.ts:553,565`)
-  overrides the grid-level callback for that column. It is left alone and the
-  README says so.
+* A hook that returns nothing means "show the defaults" to AG-Grid, so
+  `params.defaultItems` — not an empty list — is the fallback in both wrappers,
+  and no leading separator is emitted when the base list is empty.
+* A per-column menu replaces its column's menu outright, picker included, and
+  the README says so. AG-Grid gives this for free for `colDef.columnMenuItems`
+  (36.1) and `colDef.contextMenuItems`, both resolved *before* the grid-level
+  hook the picker installs. `colDef.mainMenuItems` (`colDef.d.ts:553`) is
+  resolved *after* it, so a wrapper that always installs `getColumnMenuItems`
+  swallows it; the wrapper reproduces that step of
+  `_resolveColumnMenuItems` itself and returns the colDef's menu unappended.
 
 **Eligibility.** With `source = colDef.pivotValueColumn ?? params.column`, the
 item is appended iff all of:
@@ -455,9 +469,9 @@ What the consumer spec may rely on, and nothing more:
   (`web_app/src/bi_core/charts/grid_state.py:62-86`): that overlay is owned by
   the page's controls and recomputed every rerun; this one is owned by the
   reader and changes rarely.
-* Turning `interactive` on for a grid that was created without it adds the
-  item to the cell menu at once, but the column menu and the Columns panel need
-  a remount; turning it off takes effect everywhere at once.
+* Turning `interactive` on or off for a live grid takes effect on the next
+  config update, on all three surfaces at once. No remount is needed either
+  way.
 * `show_color_scale` stays the block-level switch. Off means no declarations,
   no `interactive`, no `color_scale_state` passed; the saved choice stays in
   `settings` and returns when the switch does.

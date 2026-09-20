@@ -608,17 +608,21 @@ default. The grid repaints at once, without a rerun.
   mounts** — change `key` to apply a different one. A malformed value raises;
   a stale one (a column that is gone, a choice that no longer resolves) is
   ignored and never blanks a declared column.
-* **Set `interactive` when the grid is created.** AG-Grid reads the column-menu
-  hook at creation only. Switching `interactive` off later removes the item
-  everywhere at once; switching it on for a grid created without it adds the
-  item to the cell menu at once, but the column menu and the Columns panel need
-  a remount (a changed `key`).
+* **`interactive` can be switched on a live grid.** It takes effect on the next
+  config update, in both directions, with no remount: turn it on and the item
+  appears in the column menu, the cell menu and the Columns panel at once; turn
+  it off and it is gone from all three, along with the reader's layer. Measured
+  on AG-Grid 36.1.0 and pinned by
+  `test_interactive_takes_effect_on_a_live_grid_in_both_directions` in
+  `test/test_grid_color_scale_picker.py`.
 * The menus are enterprise modules. On a community grid the saved state is
   still honoured; there is just no picker.
 * A caller-supplied `getColumnMenuItems`, `getMainMenuItems` or
-  `getContextMenuItems` is kept and the item appended. A colDef-level
-  `mainMenuItems`/`contextMenuItems` replaces the menu for its column, picker
-  included.
+  `getContextMenuItems` is kept and the item appended. A per-column menu
+  replaces its column's menu outright, picker included — that holds for
+  `colDef.columnMenuItems` (AG-Grid 36.1), which AG-Grid resolves ahead of the
+  picker's own hook, for `colDef.mainMenuItems`, and for
+  `colDef.contextMenuItems`.
 
 ### Export and clipboard
 
