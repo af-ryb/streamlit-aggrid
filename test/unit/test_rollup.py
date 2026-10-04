@@ -189,6 +189,73 @@ def test_without_row_data_the_leaf_checks_are_skipped():
     assert run(rollup(data=data), dtypes=None)[1] is not None
 
 
+def test_numeric_dtype_mismatch_int64_to_float64_is_accepted():
+    """Rolled-up rows convert int64 to float64 (NaN for missing), same key in AG-Grid."""
+    # Create numeric CUBE: two dimensions (count is int64 in leaves, float64 in totals with NaN)
+    data = pd.DataFrame(
+        {
+            "count": [1.0, 2.0, 1.0, 2.0, None, None],  # float64 (NaN for rolled-up)
+            "type": ["a", "a", "b", "b", "a", "b"],  # string stays string
+            "value": [10, 20, 30, 40, 50, 60],
+            "_grouping_count": [0, 0, 0, 0, 1, 1],
+            "_grouping_type": [0, 0, 0, 0, 0, 0],
+        }
+    )
+    rows = pd.DataFrame({"count": [1, 2, 1, 2], "type": ["a", "a", "b", "b"], "value": [10, 20, 30, 40]})
+    rows["count"] = rows["count"].astype("int64")
+    options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
+    assert run(rollup(data=data, dimensions=["count", "type"]), options, dtypes=rows.dtypes)[1] is not None
+
+
+def test_numeric_dtype_mismatch_int64_to_nullable_int64_is_accepted():
+    """Both render to the same key despite different dtypes."""
+    data = pd.DataFrame(
+        {
+            "count": pd.array([1, 2, 1, 2, None, None], dtype="Int64"),  # nullable int
+            "type": ["a", "a", "b", "b", "a", "b"],
+            "value": [10, 20, 30, 40, 50, 60],
+            "_grouping_count": [0, 0, 0, 0, 1, 1],
+            "_grouping_type": [0, 0, 0, 0, 0, 0],
+        }
+    )
+    rows = pd.DataFrame({"count": [1, 2, 1, 2], "type": ["a", "a", "b", "b"], "value": [10, 20, 30, 40]})
+    rows["count"] = rows["count"].astype("int64")
+    options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
+    assert run(rollup(data=data, dimensions=["count", "type"]), options, dtypes=rows.dtypes)[1] is not None
+
+
+def test_numeric_dtype_mismatch_int64_to_string_is_rejected():
+    """Non-numeric mismatch still raises."""
+    data = pd.DataFrame(
+        {
+            "count": ["1", "2", "3", "1", "2", "3"],  # string, not numeric
+            "value": [10, 20, 30, 40, 50, 60],
+            "_grouping_count": [0, 0, 0, 1, 1, 1],
+        }
+    )
+    rows = pd.DataFrame({"count": [1, 2, 3], "value": [10, 20, 30]})
+    rows["count"] = rows["count"].astype("int64")
+    options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
+    with pytest.raises(ValueError, match="dtype"):
+        run(rollup(data=data, dimensions=["count"]), options, dtypes=rows.dtypes)
+
+
+def test_bool_dtype_mismatch_bool_to_int64_is_rejected():
+    """Bool is not a compatible numeric type."""
+    data = pd.DataFrame(
+        {
+            "flag": [True, False, True, None, None, None],
+            "value": [1, 2, 3, 4, 5, 6],
+            "_grouping_flag": [0, 0, 0, 1, 1, 1],
+        }
+    )
+    rows = pd.DataFrame({"flag": [True, False], "value": [1, 2]})
+    rows["flag"] = rows["flag"].astype("int64")
+    options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
+    with pytest.raises(ValueError, match="dtype"):
+        run(rollup(data=data, dimensions=["flag"]), options, dtypes=rows.dtypes)
+
+
 # --- rule 6: unique keys after normalisation -------------------------------
 
 

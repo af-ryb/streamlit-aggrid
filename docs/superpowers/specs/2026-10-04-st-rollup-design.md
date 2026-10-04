@@ -174,7 +174,9 @@ with `_coldefs.iter_column_defs` and names columns with `column_label`, like
    the totals table.
 5. A dimension whose dtype differs between the leaves and the totals table.
    Different dtypes serialise differently, the keys never meet, and every
-   lookup misses — silently, were it not for this check.
+   lookup misses — silently, were it not for this check. Numeric dtypes
+   (int/float, nullable or not, not bool) are treated as compatible since
+   they render to the same AG-Grid key.
 6. Two totals rows with the same key after normalisation (present dimensions
    only, with `None`/NaN/`""` collapsed to `""` exactly as the grid does).
    This catches the NULL-vs-empty-string collision and any duplicated

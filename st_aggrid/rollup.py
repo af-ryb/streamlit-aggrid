@@ -132,6 +132,16 @@ def _prepared_totals(data: Any) -> pd.DataFrame:
     return converted
 
 
+def _same_serialisation(a, b) -> bool:
+    """Numeric dtypes (int/float, nullable or not, not bool) render to the same AG-Grid key."""
+    from pandas.api.types import is_numeric_dtype, is_bool_dtype
+    return (
+        (is_numeric_dtype(a) and not is_bool_dtype(a) and
+         is_numeric_dtype(b) and not is_bool_dtype(b))
+        or a == b
+    )
+
+
 def _key_part(value: Any) -> str:
     """A present dimension's value as AG-Grid keys its group: NULL and `""`
     both group under `""`, a string stays as is, anything else is `str()`'d.
@@ -241,7 +251,7 @@ def prepare_rollup(
 
     if data_dtypes is not None:
         for dimension in dimensions:
-            if data_dtypes[dimension] != totals[dimension].dtype:
+            if not _same_serialisation(data_dtypes[dimension], totals[dimension].dtype):
                 raise ValueError(
                     f"rollup dimension {dimension!r} has dtype "
                     f"{totals[dimension].dtype} in rollup['data'] but "
