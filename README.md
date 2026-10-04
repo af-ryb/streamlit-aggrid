@@ -725,6 +725,7 @@ AgGrid(
 | `license_key` | str | None | AG-Grid license key |
 | `columns_state` | dict | None | Initial column state |
 | `color_scale_state` | dict | None | Reader's saved per-column colour-scale choices, as returned by `AgGridResult.color_scale_state`. Read once, at mount. Ignored unless the grid is interactive |
+| `rollup` | dict | None | Server-computed group totals for `aggFunc="stRollup"`: `{"data": cube_df, "dimensions": [...], "flags": {...}}`. See "Server-computed totals" |
 | `theme` | str/StAggridTheme | "streamlit" | Grid theme |
 | `custom_css` | dict | None | Custom CSS rules |
 | `key` | str | None | Streamlit widget key |
