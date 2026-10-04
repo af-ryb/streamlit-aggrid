@@ -113,8 +113,11 @@ AgGrid(
 ```
 
 - `data`: a pandas (or polars, converted the way `data` is) DataFrame holding
-  one row per grouping set. Columns: every dimension, every flag, and the
-  metric columns `stRollup` columns read.
+  **the whole `CUBE` answer** — one row per grouping set and value
+  combination, *including the full-grain set* (all flags 0). The deepest group
+  of a grouping over every dimension is keyed by all of them, so without the
+  full-grain rows its lookup would miss. Columns: every dimension, every flag,
+  and the metric columns `stRollup` columns read.
 - `dimensions`: the fields the totals are keyed by. Names are row-data
   fields — the same names the grid groups by.
 - `flags`: dimension → flag column. Default for a dimension not listed:
@@ -226,15 +229,20 @@ for a guard. The frontend key, not this check, is authoritative.
 
 - `ST_ROLLUP = "stRollup"`; `ST_ROLLUP_INDEX` — the `context` key the index
   lives under (`"stRollup"`).
-- `buildRollupIndex(rows, meta, columnDefs)` →
-  `{ map: Map<string, row>, dimensions: Set<string>, sampleKeys: string[], warned: boolean }`.
+- `buildRollupIndex(rows, meta, columnDefs, context)` →
+  `{ map: Map<string, row>, dimensions: Set<string>, sampleKeys: string[] }`.
+- The index reaches the aggregator through one mutable holder per mount,
+  `{ index, debug, warned, notedPivot }`, injected into `context` — the same
+  pattern as the colour-scale override `Map`, so swapping the table never
+  needs `setGridOption("context")`.
   For each row: the present dimensions (flag 0) are converted with
   `toGroupKey`, passing the `keyCreator` of the colDef whose `field` is that
   dimension (called with `{value, colDef, data: row, context}`; a
   `keyCreator` that needs a node is not supported and is documented as such).
 - `stRollupAggFunc(params)`:
   1. `params.api.isPivotMode()` → `null` (one `debug` log per grid).
-  2. Index absent from `params.context` → `null` (one `debug` log).
+  2. No holder or no index in `params.context` (the grid got no `rollup`) →
+     `null`, silently: there is no holder to carry a `debug` flag.
   3. Filter rule: when `!groupAggFiltering && !suppressAggFilteredOnly`,
      count the node's leaves reachable through `childrenAfterFilter`; fewer
      than `allLeafChildren.length` → `null`. Cost is the subtree size per
@@ -244,7 +252,8 @@ for a guard. The frontend key, not this check, is authoritative.
   5. Miss → `null`. When every field of the node's key is in
      `index.dimensions`, `CUBE` guarantees the entry exists, so the miss is a
      desync (serialisation, a stale table, flags lost upstream):
-     `console.warn` once per index with the node's key and up to three
+     `console.warn` once per totals table (the holder's `warned`, reset when
+     the table's content changes) with the node's key and up to three
      `sampleKeys`. A miss with a field outside `dimensions` (the user grouped
      by a column the server did not roll up) is silent.
 - `registerStRollup(gridOptions, debug)` → `registerAggFunc` (`foldSums.ts:146`),
@@ -263,14 +272,15 @@ for a guard. The frontend key, not this check, is authoritative.
 
 ### `AgGridComponent.tsx`
 
-- The index is memoised on `data.rollup_data` / `data.rollup_meta` identity
-  and passed to `parseGridOptions` on both the mount path and the
-  `updateGridOptions` path.
-- When the index changes and the row data did not, call
-  `api.refreshClientSideRowModel("aggregate")` after the options update:
-  AG-Grid does not re-aggregate on a `context` change. When the row data
-  changed too, the new `rowData` already re-aggregates and no extra refresh
-  is issued.
+- The parsed totals rows are kept stable by content (a rerun re-sends an
+  equal payload as a new object), the index is memoised on them, the meta and
+  the parsed `columnDefs`, and the holder is passed to `parseGridOptions` on
+  both the mount path and the `updateGridOptions` path.
+- When the totals' **content** changes (rows or meta, by deep equality), call
+  `api.refreshClientSideRowModel("aggregate")` and reset `warned`: AG-Grid
+  does not re-aggregate on a `context` change. Issued whether or not the row
+  data changed too — with `getRowId`, identical row data produces no
+  transaction and so no re-aggregation, and a redundant refresh is cheap.
 
 ### `types/AgGridTypes.ts`
 
@@ -286,8 +296,9 @@ What `hitapps_analytics` relies on, and nothing more:
 - `aggFunc="stRollup"` on every distinct-count column and every ratio column
   whose total-row value comes from the server; `allowedAggFuncs` locked as
   today.
-- Leaves in `data`, grouping-set rows in `rollup["data"]`, split by the flags
-  (`_grouping_<column>`, the default naming). Dimension dtypes identical in
+- Leaves in `data` = the `CUBE` rows whose flags are all 0; `rollup["data"]`
+  = the whole `CUBE` answer, those rows included. Flags named
+  `_grouping_<column>` (the default naming). Dimension dtypes identical in
   both frames — taking both from one query result keeps them so.
 - `pivotMode=False`, ordinary row grouping.
 - A group with no exact total shows empty; a grid filter that removed a leaf
