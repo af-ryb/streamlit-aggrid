@@ -3,8 +3,15 @@
 ## Project
 
 Streamlit AG-Grid component v2, built on **Custom Components v2** (CCv2, no iframe).
-Fork of [PablocFonseca/streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid).
-Active branch: `v2_component`.
+Originally forked from [PablocFonseca/streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid);
+detached from its fork network and renamed to `af-ryb/st-aggrid` (matching the
+distribution name) on 2026-10-04, so it is a standalone repo and pull requests
+default to it. GitHub redirects the old `af-ryb/streamlit-aggrid` URL — never
+create a new repo under that name, or every old pin breaks. The `upstream`
+remote still points at the original for manual cherry-picks — there is no
+"Sync fork".
+Work happens on feature branches merged into `main` by PR; releases are tags on
+`main` cut by `scripts/release.sh`.
 
 Read-only grid — no cell editing. Focus: display, selection, filtering, sorting, export.
 

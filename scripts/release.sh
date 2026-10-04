@@ -243,7 +243,7 @@ if [ "$PUSH" -eq 1 ]; then
     step "Pushing $TAG to origin"
     git push origin "$TAG"
     ok "pushed"
-    printf '\nPin it with:\n  st-aggrid @ git+https://github.com/af-ryb/streamlit-aggrid@%s\n\n' "$TAG"
+    printf '\nPin it with:\n  st-aggrid @ git+https://github.com/af-ryb/st-aggrid@%s\n\n' "$TAG"
 else
-    printf '\nTag created locally, not pushed. When you are ready:\n\n  git push origin %s\n\nPin it with:\n  st-aggrid @ git+https://github.com/af-ryb/streamlit-aggrid@%s\n\n' "$TAG" "$TAG"
+    printf '\nTag created locally, not pushed. When you are ready:\n\n  git push origin %s\n\nPin it with:\n  st-aggrid @ git+https://github.com/af-ryb/st-aggrid@%s\n\n' "$TAG" "$TAG"
 fi
