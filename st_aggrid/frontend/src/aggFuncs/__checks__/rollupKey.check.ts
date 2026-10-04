@@ -61,6 +61,14 @@ assert.deepEqual(nodeKey(day), { event_date: "2026-10-01" })
 assert.deepEqual(nodeKey(version), { event_date: "2026-10-01", app_version: "1.19.1" })
 assert.deepEqual(nodeKey(nullVersion), { event_date: "2026-10-01", app_version: "" })
 assert.deepEqual(nodeKey(byColId), { computed: "x" }) // no field → colId
+// A dimension named like an Object.prototype member is still a dimension.
+const ctor: KeyNode = {
+  level: 0,
+  key: "x",
+  parent: root,
+  rowGroupColumn: column("constructor", "constructor"),
+}
+assert.deepEqual(nodeKey(ctor), { constructor: "x" })
 assert.equal(
   canonicalKey(nodeKey(version)),
   canonicalKey({ app_version: "1.19.1", event_date: "2026-10-01" })

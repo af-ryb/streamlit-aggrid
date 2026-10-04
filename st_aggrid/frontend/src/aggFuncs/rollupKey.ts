@@ -52,7 +52,7 @@ export function nodeKey(node: KeyNode | null | undefined): Record<string, string
     const column = current.rowGroupColumn
     if (!column) continue
     const field = column.getColDef().field ?? column.getColId()
-    if (!(field in pairs)) pairs[field] = current.key ?? ""
+    if (!Object.prototype.hasOwnProperty.call(pairs, field)) pairs[field] = current.key ?? ""
   }
   return pairs
 }

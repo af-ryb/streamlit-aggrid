@@ -52,29 +52,44 @@ export function buildRollupIndex(
   if (!meta || !Array.isArray(meta.dimensions)) return null
 
   const keyCreators = new Map<string, (params: Record<string, unknown>) => unknown>()
-  eachColDef(columnDefs as any, (def) => {
-    if (def.field && typeof def.keyCreator === "function") {
-      keyCreators.set(def.field, def.keyCreator as any)
-    }
-  })
   const colDefsByField = new Map<string, unknown>()
   eachColDef(columnDefs as any, (def) => {
-    if (def.field) colDefsByField.set(def.field, def)
+    if (!def.field) return
+    colDefsByField.set(def.field, def)
+    if (typeof def.keyCreator === "function") keyCreators.set(def.field, def.keyCreator as any)
   })
 
+  // A creator that reads `params.node`, `params.api` or `params.column` throws
+  // here (a totals row has none of them). That row is skipped — it then misses
+  // — and the first throw per call is named, not swallowed.
+  let warnedCreator = false
+
   const map = new Map<string, Record<string, unknown>>()
-  for (const row of rows) {
+  rows: for (const row of rows) {
     const pairs: Record<string, string> = {}
     for (const dimension of meta.dimensions) {
       if (Number(row[meta.flags[dimension]]) !== 0) continue
       const creator = keyCreators.get(dimension)
-      pairs[dimension] = toGroupKey(
-        row[dimension],
-        creator
-          ? (value) =>
-              creator({ value, colDef: colDefsByField.get(dimension), data: row, context })
-          : null
-      )
+      try {
+        pairs[dimension] = toGroupKey(
+          row[dimension],
+          creator
+            ? (value) =>
+                creator({ value, colDef: colDefsByField.get(dimension), data: row, context })
+            : null
+        )
+      } catch (error) {
+        if (!warnedCreator) {
+          warnedCreator = true
+          console.warn(
+            `[st_aggrid] stRollup: the keyCreator of dimension "${dimension}" threw on a ` +
+              `totals row (${String(error)}). It is called with value, colDef, data and ` +
+              `context only — no node, api or column — so rows it cannot key are skipped ` +
+              `and their groups show no total.`
+          )
+        }
+        continue rows
+      }
     }
     map.set(canonicalKey(pairs), row)
   }
@@ -157,6 +172,7 @@ export function stRollupAggFunc(params: IAggFuncParams): number | null {
   // one, the total no longer describes the visible rows: empty, not wrong.
   const filterNode = params.rowNode as unknown as FilterNode
   if (
+    params.api.isAnyFilterPresent() &&
     aggregatesFilteredOnly(params) &&
     filteredLeafCount(filterNode) < (filterNode.allLeafChildren?.length ?? 0)
   ) {
