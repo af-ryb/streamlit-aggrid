@@ -45,6 +45,37 @@ def _has_dict_cells(df: "pd.DataFrame") -> bool:
     return False
 
 
+def prepare_frame(data):
+    """What a frame goes through before it reaches the browser: polars →
+    pandas, and every ``datetime64`` column → ``isoformat()`` strings.
+
+    A pandas frame is converted **in place** and returned — that is how the
+    row data has always been treated. A caller whose frame must not change
+    (the ``stRollup`` totals) passes a copy. Anything that is not a frame is
+    returned unchanged, so the caller can type-check afterwards.
+
+    The single place this happens: the row data and the totals table must
+    serialise their dimension values identically, or ``stRollup``'s keys
+    never meet the grid's group keys.
+    """
+    # Handle Polars DataFrames without adding dependency
+    if (
+        hasattr(data, "__class__")
+        and data.__class__.__module__
+        and "polars" in data.__class__.__module__
+        and data.__class__.__name__ == "DataFrame"
+    ):
+        data = data.to_pandas(use_pyarrow_extension_array=False)
+
+    if isinstance(data, pd.DataFrame):
+        # Convert date columns to ISO format
+        for c, d in data.dtypes.items():
+            if d.kind == "M":
+                data[c] = data[c].apply(lambda s: s.isoformat())
+
+    return data
+
+
 def _parse_data_and_grid_options(
     data,
     grid_options,
@@ -74,20 +105,7 @@ def _parse_data_and_grid_options(
             except Exception:
                 raise Exception("Error parsing data parameter as raw json.")
 
-        # Handle Polars DataFrames without adding dependency
-        if (
-            hasattr(data, "__class__")
-            and data.__class__.__module__
-            and "polars" in data.__class__.__module__
-            and data.__class__.__name__ == "DataFrame"
-        ):
-            data = data.to_pandas(use_pyarrow_extension_array=False)
-
-        if isinstance(data, pd.DataFrame):
-            # Convert date columns to ISO format
-            for c, d in data.dtypes.items():
-                if d.kind == "M":
-                    data[c] = data[c].apply(lambda s: s.isoformat())
+        data = prepare_frame(data)
 
         # Compute column types before adding ID column
         column_types = data.dtypes
