@@ -798,11 +798,13 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }, [data])
 
-  // A new `stRollup` totals table. The holder already carries the new index
-  // (set during render), but AG-Grid does not re-aggregate on its own: nothing
-  // it watches changed, and with `getRowId` identical row data produces no
-  // transaction either. Keyed on content — the rows and meta are kept stable
-  // by `isEqual` above — so a rerun re-sending the same table does nothing.
+  // A new `stRollup` totals table. AG-Grid re-aggregates only when it sees new
+  // row data. On the Arrow path every rerun sends new row objects, which it
+  // treats as updates; on the JSON path the rows arrive as a string the rowData
+  // memo compares by value, so equal rows produce no update at all — and a new
+  // totals table would never be shown. Keyed on content (the rows and meta are
+  // kept stable by `isEqual` above), so a rerun re-sending the same table does
+  // nothing.
   const prevRollupRef = useRef<{ rows: any[]; meta: RollupMeta | null } | null>(null)
   useEffect(() => {
     const prev = prevRollupRef.current

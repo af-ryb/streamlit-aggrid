@@ -16,7 +16,7 @@ from rollup_fixture import DATES, LEAVES, NULL_TOTAL_KEY, expected
 
 ROOT_DIRECTORY = Path(__file__).parent.parent.absolute()
 APP_FILE = ROOT_DIRECTORY / "test" / "grid_rollup.py"
-GRIDS = ("base", "datetime", "json", "corrupt", "suppress", "pivot", "refresh")
+GRIDS = ("base", "datetime", "json", "corrupt", "suppress", "pivot", "refresh", "refresh_arrow")
 WARNING = "[st_aggrid] stRollup"
 
 _READ_TOTALS = """
@@ -203,18 +203,21 @@ def test_suppress_agg_filtered_only_keeps_every_total(page: Page):
 
 
 def test_a_new_totals_table_with_the_same_rows_is_shown(page: Page):
-    assert read_totals(page, "refresh")["root"] == expected({})
+    names = ("refresh", "refresh_arrow")
+    for name in names:
+        assert read_totals(page, name)["root"] == expected({})
     page.get_by_text("bump totals").click()
-    page.wait_for_function(
-        "(want) => { const api = window.__rollupApis['refresh'];"
-        " let root = null; api.forEachNode((n) => { if (n.level === 0) root = n.parent; });"
-        " return root && root.aggData && root.aggData['dau'] === want; }",
-        arg=expected({}) + 1,
-        timeout=30000,
-    )
-    for group in read_totals(page, "refresh")["groups"]:
-        want = expected(node_dims(group))
-        assert group["value"] == (None if want is None else want + 1)
+    for name in names:
+        page.wait_for_function(
+            "([name, want]) => { const api = window.__rollupApis[name];"
+            " let root = null; api.forEachNode((n) => { if (n.level === 0) root = n.parent; });"
+            " return root && root.aggData && root.aggData['dau'] === want; }",
+            arg=[name, expected({}) + 1],
+            timeout=30000,
+        )
+        for group in read_totals(page, name)["groups"]:
+            want = expected(node_dims(group))
+            assert group["value"] == (None if want is None else want + 1), name
 
 
 def test_a_desynced_total_warns_once_and_stays_empty(page: Page, console: list[str]):

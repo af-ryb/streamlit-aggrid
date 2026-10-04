@@ -281,8 +281,10 @@ for a guard. The frontend key, not this check, is authoritative.
 - When the totals' **content** changes (rows or meta, by deep equality), call
   `api.refreshClientSideRowModel("aggregate")` and reset `warned`: AG-Grid
   does not re-aggregate on a `context` change. Issued whether or not the row
-  data changed too — with `getRowId`, identical row data produces no
-  transaction and so no re-aggregation, and a redundant refresh is cheap.
+  data changed too. On the Arrow path every rerun sends new row objects,
+  which AG-Grid treats as updates; on the JSON path the rows arrive as a string
+  the rowData memo compares by value, so equal rows produce no update and a new
+  totals table would never be shown. A redundant refresh is cheap.
 
 ### `types/AgGridTypes.ts`
 

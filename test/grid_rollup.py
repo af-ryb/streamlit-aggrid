@@ -69,4 +69,7 @@ show("corrupt", leaves_frame(), corrupt(cube_frame()))
 show("suppress", leaves_frame(), cube_frame(), suppressAggFilteredOnly=True)
 show("pivot", leaves_frame(), cube_frame(), pivotMode=True)
 bump = st.toggle("bump totals", key="bump")
-show("refresh", leaves_frame(), cube_frame(bump=1 if bump else 0))
+# The JSON grid is the one that needs the refresh effect (equal rows keep the
+# same array); the Arrow twin guards the path that re-aggregates on its own.
+show("refresh", leaves_frame(), cube_frame(bump=1 if bump else 0), use_json=True)
+show("refresh_arrow", leaves_frame(), cube_frame(bump=1 if bump else 0))
