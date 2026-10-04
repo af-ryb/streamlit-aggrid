@@ -798,6 +798,21 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }, [data])
 
+  // A new `stRollup` totals table. The holder already carries the new index
+  // (set during render), but AG-Grid does not re-aggregate on its own: nothing
+  // it watches changed, and with `getRowId` identical row data produces no
+  // transaction either. Keyed on content — the rows and meta are kept stable
+  // by `isEqual` above — so a rerun re-sending the same table does nothing.
+  const prevRollupRef = useRef<{ rows: any[]; meta: RollupMeta | null } | null>(null)
+  useEffect(() => {
+    const prev = prevRollupRef.current
+    prevRollupRef.current = { rows: rollupRows, meta: rollupMeta }
+    if (prev === null || (prev.rows === rollupRows && prev.meta === rollupMeta)) return
+    rollupHolderRef.current.warned = false
+    const api = gridApiRef.current
+    if (api && !api.isDestroyed()) api.refreshClientSideRowModel("aggregate")
+  }, [rollupRows, rollupMeta])
+
   // Apply theme changes imperatively on an already-initialized grid.
   // AG-Grid's Theming API doesn't pick up a new `theme` bundled in
   // gridOptions via reconciliation — it needs an explicit setGridOption.

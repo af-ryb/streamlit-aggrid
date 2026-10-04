@@ -99,6 +99,36 @@ function valueField(colDef: IAggFuncParams["colDef"]): string | undefined {
   return (config && typeof config.field === "string" && config.field) || colDef?.field
 }
 
+/** The part of a `RowNode` the filter rule reads. */
+interface FilterNode {
+  group?: boolean
+  childrenAfterFilter?: FilterNode[] | null
+  allLeafChildren?: unknown[] | null
+}
+
+/** Leaves under `node` that passed the filter. Counted here, not read from
+ * `allChildrenCount`: AG-Grid sets that in `filter_aggregates`, which runs
+ * *after* aggregation, so during an aggFunc call it holds the previous pass's
+ * count. `O(subtree)` per group. */
+function filteredLeafCount(node: FilterNode): number {
+  let count = 0
+  for (const child of node.childrenAfterFilter ?? []) {
+    count += child.group ? filteredLeafCount(child) : 1
+  }
+  return count
+}
+
+/** True when AG-Grid aggregates only the filtered children — its own
+ * `filteredOnly` condition. With `suppressAggFilteredOnly` (or
+ * `groupAggFiltering`) the grid aggregates every leaf, and the server total
+ * agrees with that. */
+function aggregatesFilteredOnly(params: IAggFuncParams): boolean {
+  return (
+    !params.api.getGridOption("groupAggFiltering") &&
+    !params.api.getGridOption("suppressAggFilteredOnly")
+  )
+}
+
 /**
  * A group row's total from the server's table — never computed from the
  * children. `null` (an empty cell) in pivot mode, without a table, when the
@@ -122,6 +152,16 @@ export function stRollupAggFunc(params: IAggFuncParams): number | null {
   // state). Empty, not a sum — a sum is the error this aggregator exists for.
   if (!holder?.index) return null
   const index = holder.index
+
+  // A server total covers every leaf of the group. If a grid filter removed
+  // one, the total no longer describes the visible rows: empty, not wrong.
+  const filterNode = params.rowNode as unknown as FilterNode
+  if (
+    aggregatesFilteredOnly(params) &&
+    filteredLeafCount(filterNode) < (filterNode.allLeafChildren?.length ?? 0)
+  ) {
+    return null
+  }
 
   const node = params.rowNode as unknown as KeyNode
   const pairs = nodeKey(node)

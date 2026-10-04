@@ -156,3 +156,74 @@ def test_pivot_mode_shows_no_totals(page: Page):
     cells = [r["dau"] for r in rows.values() if "dau" in r]
     assert cells, "the pivot grid rendered no dau cells"
     assert all(text == "" for text in cells)
+
+
+def set_filter(page: Page, name: str, model: dict) -> None:
+    page.evaluate(
+        "([name, model]) => { const api = window.__rollupApis[name];"
+        " api.setFilterModel(model); api.onFilterChanged(); }",
+        [name, model],
+    )
+    page.wait_for_timeout(500)
+
+
+VERSION_IS_1_19_1 = {"app_version": {"filterType": "text", "type": "equals", "filter": "1.19.1"}}
+#: Removes the 110 leaf (DATES[0], "1.19.1") and nothing else.
+DAU_ABOVE_115 = {"dau": {"filterType": "number", "type": "greaterThan", "filter": 115}}
+
+
+def test_a_filter_on_a_dimension_keeps_the_surviving_group_exact(page: Page):
+    set_groups(page, "base", ["app_version"])
+    set_filter(page, "base", VERSION_IS_1_19_1)
+    totals = read_totals(page, "base", after_filter=True)
+    assert [node_dims(g) for g in totals["groups"]] == [{"app_version": "1.19.1"}]
+    assert totals["groups"][0]["value"] == expected({"app_version": "1.19.1"})
+    assert totals["root"] is None  # the grand total lost leaves
+
+
+def test_a_filter_on_a_metric_empties_every_group_that_lost_a_leaf(page: Page):
+    set_filter(page, "base", DAU_ABOVE_115)
+    by_dims = {
+        tuple(sorted(node_dims(g).items(), key=lambda kv: kv[0])): g["value"]
+        for g in read_totals(page, "base", after_filter=True)["groups"]
+    }
+    assert by_dims[(("event_date", DATES[0]),)] is None  # lost the 110 leaf
+    assert by_dims[(("event_date", DATES[1]),)] == expected({"event_date": DATES[1]})
+    untouched = {"event_date": DATES[0], "app_version": "1.20.0"}
+    assert by_dims[tuple(sorted(untouched.items()))] == expected(untouched)
+    assert read_totals(page, "base", after_filter=True)["root"] is None
+
+
+def test_suppress_agg_filtered_only_keeps_every_total(page: Page):
+    set_filter(page, "suppress", DAU_ABOVE_115)
+    totals = read_totals(page, "suppress", after_filter=True)
+    for group in totals["groups"]:
+        assert group["value"] == expected(node_dims(group))
+    assert totals["root"] == expected({})
+
+
+def test_a_new_totals_table_with_the_same_rows_is_shown(page: Page):
+    assert read_totals(page, "refresh")["root"] == expected({})
+    page.get_by_text("bump totals").click()
+    page.wait_for_function(
+        "(want) => { const api = window.__rollupApis['refresh'];"
+        " let root = null; api.forEachNode((n) => { if (n.level === 0) root = n.parent; });"
+        " return root && root.aggData && root.aggData['dau'] === want; }",
+        arg=expected({}) + 1,
+        timeout=30000,
+    )
+    for group in read_totals(page, "refresh")["groups"]:
+        want = expected(node_dims(group))
+        assert group["value"] == (None if want is None else want + 1)
+
+
+def test_a_desynced_total_warns_once_and_stays_empty(page: Page, console: list[str]):
+    found = warnings(console)
+    assert len(found) == 1, found
+    assert '"1.19.1"' in found[0] and '"9.9.9"' not in found[0].split("Table keys")[0]
+    corrupted = [
+        g
+        for g in read_totals(page, "corrupt")["groups"]
+        if node_dims(g) == {"event_date": DATES[0], "app_version": "1.19.1"}
+    ]
+    assert len(corrupted) == 1 and corrupted[0]["value"] is None
