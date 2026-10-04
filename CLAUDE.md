@@ -22,6 +22,7 @@ st_aggrid/                   # Python package
 ├── aggrid_utils.py          # Data/gridOptions parsing
 ├── ratio.py                 # Validation for stRatio/stRatioOfRatios/stWeightedAvg declarations
 ├── color_scale.py           # Validation for stColorScale declarations
+├── rollup.py                # Validation + transport for the stRollup totals table
 ├── _coldefs.py              # colDef walk shared by both validators
 ├── _numbers.py              # strict number predicates shared by both validators
 └── frontend/                # TypeScript/React frontend (Vite)
@@ -37,6 +38,8 @@ st_aggrid/                   # Python package
     │   ├── aggFuncs/stRatio.ts       # Σnum/Σden aggregator
     │   ├── aggFuncs/stRatioOfRatios.ts # to_ratio/from_ratio aggregator
     │   ├── aggFuncs/stWeightedAvg.ts # Σ(v·w)/Σw aggregator
+    │   ├── aggFuncs/rollupKey.ts     # group key as AG-Grid builds it (pure)
+    │   ├── aggFuncs/stRollup.ts      # server-total lookup, holder, filter rule
     │   ├── colorScales/normalize.ts   # popStats, min-max / z-score gates
     │   ├── colorScales/schemes.ts     # the three palettes and their alpha ramps
     │   ├── colorScales/population.ts  # level-scoped population + memoised stats
@@ -121,6 +124,17 @@ Python build: **hatchling** (via `uv build`).
 - **Auto-collect pattern**: `collect` param specifies AG-Grid API methods to call after events; results returned via `AgGridResult`.
 - **Explicit API calls**: `call_grid_api()` writes to `session_state`, executed on next rerun.
 - **Three built-in declarative aggregators**: `stRatio`, `stRatioOfRatios`, `stWeightedAvg` — declared in `colDef.context[name]`, sharing one folding core (`aggFuncs/foldSums.ts`). Python (`ratio.py`) validates every declaration against the DataFrame, never against `columnDefs`. See the README's "Declarative aggregation without JavaScript" section for the arithmetic, the zero rule and each aggregator's fallback behaviour.
+- **`stRollup` shows, never computes**: a group row's total comes from
+  `AgGrid(rollup={"data", "dimensions", "flags"})` — the whole `GROUP BY CUBE`
+  answer, full-grain rows included — keyed by the group's unordered
+  `{field: groupKey}` set. The totals travel the leaves' own transport (Arrow,
+  or the same `to_json` call when the leaves go JSON) and are parsed by the
+  same `parseRows`, so values render identically; the key reproduces AG-Grid
+  36.1's `getKeyForNode` (NULL and `""` both group under `""`). No total, or a
+  filter that removed a leaf under the group → empty, never a sum. The index
+  sits in a per-mount holder injected into `context`; a new table swaps it and
+  calls `refreshClientSideRowModel("aggregate")`. See the README's
+  "Server-computed totals".
 - **Five built-in colour schemes, three modes, two scopes**: `neutral`,
   `positive`, `diverging` (ramps), `rank` (the best value in the population)
   and `fill` (a constant colour) — declared in
@@ -182,9 +196,9 @@ Python build: **hatchling** (via `uv build`).
   `test/conftest.py`.
 - Ratio tests never hand-type an expected number: `test/ratio_fixture.py` owns
   the data and the arithmetic, and declares the nodes it cannot discriminate.
-- The three pure colour-scale modules (`normalize.ts`, `schemes.ts`,
-  `overrides.ts`) import nothing and are exercised by
-  `src/colorScales/__checks__/*.check.ts`, run with plain
+- The pure modules (`colorScales/normalize.ts`, `schemes.ts`,
+  `overrides.ts`, `aggFuncs/rollupKey.ts`) import nothing and are exercised by
+  `src/*/__checks__/*.check.ts`, run with plain
   `node <path>.check.ts` — Node 22 strips the types, so the arithmetic has a
   fast test cycle without a JS test runner in a package that ships to the
   browser. `tsconfig.json` sets `allowImportingTsExtensions` for those checks'

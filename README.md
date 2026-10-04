@@ -456,6 +456,63 @@ against the JavaScript approach it replaces in `test/grid_ratio_js.py`) and
 `stRatioOfRatios` and `stWeightedAvg`), all over the same fixture in
 `test/ratio_fixture.py`.
 
+### Server-computed totals (`stRollup`)
+
+Some group totals cannot come from the children at all. A distinct count —
+daily active users, payers — over a group is not the sum of its children's
+distinct counts: the same user is counted once per child. `stRollup` shows a
+total the server computed instead, and shows **an empty cell, never a sum**,
+when it has none.
+
+Send the whole `GROUP BY CUBE` answer as `rollup`, the full-grain rows as the
+grid's data, and declare the columns:
+
+```python
+# cube_df: one row per grouping set, from
+#   SELECT event_date, app_version, COUNT(DISTINCT user_id) AS dau,
+#          GROUPING(event_date) AS _grouping_event_date,
+#          GROUPING(app_version) AS _grouping_app_version
+#   FROM ... GROUP BY CUBE(event_date, app_version)
+leaves = cube_df[(cube_df._grouping_event_date == 0) & (cube_df._grouping_app_version == 0)]
+
+gb = GridOptionsBuilder.from_dataframe(leaves)
+gb.configure_column("event_date", rowGroup=True)
+gb.configure_column("app_version", rowGroup=True)
+gb.configure_column("dau", aggFunc="stRollup", allowedAggFuncs=["stRollup"])
+
+AgGrid(
+    leaves,
+    grid_options=gb.build(),
+    rollup={"data": cube_df, "dimensions": ["event_date", "app_version"]},
+    enable_enterprise_modules=True,
+)
+```
+
+- **Key.** A group row is looked up by its unordered `{dimension: value}`
+  set, so reordering or removing grouping levels in the panel finds its
+  totals with no rerun. The grand total is the row whose flags are all 1.
+- **Flags.** `flags` maps a dimension to its `GROUPING()` column and
+  defaults to `_grouping_<dimension>`: 1 = rolled up, 0 = present, even when
+  the value is NULL. The flags, not NULL, decide what is absent, so a real
+  NULL value is its own group.
+- **Empty cells.** No matching total (grouping by a column the server did
+  not roll up, or a NULL total) → empty. A grid filter that removed a leaf
+  under a group → that group's total is empty, because it no longer
+  describes the visible rows; untouched groups keep theirs. With
+  `suppressAggFilteredOnly=True` nothing is emptied.
+- **Desync.** A miss on a group whose every field is a dimension cannot
+  happen with a `CUBE` answer, so it logs one `console.warn` — check that
+  both frames come from one query result.
+- **Columns.** `field` is read from the totals by default;
+  `context={"stRollup": {"field": "other"}}` reads another column. A ratio
+  whose total-row value the server computed works the same way.
+- Not supported: `pivotMode=True` (totals are empty), tree data, and a
+  dimension `keyCreator` that needs the row node.
+
+The full contract is in
+`docs/superpowers/specs/2026-10-04-st-rollup-design.md`; the e2e suite is
+`test/test_grid_rollup.py` over `test/rollup_fixture.py`.
+
 ### Declarative colour scales without JavaScript
 
 A numeric column can be painted as a heat map from a declaration, with no
