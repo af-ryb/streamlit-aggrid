@@ -11,6 +11,7 @@ from st_aggrid.color_scale import validate_color_scale_columns, validate_color_s
 from st_aggrid.component import get_aggrid_component
 from st_aggrid.ratio import validate_ratio_columns
 from st_aggrid.result import AgGridResult
+from st_aggrid.rollup import prepare_rollup
 from st_aggrid.shared import AgGridTheme, JsCode, StAggridTheme, walk_grid_options
 
 
@@ -183,6 +184,7 @@ def AgGrid(
     columns_state_mode: Literal["replace", "merge"] = "replace",
     initial_state: Optional[Dict] = None,
     color_scale_state: Optional[Dict] = None,
+    rollup: Optional[Dict] = None,
     theme: Union[str, StAggridTheme, None] = "streamlit",
     custom_css: Optional[Dict] = None,
     key: Optional[str] = None,
@@ -273,6 +275,17 @@ def AgGrid(
         apply a different one. Ignored unless the grid is interactive
         (``configure_color_scale(interactive=True)``). Entries for columns the
         grid does not have are kept, not rejected.
+
+    rollup : dict, optional
+        Server-computed group totals for the built-in ``stRollup`` aggregator:
+        ``{"data": df, "dimensions": [...], "flags": {...}}``. ``data`` is the
+        whole ``GROUP BY CUBE`` answer, full-grain rows included; ``flags``
+        maps a dimension to its ``GROUPING()`` column (1 = rolled up, 0 =
+        present even when NULL) and defaults to ``_grouping_<dimension>``. A
+        group row of a ``stRollup`` column shows the total keyed by its
+        unordered ``{dimension: value}`` set, and an empty cell when there is
+        none or a grid filter removed a leaf beneath it — never a sum.
+        Required when a column declares ``aggFunc="stRollup"``.
 
     theme : str | StAggridTheme, optional
         Grid theme. Options: "streamlit", "alpine", "balham", "material",
@@ -422,7 +435,7 @@ def AgGrid(
         )
 
     # Parse data and grid_options
-    data_df, grid_options, column_types = _parse_data_and_grid_options(
+    data_df, grid_options, column_types, column_classes = _parse_data_and_grid_options(
         data,
         grid_options,
         default_column_parameters,
@@ -453,6 +466,12 @@ def AgGrid(
     # grid — including one built entirely from `grid_options["rowData"]`.
     validate_color_scale_columns(grid_options)
     validate_color_scale_state(color_scale_state)
+
+    # The totals travel the way the leaves do: `data_df is None` exactly when
+    # the leaves reach the browser as JSON (no DataFrame, or JSON-serialised).
+    rollup_data, rollup_meta = prepare_rollup(
+        rollup, grid_options, column_classes, leaves_as_json=data_df is None
+    )
 
     custom_css = custom_css or {}
 
@@ -521,6 +540,8 @@ def AgGrid(
         "columns_state_mode": columns_state_mode,
         "initial_state": initial_state,
         "color_scale_state": color_scale_state,
+        "rollup_data": rollup_data,  # Arrow like rowData, or JSON when rowData is JSON
+        "rollup_meta": rollup_meta,
         "theme": theme_obj,
         "custom_css": custom_css,
         "show_toolbar": show_toolbar,

@@ -13,6 +13,9 @@ export interface AgGridData {
   columns_state_mode?: "replace" | "merge"
   initial_state?: any
   color_scale_state?: unknown
+  /** The `stRollup` totals: Arrow like `rowData`, or JSON when `rowData` is JSON. */
+  rollup_data?: unknown
+  rollup_meta?: { dimensions: string[]; flags: Record<string, string> } | null
   theme: any
   custom_css?: { [key: string]: { [key: string]: string } }
   show_toolbar: boolean

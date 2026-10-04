@@ -8,6 +8,8 @@ import type { AgGridData, StreamlitThemeInfo } from "../types/AgGridTypes"
 import { registerStRatio } from "../aggFuncs/stRatio"
 import { registerStRatioOfRatios } from "../aggFuncs/stRatioOfRatios"
 import { registerStWeightedAvg } from "../aggFuncs/stWeightedAvg"
+import { registerStRollup, ST_ROLLUP_INDEX } from "../aggFuncs/stRollup"
+import type { RollupHolder } from "../aggFuncs/stRollup"
 import {
   ColorScaleRuntime,
   ST_COLOR_SCALE_OVERRIDES,
@@ -19,7 +21,8 @@ import { registerColorScaleMenu } from "../colorScales/menu"
 export function parseGridOptions(
   data: AgGridData,
   streamlitTheme?: StreamlitThemeInfo | null,
-  colorScaleRuntime?: ColorScaleRuntime
+  colorScaleRuntime?: ColorScaleRuntime,
+  rollupHolder?: RollupHolder
 ): GridOptions {
   let gridOptions: GridOptions = cloneDeep(data.gridOptions)
 
@@ -48,6 +51,17 @@ export function parseGridOptions(
   registerStRatio(gridOptions, data.debug === true)
   registerStRatioOfRatios(gridOptions, data.debug === true)
   registerStWeightedAvg(gridOptions, data.debug === true)
+  registerStRollup(gridOptions, data.debug === true)
+
+  // The server's totals for `stRollup`. The same holder on every parse — mount
+  // and each live update — so a new table swaps `holder.index` without a
+  // context change AG-Grid would ignore anyway (see AgGridComponent).
+  if (rollupHolder) {
+    gridOptions.context = {
+      ...(gridOptions.context ?? {}),
+      [ST_ROLLUP_INDEX]: rollupHolder,
+    }
+  }
 
   // Built-in colour scales. Same site as the aggregators above for the same
   // reason: both the mount path and the live-update path go through here, so a
@@ -85,10 +99,11 @@ export function parseGridOptions(
   return gridOptions
 }
 
-export function parseData(data: AgGridData): any[] {
-  const rawData = (data as any).rowData
-  const gridOptionsRowData = data.gridOptions?.rowData
-
+/** Rows from any shape a frame arrives in: a bare Arrow table (CCv2), a JSON
+ * string (the `to_json` fallback), or a plain array. Shared by `rowData` and
+ * `rollup_data`, so both reach the same JS values by the same code — what
+ * lets a `stRollup` key match a group key at all. */
+export function parseRows(raw: any): any[] {
   const bigintReplacer = (key: any, value: any): any => {
     if (typeof value === "bigint") return Number(value)
     if (Array.isArray(value))
@@ -105,45 +120,49 @@ export function parseData(data: AgGridData): any[] {
   }
 
   // CCv2: DataFrame arrives as a bare Arrow Table (schema, batches, _offsets)
-  if (rawData && rawData.schema && rawData.batches) {
+  if (raw && raw.schema && raw.batches) {
     let indexColumns: string[] = []
     try {
-      const pandasMeta = JSON.parse(
-        rawData.schema?.metadata?.get("pandas") || "{}"
-      )
+      const pandasMeta = JSON.parse(raw.schema?.metadata?.get("pandas") || "{}")
       indexColumns = pandasMeta.index_columns || []
     } catch (e) {}
 
     const dataFields =
-      rawData.schema?.fields
+      raw.schema?.fields
         ?.map((f: any) => f.name)
         .filter((name: string) => !indexColumns.includes(name)) || []
 
-    const filteredTable = rawData.select(dataFields)
+    const filteredTable = raw.select(dataFields)
     return JSON.parse(JSON.stringify(filteredTable.toArray(), bigintReplacer))
   }
 
-  // Fallback: rowData as JSON string
-  if (rawData && typeof rawData === "string") {
+  if (raw && typeof raw === "string") {
     try {
-      return JSON.parse(rawData)
+      return JSON.parse(raw)
     } catch (e) {
-      console.error("Failed to parse rowData as JSON:", e)
+      console.error("Failed to parse rows as JSON:", e)
       return []
     }
   }
 
-  // Fallback: rowData as plain array
-  if (Array.isArray(rawData)) return rawData
+  if (Array.isArray(raw)) return raw
+
+  return []
+}
+
+export function parseData(data: AgGridData): any[] {
+  const rawData = (data as any).rowData
+  if (
+    (rawData && (typeof rawData === "string" || (rawData.schema && rawData.batches))) ||
+    Array.isArray(rawData)
+  ) {
+    return parseRows(rawData)
+  }
 
   // Fallback: gridOptions.rowData as JSON string
+  const gridOptionsRowData = data.gridOptions?.rowData
   if (gridOptionsRowData && typeof gridOptionsRowData === "string") {
-    try {
-      return JSON.parse(gridOptionsRowData)
-    } catch (e) {
-      console.error("Failed to parse gridOptions.rowData as JSON:", e)
-      return []
-    }
+    return parseRows(gridOptionsRowData)
   }
 
   return []

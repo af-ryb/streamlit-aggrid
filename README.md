@@ -456,6 +456,75 @@ against the JavaScript approach it replaces in `test/grid_ratio_js.py`) and
 `stRatioOfRatios` and `stWeightedAvg`), all over the same fixture in
 `test/ratio_fixture.py`.
 
+### Server-computed totals (`stRollup`)
+
+Some group totals cannot come from the children at all. A distinct count —
+daily active users, payers — over a group is not the sum of its children's
+distinct counts: the same user is counted once per child. `stRollup` shows a
+total the server computed instead, and shows **an empty cell, never a sum**,
+when it has none.
+
+Send the whole `GROUP BY CUBE` answer as `rollup`, the full-grain rows as the
+grid's data, and declare the columns:
+
+```python
+# cube_df: one row per grouping set, from
+#   SELECT event_date, app_version, COUNT(DISTINCT user_id) AS dau,
+#          GROUPING(event_date) AS _grouping_event_date,
+#          GROUPING(app_version) AS _grouping_app_version
+#   FROM ... GROUP BY CUBE(event_date, app_version)
+leaves = cube_df[
+    (cube_df._grouping_event_date == 0) & (cube_df._grouping_app_version == 0)
+].drop(columns=["_grouping_event_date", "_grouping_app_version"])  # flags are for the totals, not grid columns
+
+gb = GridOptionsBuilder.from_dataframe(leaves)
+gb.configure_column("event_date", rowGroup=True)
+gb.configure_column("app_version", rowGroup=True)
+gb.configure_column("dau", aggFunc="stRollup", allowedAggFuncs=["stRollup"])
+
+AgGrid(
+    leaves,
+    grid_options=gb.build(),
+    rollup={"data": cube_df, "dimensions": ["event_date", "app_version"]},
+    enable_enterprise_modules=True,
+)
+```
+
+- **Key.** A group row is looked up by its unordered `{dimension: value}`
+  set, so reordering or removing grouping levels in the panel finds its
+  totals with no rerun. The grand total is the row whose flags are all 1.
+- **Flags.** `flags` maps a dimension to its `GROUPING()` column and
+  defaults to `_grouping_<dimension>`: 1 = rolled up, 0 = present, even when
+  the value is NULL. The flags, not NULL, decide what is absent, so a real
+  NULL value is its own group.
+- **Empty cells.** No matching total (grouping by a column the server did
+  not roll up, or a NULL total) → empty. A grid filter that removed a leaf
+  under a group → that group's total is empty, because it no longer
+  describes the visible rows; untouched groups keep theirs. With
+  `suppressAggFilteredOnly=True` (or `groupAggFiltering`) nothing is emptied.
+- **One query.** Take both frames from one query result. Python rejects a
+  dimension whose values would serialise differently in the two frames
+  (numbers count as one class, whatever their dtype), because no key would
+  ever match.
+- **Desync.** A miss on a group whose every field is a dimension cannot
+  happen with a `CUBE` answer, so it logs one `console.warn` — check that
+  both frames come from one query result.
+- **Columns.** `field` is read from the totals by default;
+  `context={"stRollup": {"field": "other"}}` reads another column. A ratio
+  whose total-row value the server computed works the same way.
+- Not supported: `pivotMode=True` (totals are empty), tree data, and a
+  dimension `keyCreator` that needs the row node (it is skipped with a
+  `console.warn`, and its groups show no total). Also unsupported:
+  `ROLLUP` / `GROUPING SETS` answers (only `CUBE` has every subset, so
+  regrouping would miss and warn); a `valueGetter` on a dimension; a NULL
+  `datetime64` dimension value (AG-Grid keys it `""`, the totals carry the
+  string `"NaT"`); and, for `data=None` with `grid_options["rowData"]` as a
+  Python list, dimensions other than strings and numbers.
+
+The full contract is in
+`docs/superpowers/specs/2026-10-04-st-rollup-design.md`; the e2e suite is
+`test/test_grid_rollup.py` over `test/rollup_fixture.py`.
+
 ### Declarative colour scales without JavaScript
 
 A numeric column can be painted as a heat map from a declaration, with no
@@ -725,6 +794,7 @@ AgGrid(
 | `license_key` | str | None | AG-Grid license key |
 | `columns_state` | dict | None | Initial column state |
 | `color_scale_state` | dict | None | Reader's saved per-column colour-scale choices, as returned by `AgGridResult.color_scale_state`. Read once, at mount. Ignored unless the grid is interactive |
+| `rollup` | dict | None | Server-computed group totals for `aggFunc="stRollup"`: `{"data": cube_df, "dimensions": [...], "flags": {...}}`. See "Server-computed totals" |
 | `theme` | str/StAggridTheme | "streamlit" | Grid theme |
 | `custom_css` | dict | None | Custom CSS rules |
 | `key` | str | None | Streamlit widget key |

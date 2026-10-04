@@ -38,7 +38,9 @@ import {
   injectProAssets,
 } from "./utils/gridUtils"
 
-import { parseGridOptions, parseData } from "./utils/parsers"
+import { parseGridOptions, parseData, parseRows } from "./utils/parsers"
+import { buildRollupIndex } from "./aggFuncs/stRollup"
+import type { RollupHolder, RollupMeta } from "./aggFuncs/stRollup"
 import type { AgGridData } from "./types/AgGridTypes"
 import { ColorScaleRuntime, attachColorScaleInvalidation, clearStats } from "./colorScales"
 import { sanitizeState, serializeState } from "./colorScales/overrides"
@@ -210,6 +212,19 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
   }
 
+  // The `stRollup` totals' holder: one per mount, injected into every
+  // `context` `parseGridOptions` builds, its `index` replaced when the table
+  // changes. `hasRollup` gates the injection, so a grid without totals carries
+  // no extra context key.
+  const rollupHolderRef = useRef<RollupHolder>({
+    index: null,
+    debug: false,
+    warned: false,
+    notedPivot: false,
+  })
+  const hasRollup = data.rollup_meta != null
+  const rollupHolder = hasRollup ? rollupHolderRef.current : undefined
+
   const debug = data.debug || false
 
   // Live Streamlit theme (reads --st-* CSS custom properties from the
@@ -261,6 +276,24 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     }
     return undefined
   }, [rowData])
+
+  // The totals rows, kept stable by content: a rerun re-sends an equal payload
+  // as a new object, and a new identity would rebuild the index (and re-arm the
+  // desync warning) for nothing.
+  const parsedRollupRows = useMemo(
+    () => (hasRollup ? parseRows(data.rollup_data) : []),
+    [data.rollup_data, hasRollup]
+  )
+  const rollupRowsRef = useRef<any[]>([])
+  if (!isEqual(parsedRollupRows, rollupRowsRef.current)) {
+    rollupRowsRef.current = parsedRollupRows
+  }
+  const rollupRows = rollupRowsRef.current
+  const rollupMetaRef = useRef<RollupMeta | null>(null)
+  if (!isEqual(data.rollup_meta ?? null, rollupMetaRef.current)) {
+    rollupMetaRef.current = data.rollup_meta ?? null
+  }
+  const rollupMeta = rollupMetaRef.current
 
   // Cell Notes datasource (35.3). Built only when host notes are present; stable
   // across renders (rebuilds only when notes presence flips) so AG-Grid doesn't
@@ -411,7 +444,12 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
   // Grid options WITHOUT rowData — recomputed only when config inputs change.
   const gridOptions = useMemo(() => {
-    const go = parseGridOptions(data, streamlitTheme, colorScaleRuntimeRef.current ?? undefined)
+    const go = parseGridOptions(
+      data,
+      streamlitTheme,
+      colorScaleRuntimeRef.current ?? undefined,
+      rollupHolder
+    )
     // Defensive: strip any rowData that may have been carried over so the
     // separate <AgGridReact rowData> prop is the single source of truth.
     delete (go as any).rowData
@@ -429,7 +467,15 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
 
     return go
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId, notesDataSource])
+  }, [data.gridOptions, data.theme, streamlitTheme, data.allow_unsafe_jscode, autoGetRowId, notesDataSource, hasRollup])
+
+  // Built from the *parsed* columnDefs, whose `keyCreator`s are real functions.
+  const rollupIndex = useMemo(
+    () => buildRollupIndex(rollupRows, rollupMeta, gridOptions.columnDefs, gridOptions.context),
+    [rollupRows, rollupMeta, gridOptions]
+  )
+  rollupHolderRef.current.index = rollupIndex
+  rollupHolderRef.current.debug = debug
 
   // Saved column layout applied at grid *creation* (pre-paint) via the
   // `initialState` prop, so restored columns never flash in then hide. AG-Grid
@@ -549,7 +595,12 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
     const prevGo = omit(prevData.gridOptions, "rowData")
     const currGo = omit(data.gridOptions, "rowData")
     if (!isEqual(prevGo, currGo)) {
-      const go = parseGridOptions(data, undefined, colorScaleRuntimeRef.current ?? undefined)
+      const go = parseGridOptions(
+        data,
+        undefined,
+        colorScaleRuntimeRef.current ?? undefined,
+        rollupHolder
+      )
       delete (go as any).rowData
 
       // Snapshot the live sort before updateGridOptions. Re-processing
@@ -746,6 +797,23 @@ const AgGridComponent: React.FC<AgGridComponentProps> = ({
       }
     }
   }, [data])
+
+  // A new `stRollup` totals table. AG-Grid re-aggregates only when it sees new
+  // row data. On the Arrow path every rerun sends new row objects, which it
+  // treats as updates; on the JSON path the rows arrive as a string the rowData
+  // memo compares by value, so equal rows produce no update at all — and a new
+  // totals table would never be shown. Keyed on content (the rows and meta are
+  // kept stable by `isEqual` above), so a rerun re-sending the same table does
+  // nothing.
+  const prevRollupRef = useRef<{ rows: any[]; meta: RollupMeta | null } | null>(null)
+  useEffect(() => {
+    const prev = prevRollupRef.current
+    prevRollupRef.current = { rows: rollupRows, meta: rollupMeta }
+    if (prev === null || (prev.rows === rollupRows && prev.meta === rollupMeta)) return
+    rollupHolderRef.current.warned = false
+    const api = gridApiRef.current
+    if (api && !api.isDestroyed()) api.refreshClientSideRowModel("aggregate")
+  }, [rollupRows, rollupMeta])
 
   // Apply theme changes imperatively on an already-initialized grid.
   // AG-Grid's Theming API doesn't pick up a new `theme` bundled in
