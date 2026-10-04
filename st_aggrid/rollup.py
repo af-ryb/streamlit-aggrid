@@ -25,7 +25,7 @@ from typing import Any, Optional, Union
 import pandas as pd
 
 from st_aggrid._coldefs import column_label, iter_column_defs
-from st_aggrid.aggrid_utils import prepare_frame
+from st_aggrid.aggrid_utils import _dataframe_arrow_compatible, prepare_frame
 
 #: Aggregator name and context key are the same string, as for `stRatio`.
 AGG_FUNC_NAME = CONTEXT_KEY = "stRollup"
@@ -132,14 +132,26 @@ def _prepared_totals(data: Any) -> pd.DataFrame:
     return converted
 
 
-def _same_serialisation(a, b) -> bool:
-    """Numeric dtypes (int/float, nullable or not, not bool) render to the same AG-Grid key."""
-    from pandas.api.types import is_numeric_dtype, is_bool_dtype
-    return (
-        (is_numeric_dtype(a) and not is_bool_dtype(a) and
-         is_numeric_dtype(b) and not is_bool_dtype(b))
-        or a == b
-    )
+def serialisation_class(series: pd.Series) -> str:
+    """How a column's values serialise, as far as a group key is concerned.
+
+    Dtypes are too coarse (a ``datetime.date`` column and the ISO strings
+    ``prepare_frame`` makes from ``datetime64`` are both ``object`` on pandas
+    2) and too fine (int64 and float64-with-NaN render to the same key). Numbers
+    are one class, booleans another, the rest is what pandas infers from the
+    values.
+    """
+    from pandas.api.types import is_bool_dtype, is_numeric_dtype
+
+    if is_bool_dtype(series.dtype):
+        return "bool"
+    if is_numeric_dtype(series.dtype):
+        return "number"
+    return pd.api.types.infer_dtype(series, skipna=True)
+
+
+def serialisation_classes(frame: pd.DataFrame) -> dict[str, str]:
+    return {str(name): serialisation_class(frame[name]) for name in frame.columns}
 
 
 def _key_part(value: Any) -> str:
@@ -182,14 +194,14 @@ def _check_unique_keys(totals: pd.DataFrame, dimensions: list, flags: dict) -> N
 def prepare_rollup(
     rollup: Optional[dict],
     grid_options: Any,
-    data_dtypes: Optional[pd.Series],
+    data_classes: Optional[dict[str, str]],
     leaves_as_json: bool,
 ) -> tuple[Union[pd.DataFrame, str, None], Optional[dict]]:
     """Validate ``rollup`` and return ``(payload, meta)`` for the component.
 
-    ``data_dtypes`` are the row data's dtypes after ``prepare_frame`` (``None``
-    for a grid without a DataFrame, which skips the checks against the
-    leaves). ``leaves_as_json`` is true when the row data reaches the browser
+    ``data_classes`` are the row data's ``serialisation_classes`` after
+    ``prepare_frame`` (``None`` for a grid without a DataFrame, which skips the
+    checks against the leaves). ``leaves_as_json`` is true when the row data reaches the browser
     as JSON; the totals then do too.
     """
     columns = _rollup_columns(grid_options)
@@ -219,8 +231,8 @@ def prepare_rollup(
             f"rollup dimensions {missing} are not columns of rollup['data']; "
             f"it has {list(totals.columns)}."
         )
-    if data_dtypes is not None:
-        absent = [d for d in dimensions if d not in data_dtypes.index]
+    if data_classes is not None:
+        absent = [d for d in dimensions if d not in data_classes]
         if absent:
             raise ValueError(
                 f"rollup dimensions {absent} are not columns of the row data; the "
@@ -249,19 +261,25 @@ def prepare_rollup(
                 f"rollup['data'] has no such column."
             )
 
-    if data_dtypes is not None:
+    if data_classes is not None:
         for dimension in dimensions:
-            if not _same_serialisation(data_dtypes[dimension], totals[dimension].dtype):
+            total_class = serialisation_class(totals[dimension])
+            if data_classes[dimension] != total_class:
                 raise ValueError(
-                    f"rollup dimension {dimension!r} has dtype "
-                    f"{totals[dimension].dtype} in rollup['data'] but "
-                    f"{data_dtypes[dimension]} in the row data. Different dtypes "
-                    f"serialise differently and no key would ever match; take "
-                    f"both frames from one query result."
+                    f"rollup dimension {dimension!r} holds {total_class} values "
+                    f"in rollup['data'] but {data_classes[dimension]} values in "
+                    f"the row data. They serialise differently and no key would "
+                    f"ever match; take both frames from one query result."
                 )
 
     _check_unique_keys(totals, dimensions, flags)
 
     if leaves_as_json:
         return totals.to_json(orient="records", default_handler=str), meta
+    if not _dataframe_arrow_compatible(totals):
+        raise ValueError(
+            "rollup['data'] cannot be sent as Arrow (a column holds lists or "
+            "sets with mixed item types). Convert such a column to strings "
+            "first, or send the row data as JSON too."
+        )
     return totals, meta

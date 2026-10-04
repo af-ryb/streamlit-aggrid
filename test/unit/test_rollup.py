@@ -12,7 +12,8 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from st_aggrid.rollup import DEFAULT_FLAG_PREFIX, prepare_rollup
+from st_aggrid.aggrid_utils import prepare_frame
+from st_aggrid.rollup import DEFAULT_FLAG_PREFIX, prepare_rollup, serialisation_classes
 
 
 def grid_options(*columns):
@@ -49,11 +50,15 @@ def rollup(**overrides):
     return spec
 
 
-def run(spec=None, options=None, dtypes="leaves", leaves_as_json=False):
-    if isinstance(dtypes, str) and dtypes == "leaves":
-        dtypes = leaves().dtypes
+def run(spec=None, options=None, rows="leaves", leaves_as_json=False):
+    """`rows` is the leaves frame as the grid receives it; it is prepared and
+    classified the way `_parse_data_and_grid_options` does. None skips the
+    leaf checks."""
+    if isinstance(rows, str) and rows == "leaves":
+        rows = leaves()
+    classes = serialisation_classes(prepare_frame(rows.copy())) if rows is not None else None
     return prepare_rollup(
-        spec, options if options is not None else grid_options(), dtypes, leaves_as_json
+        spec, options if options is not None else grid_options(), classes, leaves_as_json
     )
 
 
@@ -119,7 +124,7 @@ def test_a_dimension_missing_from_the_totals_is_rejected():
 
 def test_a_dimension_missing_from_the_row_data_is_rejected():
     with pytest.raises(ValueError, match="not columns of the row data"):
-        run(rollup(), dtypes=leaves().drop(columns=["app_version"]).dtypes)
+        run(rollup(), rows=leaves().drop(columns=["app_version"]))
 
 
 def test_a_missing_flag_column_is_rejected():
@@ -161,13 +166,13 @@ def test_a_malformed_context_declaration_is_rejected():
         run(rollup(), grid_options({"field": "dau", "aggFunc": "stRollup", "context": {"stRollup": "dau"}}))
 
 
-# --- rule 5: dimension dtypes agree ----------------------------------------
+# --- rule 5: dimension serialisation classes agree ----------------------------------------
 
 
 def test_a_dimension_dtype_mismatch_is_rejected():
     data = cube()
     data["event_date"] = pd.to_datetime(data["event_date"])
-    with pytest.raises(ValueError, match="dtype"):
+    with pytest.raises(ValueError, match="serialise differently"):
         run(rollup(data=data))
 
 
@@ -177,16 +182,14 @@ def test_datetime64_on_both_sides_is_accepted():
     data["event_date"] = pd.to_datetime(data["event_date"])
     rows = leaves()
     rows["event_date"] = pd.to_datetime(rows["event_date"])
-    from st_aggrid.aggrid_utils import prepare_frame
-
-    payload, _ = run(rollup(data=data), dtypes=prepare_frame(rows).dtypes)
+    payload, _ = run(rollup(data=data), rows=rows)
     assert payload["event_date"].iloc[0] == "2026-10-01T00:00:00"
 
 
 def test_without_row_data_the_leaf_checks_are_skipped():
     data = cube()
     data["event_date"] = pd.to_datetime(data["event_date"])
-    assert run(rollup(data=data), dtypes=None)[1] is not None
+    assert run(rollup(data=data), rows=None)[1] is not None
 
 
 def test_numeric_dtype_mismatch_int64_to_float64_is_accepted():
@@ -204,7 +207,7 @@ def test_numeric_dtype_mismatch_int64_to_float64_is_accepted():
     rows = pd.DataFrame({"count": [1, 2, 1, 2], "type": ["a", "a", "b", "b"], "value": [10, 20, 30, 40]})
     rows["count"] = rows["count"].astype("int64")
     options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
-    assert run(rollup(data=data, dimensions=["count", "type"]), options, dtypes=rows.dtypes)[1] is not None
+    assert run(rollup(data=data, dimensions=["count", "type"]), options, rows=rows)[1] is not None
 
 
 def test_numeric_dtype_mismatch_int64_to_nullable_int64_is_accepted():
@@ -221,7 +224,36 @@ def test_numeric_dtype_mismatch_int64_to_nullable_int64_is_accepted():
     rows = pd.DataFrame({"count": [1, 2, 1, 2], "type": ["a", "a", "b", "b"], "value": [10, 20, 30, 40]})
     rows["count"] = rows["count"].astype("int64")
     options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
-    assert run(rollup(data=data, dimensions=["count", "type"]), options, dtypes=rows.dtypes)[1] is not None
+    assert run(rollup(data=data, dimensions=["count", "type"]), options, rows=rows)[1] is not None
+
+
+def test_date_leaves_against_iso_string_totals_are_rejected():
+    """On pandas 2 both are `object` dtype; the classes still differ."""
+    data = cube()
+    data["event_date"] = data["event_date"].map(
+        lambda d: d.isoformat() if d is not None else None
+    )
+    with pytest.raises(ValueError, match="serialise differently"):
+        run(rollup(data=data))
+
+
+def test_int64_leaves_against_float64_with_nan_totals_are_accepted():
+    data = pd.DataFrame(
+        {
+            "n": [1.0, 2.0, None],
+            "dau": [1, 2, 3],
+            "_grouping_n": [0, 0, 1],
+        }
+    )
+    rows = pd.DataFrame({"n": [1, 2], "dau": [1, 2]})
+    assert run({"data": data, "dimensions": ["n"]}, rows=rows)[1] is not None
+
+
+def test_int64_leaves_against_string_totals_are_rejected():
+    data = pd.DataFrame({"n": ["1", "2", None], "dau": [1, 2, 3], "_grouping_n": [0, 0, 1]})
+    rows = pd.DataFrame({"n": [1, 2], "dau": [1, 2]})
+    with pytest.raises(ValueError, match="serialise differently"):
+        run({"data": data, "dimensions": ["n"]}, rows=rows)
 
 
 def test_numeric_dtype_mismatch_int64_to_string_is_rejected():
@@ -236,15 +268,15 @@ def test_numeric_dtype_mismatch_int64_to_string_is_rejected():
     rows = pd.DataFrame({"count": [1, 2, 3], "value": [10, 20, 30]})
     rows["count"] = rows["count"].astype("int64")
     options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
-    with pytest.raises(ValueError, match="dtype"):
-        run(rollup(data=data, dimensions=["count"]), options, dtypes=rows.dtypes)
+    with pytest.raises(ValueError, match="serialise differently"):
+        run(rollup(data=data, dimensions=["count"]), options, rows=rows)
 
 
 def test_bool_dtype_mismatch_bool_to_int64_is_rejected():
     """Bool is not a compatible numeric type."""
     data = pd.DataFrame(
         {
-            "flag": [True, False, True, None, None, None],
+            "flag": pd.array([True, False, True, None, None, None], dtype="boolean"),
             "value": [1, 2, 3, 4, 5, 6],
             "_grouping_flag": [0, 0, 0, 1, 1, 1],
         }
@@ -252,8 +284,8 @@ def test_bool_dtype_mismatch_bool_to_int64_is_rejected():
     rows = pd.DataFrame({"flag": [True, False], "value": [1, 2]})
     rows["flag"] = rows["flag"].astype("int64")
     options = {"columnDefs": [{"field": "value", "aggFunc": "stRollup"}]}
-    with pytest.raises(ValueError, match="dtype"):
-        run(rollup(data=data, dimensions=["flag"]), options, dtypes=rows.dtypes)
+    with pytest.raises(ValueError, match="serialise differently"):
+        run(rollup(data=data, dimensions=["flag"]), options, rows=rows)
 
 
 # --- rule 6: unique keys after normalisation -------------------------------
@@ -278,7 +310,7 @@ def test_an_integer_and_its_string_collide():
         {"build": [7, "7"], "dau": [1, 2], "_grouping_build": [0, 0]}, dtype=object
     )
     with pytest.raises(ValueError, match="share the key"):
-        run({"data": data, "dimensions": ["build"]}, dtypes=None)
+        run({"data": data, "dimensions": ["build"]}, rows=None)
 
 
 def test_rolled_up_values_do_not_enter_the_key():
@@ -307,13 +339,18 @@ def test_the_callers_totals_frame_is_not_mutated():
     before = data.copy()
     rows = leaves()
     rows["event_date"] = pd.to_datetime(rows["event_date"])
-    from st_aggrid.aggrid_utils import prepare_frame
-
-    run(rollup(data=data), dtypes=prepare_frame(rows).dtypes)
+    run(rollup(data=data), rows=rows)
     pd.testing.assert_frame_equal(data, before)
+
+
+def test_totals_that_cannot_go_arrow_are_rejected_clearly():
+    data = cube()
+    data["tags"] = pd.Series([[1, "a"], [2], [3], [4], [5], [6]], dtype=object)
+    with pytest.raises(ValueError, match="cannot be sent as Arrow"):
+        run(rollup(data=data))
 
 
 def test_a_polars_totals_frame_is_accepted():
     pl = pytest.importorskip("polars")
-    payload, _ = run(rollup(data=pl.from_pandas(cube())), dtypes=None)
+    payload, _ = run(rollup(data=pl.from_pandas(cube())), rows=None)
     assert isinstance(payload, pd.DataFrame)

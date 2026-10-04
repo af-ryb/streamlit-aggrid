@@ -84,6 +84,7 @@ def _parse_data_and_grid_options(
     use_json_serialization="auto",
 ):
     column_types = None
+    column_classes = None
 
     if data is not None:
 
@@ -109,6 +110,11 @@ def _parse_data_and_grid_options(
 
         # Compute column types before adding ID column
         column_types = data.dtypes
+        # Serialisation classes too, while the frame is still the prepared
+        # DataFrame: on the JSON path `data` becomes None below.
+        from st_aggrid.rollup import serialisation_classes
+
+        column_classes = serialisation_classes(data)
 
     # Resolve grid_options independently of data — it may be a Mapping, a JSON
     # string, or a path to a .json file. Do this unconditionally so callers can
@@ -168,4 +174,4 @@ def _parse_data_and_grid_options(
             grid_options, lambda v: v.js_code if isinstance(v, JsCode) else v
         )
 
-    return data, grid_options, column_types
+    return data, grid_options, column_types, column_classes

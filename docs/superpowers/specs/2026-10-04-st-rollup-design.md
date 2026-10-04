@@ -1,6 +1,6 @@
 # `stRollup` — a built-in aggregator that shows server-computed group totals — Design
 
-**Status:** designed against the code, not yet implemented
+**Status:** implemented on feature/st-rollup (2.6.0)
 **Branch:** `feature/st-rollup` (off `main` at `33c3e27`)
 **Date:** 2026-10-04
 **Release:** 2.6.0 (additive public API)
@@ -172,11 +172,15 @@ with `_coldefs.iter_column_defs` and names columns with `column_label`, like
    holding anything but 0/1 (nullable integer NA counts as invalid).
 4. A `stRollup` column whose `field` (resolved as above) is not a column of
    the totals table.
-5. A dimension whose dtype differs between the leaves and the totals table.
-   Different dtypes serialise differently, the keys never meet, and every
-   lookup misses — silently, were it not for this check. Numeric dtypes
-   (int/float, nullable or not, not bool) are treated as compatible since
-   they render to the same AG-Grid key.
+5. A dimension whose *serialisation class* differs between the leaves and the
+   totals table. The class is "number" for any numeric non-bool column (int or
+   float, nullable or not: they render to the same AG-Grid key), "bool" for
+   booleans, and otherwise `pd.api.types.infer_dtype` (`"date"`, `"string"`,
+   `"datetime"`, ...). Dtypes are not compared: on pandas 2 a `datetime.date`
+   column and the ISO strings `prepare_frame` makes from `datetime64` are both
+   `object`. Differing classes serialise differently, the keys never meet, and
+   every lookup misses — silently, were it not for this check. The leaves'
+   classes are computed after `prepare_frame`, before any JSON serialisation.
 6. Two totals rows with the same key after normalisation (present dimensions
    only, with `None`/NaN/`""` collapsed to `""` exactly as the grid does).
    This catches the NULL-vs-empty-string collision and any duplicated

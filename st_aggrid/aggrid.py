@@ -435,7 +435,7 @@ def AgGrid(
         )
 
     # Parse data and grid_options
-    data_df, grid_options, column_types = _parse_data_and_grid_options(
+    data_df, grid_options, column_types, column_classes = _parse_data_and_grid_options(
         data,
         grid_options,
         default_column_parameters,
@@ -470,7 +470,7 @@ def AgGrid(
     # The totals travel the way the leaves do: `data_df is None` exactly when
     # the leaves reach the browser as JSON (no DataFrame, or JSON-serialised).
     rollup_data, rollup_meta = prepare_rollup(
-        rollup, grid_options, column_types, leaves_as_json=data_df is None
+        rollup, grid_options, column_classes, leaves_as_json=data_df is None
     )
 
     custom_css = custom_css or {}
