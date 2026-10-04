@@ -4,9 +4,12 @@
 
 Streamlit AG-Grid component v2, built on **Custom Components v2** (CCv2, no iframe).
 Originally forked from [PablocFonseca/streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid);
-detached from its fork network on 2026-10-04, so `af-ryb/streamlit-aggrid` is a
-standalone repo and pull requests default to it. The `upstream` remote still
-points at the original for manual cherry-picks — there is no "Sync fork".
+detached from its fork network and renamed to `af-ryb/st-aggrid` (matching the
+distribution name) on 2026-10-04, so it is a standalone repo and pull requests
+default to it. GitHub redirects the old `af-ryb/streamlit-aggrid` URL — never
+create a new repo under that name, or every old pin breaks. The `upstream`
+remote still points at the original for manual cherry-picks — there is no
+"Sync fork".
 Work happens on feature branches merged into `main` by PR; releases are tags on
 `main` cut by `scripts/release.sh`.
 

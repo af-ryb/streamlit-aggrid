@@ -10,7 +10,7 @@ From git:
 
 ```bash
 pip uninstall -y streamlit-aggrid  # only needed once, when upgrading from < 2.2.0
-pip install git+https://github.com/af-ryb/streamlit-aggrid.git@v2_component
+pip install git+https://github.com/af-ryb/st-aggrid.git@v2.6.0
 ```
 
 The distribution was renamed `streamlit-aggrid` → `st-aggrid` in 2.2.0. pip does
