@@ -23,8 +23,8 @@ st_aggrid/                   # Python package
 ├── ratio.py                 # Validation for stRatio/stRatioOfRatios/stWeightedAvg declarations
 ├── color_scale.py           # Validation for stColorScale declarations
 ├── rollup.py                # Validation + transport for the stRollup totals table
-├── _coldefs.py              # colDef walk shared by both validators
-├── _numbers.py              # strict number predicates shared by both validators
+├── _coldefs.py              # colDef walk shared by the validators
+├── _numbers.py              # strict number predicates shared by the validators
 └── frontend/                # TypeScript/React frontend (Vite)
     ├── src/
     │   ├── index.tsx                 # CCv2 entry point
@@ -88,6 +88,10 @@ When updating AG-Grid:
    a delete + an add for `st_aggrid/frontend/build/*`, not a modify)
 5. Run e2e tests: `pytest -m e2e`
 6. Update version references in `README.md`
+7. `stRollup` relies on AG-Grid internals: `getKeyForNode` stringification,
+   `createGroupForEmpty` → `""`, and aggregation running before
+   `filter_aggregates`. Re-check them in the new build; the guard is
+   `test/test_grid_rollup.py`.
 
 ## Build & Dev
 

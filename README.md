@@ -473,7 +473,9 @@ grid's data, and declare the columns:
 #          GROUPING(event_date) AS _grouping_event_date,
 #          GROUPING(app_version) AS _grouping_app_version
 #   FROM ... GROUP BY CUBE(event_date, app_version)
-leaves = cube_df[(cube_df._grouping_event_date == 0) & (cube_df._grouping_app_version == 0)]
+leaves = cube_df[
+    (cube_df._grouping_event_date == 0) & (cube_df._grouping_app_version == 0)
+].drop(columns=["_grouping_event_date", "_grouping_app_version"])  # flags are for the totals, not grid columns
 
 gb = GridOptionsBuilder.from_dataframe(leaves)
 gb.configure_column("event_date", rowGroup=True)
@@ -499,7 +501,11 @@ AgGrid(
   not roll up, or a NULL total) → empty. A grid filter that removed a leaf
   under a group → that group's total is empty, because it no longer
   describes the visible rows; untouched groups keep theirs. With
-  `suppressAggFilteredOnly=True` nothing is emptied.
+  `suppressAggFilteredOnly=True` (or `groupAggFiltering`) nothing is emptied.
+- **One query.** Take both frames from one query result. Python rejects a
+  dimension whose values would serialise differently in the two frames
+  (numbers count as one class, whatever their dtype), because no key would
+  ever match.
 - **Desync.** A miss on a group whose every field is a dimension cannot
   happen with a `CUBE` answer, so it logs one `console.warn` — check that
   both frames come from one query result.
@@ -507,7 +513,13 @@ AgGrid(
   `context={"stRollup": {"field": "other"}}` reads another column. A ratio
   whose total-row value the server computed works the same way.
 - Not supported: `pivotMode=True` (totals are empty), tree data, and a
-  dimension `keyCreator` that needs the row node.
+  dimension `keyCreator` that needs the row node (it is skipped with a
+  `console.warn`, and its groups show no total). Also unsupported:
+  `ROLLUP` / `GROUPING SETS` answers (only `CUBE` has every subset, so
+  regrouping would miss and warn); a `valueGetter` on a dimension; a NULL
+  `datetime64` dimension value (AG-Grid keys it `""`, the totals carry the
+  string `"NaT"`); and, for `data=None` with `grid_options["rowData"]` as a
+  Python list, dimensions other than strings and numbers.
 
 The full contract is in
 `docs/superpowers/specs/2026-10-04-st-rollup-design.md`; the e2e suite is
