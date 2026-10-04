@@ -2,6 +2,11 @@
 
 Streamlit component for [AG-Grid](https://www.ag-grid.com/) built on Custom Components v2 (no iframe).
 
+Based on [PablocFonseca/streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid)
+by Pablo Fonseca — this repository started as a fork of it and has since been
+rewritten around Custom Components v2 as a read-only grid. See
+[Credits and license](#credits-and-license).
+
 AG-Grid version: [36.1.0](https://www.ag-grid.com/archive/36.1.0/)
 
 ## Install
@@ -872,3 +877,15 @@ def grid_section():
 
 grid_section()
 ```
+
+## Credits and license
+
+This project is derived from
+[streamlit-aggrid](https://github.com/PablocFonseca/streamlit-aggrid) by
+Pablo Fonseca and its contributors, and is distributed under the same MIT
+license — see [LICENSE](LICENSE), which keeps the original copyright notice.
+It was a GitHub fork until 2026-10-04, when it left the fork network and was
+renamed `st-aggrid` to match its distribution name; it is not affiliated with
+or endorsed by the original project. AG-Grid is a product of
+[AG Grid Ltd](https://www.ag-grid.com/); its Enterprise features need their own
+license.
